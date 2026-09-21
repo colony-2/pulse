@@ -1,0 +1,48 @@
+{
+  "name": "@colony2/cortex",
+  "version": "0.0.0-development",
+  "description": "Container compute orchestration for c2j jobs",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/colony-2/cortex",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/colony-2/cortex.git"
+  },
+  "bugs": {
+    "url": "https://github.com/colony-2/cortex/issues"
+  },
+  "author": {
+    "name": "Colony 2",
+    "email": "noreply@colony2.com"
+  },
+  "keywords": [
+    "c2j",
+    "jobdb",
+    "containers",
+    "scheduler",
+    "cli"
+  ],
+  "bin": {
+    "cortex": "bin/cli.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "README.md",
+    "LICENSE"
+  ]
+}

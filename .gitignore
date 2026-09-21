@@ -3,3 +3,6 @@
 /coverage.out
 /cortex.yaml
 *.test
+/dist/
+/npm/cortex/vendor/
+__pycache__/
