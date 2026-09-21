@@ -1,0 +1,259 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing vMAJOR.MINOR.PATCH tag to retry (leave empty for a new release)'
+        required: false
+        type: string
+
+# Serialize releases to avoid concurrent publication and image promotion.
+concurrency:
+  group: cortex-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.26.1'
+  NODE_VERSION: '24'
+
+jobs:
+  test:
+    if: github.repository_owner == 'colony-2'
+    uses: ./.github/workflows/test.yaml
+
+  create-tag:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Bump version and push tag (same policy as c2j)
+        id: bump
+        if: inputs.tag == ''
+        uses: anothrNick/github-tag-action@1.75.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BUMP: patch
+          WITH_V: 'true'
+          PRERELEASE: 'false'
+          RELEASE_BRANCHES: main
+      - name: Validate release tag
+        id: meta
+        env:
+          REQUESTED_TAG: ${{ inputs.tag || steps.bump.outputs.new_tag }}
+        run: |
+          set -euo pipefail
+          [[ "$REQUESTED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git fetch --tags
+          git rev-parse --verify "refs/tags/$REQUESTED_TAG^{commit}"
+          echo "tag=$REQUESTED_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${REQUESTED_TAG#v}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: create-tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      c2j_version: ${{ steps.c2j.outputs.version }}
+    env:
+      TAG: ${{ needs.create-tag.outputs.tag }}
+      VERSION: ${{ needs.create-tag.outputs.version }}
+      QUILL_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+      QUILL_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+      QUILL_NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+      QUILL_NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      QUILL_NOTARY_KEY: ${{ secrets.APPLE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-tag.outputs.tag }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Check module tidiness
+        run: go mod tidy -diff
+      - name: Build all four executable targets
+        run: scripts/build-release.sh "$VERSION"
+      - name: Check optional macOS signing configuration
+        id: signing
+        run: |
+          set -euo pipefail
+          required=(QUILL_SIGN_P12 QUILL_SIGN_PASSWORD QUILL_NOTARY_ISSUER QUILL_NOTARY_KEY_ID QUILL_NOTARY_KEY)
+          present=0
+          for name in "${required[@]}"; do
+            if [[ -n "${!name}" ]]; then present=$((present + 1)); fi
+          done
+          if [[ "$present" -eq 0 ]]; then
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+          elif [[ "$present" -eq "${#required[@]}" ]]; then
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'Configure all five Apple signing secrets, or none.' >&2
+            exit 1
+          fi
+      - name: Sign and notarize Darwin binaries
+        if: steps.signing.outputs.enabled == 'true'
+        run: |
+          set -euo pipefail
+          go install github.com/anchore/quill/cmd/quill@v0.7.1
+          for binary in dist/build/darwin-*/cortex; do
+            "$(go env GOPATH)/bin/quill" sign-and-notarize "$binary"
+          done
+      - name: Pack executable archives and npm artifact
+        run: |
+          scripts/package-release.sh "$VERSION"
+          node scripts/smoke-npm.js "$VERSION"
+      - name: Resolve latest stable c2j once for both architectures
+        id: c2j
+        run: |
+          set -euo pipefail
+          c2j_version="$(python3 scripts/fetch_c2j.py)"
+          echo "version=$c2j_version" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and smoke-test both distroless images
+        env:
+          C2J_VERSION: ${{ steps.c2j.outputs.version }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+          for arch in amd64 arm64; do
+            docker buildx build --platform "linux/$arch" --load \
+              --build-arg "VERSION=$VERSION" --build-arg "REVISION=$(git rev-parse HEAD)" \
+              --build-arg "C2J_VERSION=$C2J_VERSION" --tag "$image:$TAG-$arch" .
+            scripts/smoke-container.sh "$image:$TAG-$arch" "$VERSION" "linux/$arch" "$C2J_VERSION"
+            docker save "$image:$TAG-$arch" | gzip > "dist/release/cortex_${VERSION}_container_Linux_${arch}.tar.gz"
+          done
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish versioned multi-architecture image
+        env:
+          C2J_VERSION: ${{ steps.c2j.outputs.version }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do docker push "$IMAGE:$TAG-$arch"; done
+          docker buildx imagetools create --tag "$IMAGE:$TAG" "$IMAGE:$TAG-amd64" "$IMAGE:$TAG-arm64"
+          docker buildx imagetools inspect "$IMAGE:$TAG" > dist/release/container-image.txt
+          {
+            echo "Cortex: $TAG"
+            echo "c2j: $C2J_VERSION"
+            echo "Image: $IMAGE:$TAG"
+            echo "Source: $(git rev-parse HEAD)"
+          } > dist/release/versions.txt
+          {
+            echo '## Container image'
+            echo
+            echo "\`$IMAGE:$TAG\` — Linux AMD64 and ARM64, bundling c2j \`$C2J_VERSION\`."
+            echo
+            echo 'The release assets include the npm package, native executable archives, and per-architecture container archives for `docker load`.'
+          } > dist/release/release-notes.md
+          cd dist/release
+          sha256sum ./*.tar.gz ./*.tgz container-image.txt versions.txt | sed 's|  ./|  |' | sort -k2 > checksums.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 7
+
+  github-release:
+    needs: [create-tag, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist/release
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.create-tag.outputs.tag }}
+          name: Cortex ${{ needs.create-tag.outputs.tag }}
+          generate_release_notes: true
+          body_path: dist/release/release-notes.md
+          fail_on_unmatched_files: true
+          files: |
+            dist/release/*.tar.gz
+            dist/release/*.tgz
+            dist/release/checksums.txt
+            dist/release/container-image.txt
+            dist/release/versions.txt
+
+  npm:
+    needs: [create-tag, github-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      VERSION: ${{ needs.create-tag.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist/release
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: https://registry.npmjs.org
+      - name: Install npm with trusted publishing support
+        run: npm install --global npm@11
+      - name: Test real npm install from published GitHub assets
+        run: |
+          set -euo pipefail
+          install_dir="$(mktemp -d)"
+          npm install --prefix "$install_dir" "$PWD/dist/release/colony2-cortex-$VERSION.tgz"
+          [[ "$("$install_dir/node_modules/.bin/cortex" -version)" == "cortex $VERSION" ]]
+      - name: Publish exact GitHub npm artifact with token
+        if: env.NPM_TOKEN != ''
+        env:
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
+        run: npm publish "dist/release/colony2-cortex-$VERSION.tgz" --access public --provenance
+      - name: Publish exact GitHub npm artifact with trusted publishing
+        if: env.NPM_TOKEN == ''
+        run: npm publish "dist/release/colony2-cortex-$VERSION.tgz" --access public --provenance
+
+  latest-image:
+    needs: [create-tag, npm]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    env:
+      TAG: ${{ needs.create-tag.outputs.tag }}
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Promote successful release to latest
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker buildx imagetools create --tag "$image:latest" "$image:$TAG"

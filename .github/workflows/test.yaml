@@ -1,19 +1,69 @@
-name: test
-on: [push, pull_request]
+name: Test
+on:
+  pull_request:
+  push:
+    branches-ignore: [main]
+  workflow_call:
 permissions:
   contents: read
 jobs:
   go:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - run: make test vet build
+      - run: node --test scripts/npm.test.js
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.13'
+      - run: python -m unittest discover -s scripts -p 'test_*.py'
       - run: pip install 'openapi-spec-validator==0.9.0' 'PyYAML==6.0.3'
       - run: python scripts/validate_protocol.py
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.1'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: scripts/build-release.sh 0.0.0
+      - run: scripts/package-release.sh 0.0.0
+      - run: node scripts/smoke-npm.js 0.0.0
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - id: c2j
+        run: |
+          set -euo pipefail
+          c2j_version="$(python3 scripts/fetch_c2j.py)"
+          echo "version=$c2j_version" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Test both image architectures
+        env:
+          C2J_VERSION: ${{ steps.c2j.outputs.version }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            docker buildx build --platform "linux/$arch" --load \
+              --build-arg VERSION=0.0.0 --build-arg "C2J_VERSION=$C2J_VERSION" --tag "cortex:test-$arch" .
+            scripts/smoke-container.sh "cortex:test-$arch" 0.0.0 "linux/$arch" "$C2J_VERSION"
+          done
