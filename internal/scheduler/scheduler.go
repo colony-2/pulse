@@ -109,6 +109,20 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 		}
 	}()
 	results := map[Key]Result{}
+	validPending := []Job{}
+	for _, j := range pending {
+		err := j.Request.Validate()
+		if err == nil && j.Build == nil {
+			err = fmt.Errorf("missing process builder")
+		}
+		if err != nil {
+			results[j.Key] = Result{Key: j.Key, Submission: compute.Submission{LaunchID: j.Request.LaunchID, Status: compute.Rejected, Reason: err.Error()}}
+		} else {
+			validPending = append(validPending, j)
+		}
+	}
+	pending = validPending
+
 	for index := 0; index < len(ordered); index++ {
 		if len(pending) == 0 {
 			break
@@ -153,6 +167,11 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 			r, ok := preps[j.Request.LaunchID]
 			finish := func(status compute.Status, reason string) {
 				results[j.Key] = Result{j.Key, p.Name, compute.Submission{LaunchID: j.Request.LaunchID, Status: status, Reason: reason}}
+			}
+			if !ok && prepErr != nil {
+				finish(compute.Unavailable, "provider preparation unavailable")
+				next = append(next, j)
+				continue
 			}
 			if !ok || duplicate[j.Request.LaunchID] {
 				finish(compute.Rejected, fmt.Sprintf("missing or duplicate preparation result: %v", prepErr))

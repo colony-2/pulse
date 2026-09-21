@@ -104,9 +104,18 @@ func (c *Client) Prepare(ctx context.Context, rs []compute.Request) ([]compute.P
 	var response struct {
 		Results []compute.Preparation `json:"results"`
 	}
-	_, err := c.call(ctx, "POST", "/v1/prepare", map[string]any{"items": items}, &response)
+	code, err := c.call(ctx, "POST", "/v1/prepare", map[string]any{"items": items}, &response)
 	if err != nil {
-		return nil, err
+		status := compute.Unavailable
+		switch code {
+		case 200, 400, 401, 403, 413, 422:
+			status = compute.Rejected
+		}
+		out := []compute.Preparation{}
+		for _, r := range rs {
+			out = append(out, compute.Preparation{LaunchID: r.LaunchID, Status: status, Reason: err.Error()})
+		}
+		return out, err
 	}
 	return response.Results, nil
 }

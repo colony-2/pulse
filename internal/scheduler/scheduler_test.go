@@ -168,3 +168,39 @@ func TestInFlightExclusion(t *testing.T) {
 	close(b.release)
 	<-done
 }
+
+func TestPreparationFailureFallsThrough(t *testing.T) {
+	calls := [][]string{}
+	b := &blocking{entered: make(chan struct{}), release: make(chan struct{})}
+	close(b.release)
+	s := New(time.Minute, time.Second)
+	r, err := s.Run(context.Background(), "scope", []Service{
+		{"unavailable", 1, b},
+		{"fallback", 2, &fake{calls: &calls, name: "fallback"}},
+	}, jobs(2))
+	if err != nil || len(r) != 2 || len(calls) != 1 || len(calls[0]) != 3 {
+		t.Fatal(r, calls, err)
+	}
+	for _, result := range r {
+		if result.Submission.Status != compute.Accepted || result.Service != "fallback" {
+			t.Fatal(result)
+		}
+	}
+}
+
+func TestInvalidJobDoesNotReachProvider(t *testing.T) {
+	for _, invalidBuilder := range []bool{false, true} {
+		batch := jobs(1)
+		if invalidBuilder {
+			batch[0].Build = nil
+		} else {
+			batch[0].Request.MemoryBytes = 0
+		}
+		calls := [][]string{}
+		s := New(time.Minute, time.Second)
+		r, err := s.Run(context.Background(), "scope", []Service{{"p", 1, &fake{calls: &calls, name: "p"}}}, batch)
+		if err != nil || len(r) != 1 || r[0].Submission.Status != compute.Rejected || len(calls) != 0 {
+			t.Fatal(r, calls, err)
+		}
+	}
+}

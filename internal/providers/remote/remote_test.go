@@ -74,3 +74,13 @@ func TestRedirectDoesNotForwardToken(t *testing.T) {
 		t.Fatal("redirect followed")
 	}
 }
+
+func TestPreparationUnavailableAllowsFallback(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
+	defer s.Close()
+	c, _ := New(s.URL, nil, nil, true)
+	out, e := c.Prepare(context.Background(), []compute.Request{{LaunchID: "job", Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Platform: "linux/amd64", Image: "alpine:3"}, TimeoutSeconds: 60, Metadata: map[string]string{"job": "j"}}})
+	if e == nil || len(out) != 1 || out[0].Status != compute.Unavailable {
+		t.Fatal(out, e)
+	}
+}
