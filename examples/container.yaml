@@ -1,0 +1,24 @@
+c2j:
+  executable: /usr/local/bin/c2j
+poll_interval: 5s
+cooldown: 60s
+defaults:
+  # This is the image launched for jobs; select your workload's executor image.
+  image: registry.example/c2j-runner:1.0
+  platform: linux/amd64
+  cpu: "1"
+  memory: 1Gi
+  scratch: 1Gi
+  timeout: 1h
+providers:
+  runners:
+    type: remote
+    endpoint: https://runners.example.com
+    token_env: CORTEX_PROVIDER_TOKEN
+targets:
+  - instance_id: production
+    jobdb: https://jobdb.example.com/acme
+    cells: [github.com/acme/app]
+    launch_services:
+      - name: runners
+        priority: 1

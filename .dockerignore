@@ -3,3 +3,7 @@
 bin
 cortex.yaml
 coverage.out
+dist
+node_modules
+**/vendor
+**/__pycache__
