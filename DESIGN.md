@@ -1,6 +1,6 @@
 # Cortex design
 
-Status: proposed Cortex plan, aligned with the implemented contract documented in [the execution tracking guide](GUIDE-Execution-Tracking.md). Implementation language: Go.
+Status: architecture for the initial Go implementation. See [README.md](README.md) for implemented behavior, configuration, validation, and deployment limitations. The [execution tracking guide](GUIDE-Execution-Tracking.md) describes the c2j contract.
 
 **Runtime requirement changes are handled by c2j.** Cortex provisions from published demand and supplies the actual allocation. There is no additional Cortex mechanism or outstanding c2j feature request for this behavior.
 

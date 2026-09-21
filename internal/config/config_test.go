@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 const valid = `defaults:
   image: alpine:3
@@ -30,5 +33,19 @@ func TestConfig(t *testing.T) {
 	}
 	if _, e = Parse([]byte(valid + "---\n{}")); e == nil {
 		t.Fatal("multiple documents ignored")
+	}
+}
+
+func TestExampleConfigurations(t *testing.T) {
+	paths, err := filepath.Glob("../../examples/*.yaml")
+	if err != nil || len(paths) == 0 {
+		t.Fatal("missing example configurations", err)
+	}
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			if _, err := Load(path); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

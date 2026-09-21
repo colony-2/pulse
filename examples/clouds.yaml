@@ -1,0 +1,51 @@
+c2j:
+  executable: c2j
+  expected_version: c2j version v0.0.52
+call_timeout: 2m
+batch_timeout: 10m
+defaults:
+  # Replace this illustrative digest and its storage bounds with your image.
+  image: registry.example/runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  platform: linux/amd64
+  cpu: "1"
+  memory: 1Gi
+  scratch: 1Gi
+  timeout: 1h
+providers:
+  google:
+    type: cloudrun
+    project: project-id
+    region: us-central1
+    service_account: runner@project-id.iam.gserviceaccount.com
+  aws:
+    type: ecs
+    region: us-east-1
+    cluster: cluster-name
+    execution_role: arn:aws:iam::123456789012:role/executor
+    task_role: arn:aws:iam::123456789012:role/workload
+    subnets: [subnet-example]
+    security_groups: [sg-example]
+    public_ip: false
+    supervisor_path: /usr/local/bin/cortex-exec
+    image_storage_bounds:
+      registry.example/runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: 2Gi
+  azure:
+    type: azurejobs
+    region: eastus
+    subscription: subscription-id
+    resource_group: resource-group
+    environment_id: /subscriptions/subscription-id/resourceGroups/resource-group/providers/Microsoft.App/managedEnvironments/environment
+    max_azure_cpu_millis: 2000
+    image_storage_bounds:
+      registry.example/runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: 2Gi
+targets:
+  - instance_id: production
+    jobdb: https://jobdb.example.com/acme
+    cells: [github.com/acme/app]
+    launch_services:
+      - name: google
+        priority: 1
+      - name: aws
+        priority: 1
+      - name: azure
+        priority: 2

@@ -1,0 +1,33 @@
+c2j:
+  executable: /usr/local/bin/c2j
+  expected_version: c2j version v0.0.52
+poll_interval: 5s
+cooldown: 60s
+call_timeout: 2m
+batch_timeout: 5m
+defaults:
+  image: cortex-runner:local
+  platform: linux/amd64  # Use linux/arm64 on an arm64 Docker daemon.
+  cpu: "1"
+  memory: 1Gi
+  scratch: 1Gi
+  timeout: 1h
+providers:
+  local:
+    type: docker
+    socket: unix:///var/run/docker.sock
+    helper: /usr/local/lib/cortex/cortex-exec
+    lock_dir: /tmp/cortex-docker-locks
+    capacity:
+      cpu: "4"
+      memory: 8Gi
+      max_containers: 4
+    per_container_memory_overhead: 256Mi
+    scratch_path: /scratch
+targets:
+  - instance_id: development
+    jobdb: http://jobdb.example.com/test-tenant
+    cells: [github.com/acme/app]
+    launch_services:
+      - name: local
+        priority: 1

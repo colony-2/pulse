@@ -1,6 +1,6 @@
 # Local Docker provider
 
-Status: implementation plan. Add a built-in `docker` adapter alongside cloud adapters and the remote OpenAPI adapter. It uses the same batch preparation/submission contract and participates in numeric priority tiers.
+Status: design for the built-in `docker` adapter. See [README.md](README.md) for current implementation and operational limitations. It uses the same batch preparation/submission contract and participates in numeric priority tiers.
 
 ## Capacity policy
 
@@ -63,7 +63,7 @@ Apply a CPU quota matching `C` and a hard memory limit of `M + S`; set the combi
 
 Version 1 supplies an explicitly sized Linux tmpfs at the configured scratch path. Tmpfs usage counts against the container's memory limit, so reserve its full size alongside application memory. Advertise `M` as usable execution memory and `S` as scratch, never `M + S` as execution memory while also promising `S` scratch. The image/runtime must use the declared scratch path; ordinary writable-layer capacity is not a scratch guarantee. See [Docker tmpfs mounts](https://docs.docker.com/engine/storage/tmpfs/).
 
-Bound logs and reserve operational disk headroom for images, container layers, and retained records. Check host disk availability before image/create work; disk pressure can return `no_capacity`. This check is not a disk-space reservation. Disk quotas and guaranteed disk-backed scratch are not supported in the current Docker provider scope. Scratch is limited to the tmpfs mode above; an ordinary bind mount or free-space check is not a capacity guarantee. Requests this mode cannot satisfy fall through to another provider.
+Bound logs and reserve operational disk headroom for images, container layers, and retained records. Host disk monitoring remains an operational responsibility in the initial implementation; a future advisory availability check would not be a disk-space reservation. Disk quotas and guaranteed disk-backed scratch are not supported in the current Docker provider scope. Scratch is limited to the tmpfs mode above; an ordinary bind mount or free-space check is not a capacity guarantee. Requests this mode cannot satisfy fall through to another provider.
 
 ## Lifetime and allocation facts
 
