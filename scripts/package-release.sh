@@ -13,9 +13,15 @@ for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
   mkdir -p "$stage/$target"
   cp dist/build/"$goos-$goarch"/* "$stage/$target/"
   cp README.md LICENSE "$stage/$target/"
-  cp -R examples docs "$stage/$target/"
+  cp -R examples "$stage/$target/"
+  entries=(cortex README.md LICENSE examples)
+  if [[ -d docs ]]; then
+    cp -R docs "$stage/$target/"
+    entries+=(docs)
+  fi
+  if [[ "$goos" == linux ]]; then entries+=(cortex-exec); fi
   # Name the binary explicitly for the npm installer, not ./cortex.
-  tar -C "$stage/$target" -czf "dist/release/cortex_${version}_${os_name}_${arch_name}.tar.gz" cortex README.md LICENSE examples docs $(if [[ "$goos" == linux ]]; then echo cortex-exec; fi)
+  tar -C "$stage/$target" -czf "dist/release/cortex_${version}_${os_name}_${arch_name}.tar.gz" "${entries[@]}"
 done
 cp -R npm/cortex "$stage/npm"
 cp README.md LICENSE "$stage/npm/"

@@ -1,94 +1,169 @@
 # Cortex
 
-Cortex supplies container compute for ready c2j jobs. It polls explicitly configured repository cells, submits batches through priority tiers, and rotates first choice among equally preferred services. c2j remains an executable dependency and owns job leases, replay, and resource requirement changes.
+**Container compute for c2j jobs, across cloud services and your own runners.**
 
-Cortex has no database. Cooldowns and round-robin cursors live in memory. The Docker adapter reconstructs committed capacity from labeled containers.
+Cortex watches explicitly configured repository cells for jobs that need an executor. It selects a launch service, supplies the job's execution requirements, and starts a container running `c2j` for that job. Every launch carries metadata linking it back to its JobDB instance, tenant, and job.
 
-## Build and test
+[Quick start](#quick-start) · [Container image](#container-image) · [Providers](#providers) · [Configuration](#configuration) · [Releases](docs/releases.md)
 
-Requires Linux and Go 1.24 or newer:
+## How it works
 
-```sh
-make build
-make test
-make vet
+```mermaid
+flowchart LR
+    J[JobDB] -->|c2j list --json| C[Cortex]
+    C -->|Prepare and submit batches| P[Launch services]
+    P --> D[Local Docker]
+    P --> R[Remote runner service]
+    P --> G[Cloud Run / ECS / Azure Jobs]
+    D & R & G --> E[Container: c2j run --job-id]
+    E -->|Claim and execute job| J
 ```
 
-This builds `bin/cortex` and the static `bin/cortex-exec` timeout supervisor. The test suite covers scheduler concurrency/fallback, the remote HTTP contract, Docker admission/recovery against a fake daemon, cloud request mappings, and a complete CLI-to-remote-provider flow.
+- **Small controller:** no database, notifications, or runner registry. Polling, per-job cooldowns, and round-robin cursors stay in memory.
+- **Portable requirements:** image, architecture, CPU, memory, and scratch capacity come from c2j, with configured defaults when absent. Executors receive the allocation the provider actually supplies.
+- **Batch placement:** services accept or decline individual jobs in a batch. Cortex tries equal-priority peers before moving to a lower-priority tier.
+- **Clear ownership:** c2j manages job leases, replay, and changes in execution requirements. Cortex supplies compute through the c2j executable interface.
 
-Install a compatible c2j executable separately on the controller and in executor images. The integration fixture and live discovery check were verified with c2j `v0.0.52`, source commit `5a2b646395a29ed80af4a08935fef1095838564f`. The older `v0.0.50` binary lacks the required execution flags. Pin your build using `c2j.expected_version`, which matches the complete output of `c2j version`.
+## Install
 
-Cortex does not import c2j or JobDB libraries. It runs `c2j list --json` and builds targeted container commands using `c2j run --job-id`, with actual allocation in `C2J_EXECUTION_*` environment variables.
-
-## Run
-
-Start with [the remote-provider example](examples/remote.yaml) or [the Docker example](examples/docker.yaml), replace the deployment values, and supply any referenced credentials through environment variables.
+### npm
 
 ```sh
-bin/cortex -config cortex.yaml -check
-bin/cortex -config cortex.yaml -once
-bin/cortex -config cortex.yaml
+npm install --global @colony2/cortex @colony2/c2j
+cortex -version
+c2j version
 ```
 
-`-check` validates configuration, checks the c2j executable contract, and initializes providers; Docker initialization inspects the local daemon and acquires its admission lock. It does not launch jobs. `-once` performs one bounded polling pass. Logs are JSON on stderr. SIGINT/SIGTERM stops the controller; existing containers continue under their own lifetime controls.
+The release workflow publishes `@colony2/cortex`. Its installer downloads the matching native executable from GitHub Releases and verifies its SHA-256 checksum. Node.js 22 or newer, `tar`, and HTTPS access to GitHub release assets are required. Install scripts must be enabled. `c2j` is a separate executable dependency; the container image bundles it.
 
-Each target needs a stable `instance_id`, a tenant-selecting JobDB URL, an explicit cell list, and named launch services with positive numeric priorities. Smaller priorities are tried first. Equal-priority services rotate first choice **per batch**, and declined items visit the rest of that tier before falling through. A batch contains at most 100 jobs. `no_capacity`, `unsupported`, and confirmed `unavailable` results permit fallback. Uncertain submissions retain the cooldown without immediate fallback.
+| Platform | AMD64 / x86-64 | ARM64 / Apple Silicon |
+| --- | --- | --- |
+| Linux | ✓ | ✓ |
+| macOS | ✓ | ✓ |
+| Container image (Linux) | ✓ | ✓ |
 
-Only recipe job routes are selected by default. Configure `defaults.routes` with exact `job_type`/`task_type` values for additional automated routes that your executor images actually support. Human-input routes should be handled by their input service. Cell selectors must match the repository metadata used at submission: a local-path cell and its Git remote selector need not be interchangeable.
+This matches c2j's release matrix. Windows packages are not currently supplied. The local Docker provider requires a Linux controller; the remote and cloud adapters are also available on macOS.
+
+### Native executables
+
+Download the archive for your platform from [GitHub Releases](https://github.com/colony-2/cortex/releases), verify it against `checksums.txt`, and put `cortex` on your `PATH`. Linux archives also include the static `cortex-exec` helper used by the Docker and ECS providers. A standalone Cortex executable does not require Node.js.
+
+## Quick start
+
+1. Install Cortex and a compatible c2j release with execution support.
+2. Copy [examples/remote.yaml](examples/remote.yaml) to `cortex.yaml`. Set your JobDB tenant URL, repository cells, runner-service endpoint, and default executor image.
+3. Supply the provider token and start Cortex:
+
+```sh
+export CORTEX_PROVIDER_TOKEN='your-provider-token'
+cortex -config cortex.yaml -check
+cortex -config cortex.yaml -once
+cortex -config cortex.yaml
+```
+
+`-check` validates configuration, checks c2j's execution flags, and initializes providers. `-once` performs one polling pass. The normal mode keeps polling until SIGINT or SIGTERM. Logs are JSON on stderr; containers already launched continue under their own lifetime controls.
+
+For a local machine, start with [examples/docker.yaml](examples/docker.yaml). For cloud services, use [examples/clouds.yaml](examples/clouds.yaml).
+
+## Container image
+
+Releases publish **`ghcr.io/colony-2/cortex`** for `linux/amd64` and `linux/arm64`. Docker chooses the matching architecture automatically.
+
+The image uses **distroless static Debian**, runs as UID/GID `65532:65532`, and contains:
+
+- `/usr/local/bin/cortex`
+- `/usr/local/bin/c2j` — the latest stable c2j release resolved when the Cortex release is built
+- `/usr/local/bin/cortex-exec`
+- CA certificates and bundled version/license records under `/usr/share/cortex`
+
+Copy [examples/container.yaml](examples/container.yaml) to `cortex.yaml`, fill in the deployment values, and run:
+
+```sh
+docker run --rm --init \
+  --read-only --tmpfs /tmp \
+  --mount "type=bind,source=$PWD/cortex.yaml,target=/etc/cortex/cortex.yaml,readonly" \
+  -e CORTEX_PROVIDER_TOKEN \
+  ghcr.io/colony-2/cortex:latest
+```
+
+The mounted configuration must be readable by UID 65532. For repeatable deployments, select a release tag such as `:vX.Y.Z` or a manifest digest. `latest` advances after a successful release; an existing image keeps its bundled c2j version. Both architectures use the same c2j release, recorded in the image label `com.colony2.c2j.version` and the GitHub release's `versions.txt`.
+
+Inspect the executables without a shell:
+
+```sh
+docker run --rm ghcr.io/colony-2/cortex:latest -version
+docker run --rm --entrypoint /usr/local/bin/c2j ghcr.io/colony-2/cortex:latest version
+```
+
+**Provider dependencies inside the image:** remote services work directly. Cloud Run and Azure support access tokens through `token_env`; token renewal must be handled by the deployment. The image does not contain `gcloud`, `az`, or `aws`. The ECS adapter requires AWS CLI v2, so use a deployment image supplying that CLI. Local Docker needs socket permissions, a shared host lock directory, and a supervisor path visible at the same absolute location to the controller and daemon. See [provider operations](docs/providers.md).
+
+This is a controller image. Configure `defaults.image` for your workload's executor image, including c2j and any shell, Git, or language tools required by its recipes. The controller image itself contains no shell or Git; use explicit repository selectors in its configuration.
+
+### Build an image locally
+
+Resolve c2j before building so both architectures use one version and the build cache can distinguish upgrades:
+
+```sh
+C2J_VERSION=$(python3 scripts/fetch_c2j.py)
+docker buildx build --load \
+  --build-arg "C2J_VERSION=$C2J_VERSION" \
+  --build-arg VERSION=dev \
+  -t cortex:local .
+```
+
+For a multi-architecture registry build, replace `--load` with `--platform linux/amd64,linux/arm64 --push` and use your registry tag. GitHub Releases also include per-architecture container archives that can be imported with `docker load --input <archive.tar.gz>`.
 
 ## Providers
 
-| Configuration type | Implementation and prerequisites |
-| --- | --- |
-| `remote` | Authenticated HTTPS implementing [protocol v1](REMOTE_PROVIDER_PROTOCOL.md). Uses `endpoint` and `token_env`. `allow_http` is an explicit development option. |
-| `docker` | Local Linux Docker Engine over a Unix socket, with CPU/memory/swap enforcement and an installed supervisor executable. One admission owner per daemon. |
-| `cloudrun` | Cloud Run Jobs REST v2. Requires `project`, `region`, and optionally `service_account`. Authentication uses `token_env` or `gcloud auth application-default print-access-token`. |
-| `ecs` | Standalone Fargate tasks via AWS CLI v2. Requires `region`, `cluster`, `subnets`, `execution_role`, and `supervisor_path`; optional `task_role`, `security_groups`, and `public_ip`. Uses the CLI's configured credentials. |
-| `azurejobs` | Manual Container Apps Jobs REST API `2025-07-01`. Requires `subscription`, `resource_group`, `environment_id`, and `region`. Authentication uses `token_env` or `az account get-access-token`. |
+| Provider | Configuration type | Capacity and placement |
+| --- | --- | --- |
+| Local Docker | `docker` | Explicit CPU, memory, and container-count budget; reconstructs commitments from container metadata. No disk quotas. |
+| Remote service | `remote` | Authenticated [OpenAPI protocol](api/provider.openapi.yaml), batch submission, partial acceptance, and capacity fallback. |
+| Google Cloud Run Jobs | `cloudrun` | Rounds up to supported job resource sizes; native execution timeout. |
+| AWS ECS Fargate | `ecs` | Standalone tasks with supported task sizes and the execution supervisor. |
+| Azure Container Apps Jobs | `azurejobs` | Manual jobs with supported CPU/memory pairs and native execution timeout. |
 
-These are built-in adapters; only `remote` requires a separate provider service. A future external-runner registry/dispatcher can implement that protocol without adding runner registration or long polling to Cortex.
+A future service that registers external runners and dispatches work by long polling can implement the remote protocol. Cortex needs only its prepare/submit API.
 
-### Local Docker capacity
+See [provider configuration and limitations](docs/providers.md) for authentication, image storage bounds, Docker admission, retention, and cloud allocation details.
 
-Configure CPU, memory, and container-count budgets after reserving room for the host. Admission charges the full committed allocations, including pending and uncertain starts. Idle resource usage does not create more capacity. The adapter serializes admission, verifies created container limits before starting, and rebuilds its accounting from Docker after a controller restart.
+## Configuration
 
-Scratch uses a bounded tmpfs at `/scratch` by default. For `M` usable execution memory, `S` scratch, and configured overhead `H`, host admission charges `M + S + H`. The container memory limit is `M + S`; c2j receives `M` and `S` separately. There are **no disk quotas or disk-backed scratch guarantees**. The adapter uses Docker's native platform and binds each launch to a locally resolved image ID. Docker CPU/memory limits are described in [Docker's resource documentation](https://docs.docker.com/engine/containers/resource_constraints/).
+Each target selects a JobDB instance/tenant and a list of repository cells. Launch services have positive numeric priorities: **1 is preferred over 2**. Services at the same priority rotate first choice per batch.
 
-Install the static `cortex-exec` helper at a path visible both to Cortex and to the Docker daemon. The adapter mounts it into the requested image and uses it to enforce deadlines and forward termination signals. Container images must contain a compatible `c2j` and support the requested process and writable scratch path. Other clients must not restart or change managed containers outside this accounting. When several controllers need a host, put a single admission service behind the remote protocol.
+```yaml
+targets:
+  - instance_id: production
+    jobdb: https://jobdb.example.com/acme
+    cells: [github.com/acme/api, github.com/acme/worker]
+    launch_services:
+      - {name: runner_pool_a, priority: 1}
+      - {name: runner_pool_b, priority: 1}
+      - {name: cloud_overflow, priority: 2}
+```
 
-### Cloud allocations and images
+Define those service names under `providers` in the same file. Full examples include [remote](examples/remote.yaml), [Docker](examples/docker.yaml), [cloud](examples/clouds.yaml), and [container](examples/container.yaml) configurations.
 
-Cloud adapters prepare supported sizes before building executor environments:
+Defaults include a 5-second poll interval, a 60-second per-job cooldown, and batches of at most 100 jobs. A confirmed `no_capacity`, `unsupported`, or `unavailable` response permits fallback. An uncertain submission retains its cooldown without immediate fallback, since compute may already have started.
 
-- Cloud Run supports the adapter's `linux/amd64` profile, rounds CPU/memory upward, and adds scratch to total container memory. Scratch is a bounded in-memory volume. See [memory combinations](https://docs.cloud.google.com/run/docs/configuring/jobs/memory-limits) and [in-memory volumes](https://docs.cloud.google.com/run/docs/configuring/jobs/in-memory-volume-mounts).
-- ECS uses Fargate Linux platform `1.4.0`, supports `amd64` and `arm64`, and chooses valid task CPU/memory combinations. Usable scratch excludes image storage. See [Fargate storage accounting](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/fargate-task-storage.html).
-- Azure uses consumption CPU/memory pairs and the associated ephemeral-storage capacity. It defaults to at most 2 vCPUs; set `max_azure_cpu_millis: 4000` only for an environment supporting those larger pairs. See [container resource combinations](https://learn.microsoft.com/en-us/azure/container-apps/containers) and [ephemeral storage](https://learn.microsoft.com/en-us/azure/container-apps/storage-mounts).
+Only recipe job routes are selected by default. Cell selectors must match the repository metadata used at submission; a local path and its Git remote selector need not be interchangeable. Use explicit repository selectors in container deployments. `c2j.expected_version` optionally pins the **complete** output of `c2j version`, for example `c2j version 0.0.52` for that official release binary.
 
-ECS and Azure require a deployment-supplied `image_storage_bounds` map for each **digest-pinned** image they can launch. Values are conservative, validated bounds for the image and provider overhead consuming task storage. Cortex subtracts that bound from provisioned storage before advertising scratch. Unknown bounds or mutable image tags return `unsupported`; a configured number is an operator assertion, not an image measurement performed by Cortex. See [cloud configuration examples](examples/clouds.yaml).
+A controller restart loses its cooldown and may cause duplicate compute. JobDB leases protect job ownership; job side effects still need their normal idempotency. Provider resources are retained for inspection; configure terminal-resource cleanup for your deployment.
 
-ECS images also need `cortex-exec` at the configured `supervisor_path`, since ECS standalone tasks do not supply the execution timeout used here. Cloud Run and Azure use native job timeouts and disable provider execution retries. This initial cloud implementation does not enforce queued start deadlines or working-directory overrides outside ECS; requests for those options decline rather than silently dropping them. Configure image access and workload credentials in the target deployment; per-job Azure registry/identity customization is not currently exposed.
+## Development
 
-## Inspection and retention
+Go 1.24 or newer is required. Packaging tests also use Node.js 22+, Python 3, and standard Unix archive tools.
 
-Every launch carries the complete jobdb instance/tenant/job/launch correlation envelope. Docker stores it in labels; Cloud Run stores it in annotations and container environment; ECS stores tags/environment; Azure stores tags/environment; remote services retain it on their launch records. The process environment also exposes `CORTEX_*` identity values.
+```sh
+make build          # bin/cortex and bin/cortex-exec
+make test           # Go tests with the race detector
+make vet
+make test-packaging # npm installer and c2j download verification
+```
 
-Containers, per-launch cloud jobs, and ECS task-definition revisions are retained for inspection. Automated pruning is not implemented. Use provider tools to remove confirmed terminal resources after your retention period, preserving any parent records needed to identify retained executions. Abandoned Docker `created` containers remain charged until their outcome is inspected and they are safely removed. Host disk availability, image cache size, and retained logs remain operational concerns; there is no disk-capacity guarantee from Docker admission.
+The suite covers scheduler concurrency/fallback, CLI-to-remote integration, Docker accounting/recovery, cloud request mappings, and package installation. CI runs on Linux AMD64, Linux ARM64, and macOS, cross-compiles all four release executables, and smoke-tests both container architectures.
 
-A restart loses Cortex's cooldown and may cause duplicate compute. JobDB leases protect job ownership; application side effects still need their normal idempotency. Provider start failures after ambiguous responses can also duplicate compute on a later cooldown attempt.
-
-## Verification status
-
-Verified during implementation:
-
-- `go test -race ./...`, `go vet ./...`, and both executable builds.
-- OpenAPI schema validation, examples, and negative cases.
-- Real c2j `v0.0.52` discovery against a temporary in-memory JobDB server.
-- CLI-to-remote-provider flow using an executable fixture and a local HTTP test server.
-- Docker lifecycle/capacity tests against a fake Engine API; cloud tests against HTTP/CLI doubles.
-
-No real Docker daemon or live cloud deployment was available, so real image pulls, container startup, cloud IAM/networking, and cloud execution remain deployment acceptance checks. The example runner Dockerfile is supplied for those checks but was not built here.
-
-To repeat the live, read-only c2j contract check against a seeded test tenant:
+The c2j JSON contract has also been checked against c2j v0.0.52 and a temporary JobDB server. To repeat that read-only integration check against your own seeded test tenant:
 
 ```sh
 CORTEX_TEST_C2J=/path/to/c2j \
@@ -97,4 +172,17 @@ CORTEX_TEST_CELL=/path/to/test-cell \
 go test -race ./internal/c2j -run TestLiveC2JExecutable -v
 ```
 
-See [DESIGN.md](DESIGN.md) for the architecture, [the Docker plan](LOCAL_DOCKER_PROVIDER.md), and [the remote OpenAPI contract](api/provider.openapi.yaml).
+Cloud adapter tests use HTTP/CLI doubles. Real cloud IAM, networking, and workload execution require deployment acceptance checks.
+
+## Design and release documentation
+
+- [Architecture and scheduling](DESIGN.md)
+- [Provider operations](docs/providers.md)
+- [Remote protocol](REMOTE_PROVIDER_PROTOCOL.md) and [OpenAPI schema](api/provider.openapi.yaml)
+- [Docker capacity design](LOCAL_DOCKER_PROVIDER.md)
+- [Release process and publishing setup](docs/releases.md)
+- [c2j execution tracking guide](GUIDE-Execution-Tracking.md)
+
+## License
+
+[Apache-2.0](LICENSE). The npm packaging follows [c2j's release implementation](https://github.com/colony-2/c2j/tree/main/npm/c2j), with Cortex-specific installation and process-control tests.

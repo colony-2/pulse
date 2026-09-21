@@ -1,6 +1,6 @@
 c2j:
   executable: /usr/local/bin/c2j
-  expected_version: c2j version v0.0.52
+  expected_version: c2j version 0.0.52
 poll_interval: 5s
 cooldown: 60s
 call_timeout: 2m
