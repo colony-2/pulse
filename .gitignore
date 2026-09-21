@@ -1,0 +1,5 @@
+.shai/
+/bin/
+/coverage.out
+/cortex.yaml
+*.test

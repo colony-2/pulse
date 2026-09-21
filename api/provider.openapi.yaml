@@ -1,0 +1,626 @@
+openapi: 3.1.1
+info:
+  title: Cortex Remote Compute Provider Protocol
+  version: 1.0.0
+  description: Proposed batch-only compute provider contract. See REMOTE_PROVIDER_PROTOCOL.md for admission, idempotency,
+    expiry, and fallback semantics. Providers do not interpret c2j or JobDB. Numeric priorities are controller configuration.
+servers:
+- url: https://provider.example.com
+security:
+- bearerAuth: []
+paths:
+  /v1/prepare:
+    post:
+      operationId: prepareBatch
+      summary: Prepare a batch without starting execution
+      description: Return one result per launch ID. Validate the envelope before processing. Prepared plans may
+        expire and do not guarantee future capacity.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrepareRequest'
+            example:
+              items:
+              - launch_id: launch-001
+                image: registry.example/runner:1.2
+                platform: linux/amd64
+                cpu_millis: 2000
+                memory_bytes: 4294967296
+                scratch_bytes: 1073741824
+                timeout_seconds: 3600
+                start_before: '2026-09-21T12:01:00Z'
+                metadata:
+                  cortex_metadata_version: '1'
+                  cortex_managed_by: cortex
+                  cortex_jobdb_instance_id: production
+                  cortex_tenant_id: acme
+                  cortex_job_id: job-123
+                  cortex_launch_id: launch-001
+              - launch_id: launch-002
+                image: registry.example/runner:1.2
+                platform: linux/amd64
+                cpu_millis: 2000
+                memory_bytes: 4294967296
+                scratch_bytes: 1073741824
+                timeout_seconds: 3600
+                start_before: '2026-09-21T12:01:00Z'
+                metadata:
+                  cortex_metadata_version: '1'
+                  cortex_managed_by: cortex
+                  cortex_jobdb_instance_id: production
+                  cortex_tenant_id: acme
+                  cortex_job_id: job-124
+                  cortex_launch_id: launch-002
+      responses:
+        '200':
+          description: Complete per-item results. Mixed outcomes are normal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrepareResponse'
+              example:
+                results:
+                - launch_id: launch-001
+                  status: prepared
+                  plan:
+                    token: opaque-plan-001
+                    expires_at: '2026-09-21T12:01:00Z'
+                    allocation:
+                      cpu_millis: 2000
+                      memory_bytes: 4294967296
+                      scratch_bytes: 1073741824
+                      platform: linux/amd64
+                      image: registry.example/runner:1.2
+                - launch_id: launch-002
+                  status: no_capacity
+                  reason: No compatible runner slot available.
+        '400':
+          description: Malformed request or duplicate launch IDs. No items processed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication failed before processing any items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Batch authorization denied before processing any items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request too large. No items processed; maximum batch size is 100.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Request schema validation failed. No items processed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected failure. For submission, acceptance of unreported items is uncertain; no immediate
+            fallback.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/submit:
+    post:
+      operationId: submitBatch
+      summary: Submit a batch with per-item idempotency
+      description: 'Idempotency scope: provider instance, authenticated principal, launch ID. Exact logical retries
+        return the recorded result, independent of batch membership. Changed plans/processes for an existing ID
+        are rejected without changing its original launch. Retain decisions at least through plan expiry and 24
+        hours after a terminal decision or accepted launch termination. Definite declines authorize fallback; missing
+        or unknown outcomes do not.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitRequest'
+            example:
+              items:
+              - launch_id: launch-001
+                plan_token: opaque-plan-001
+                process:
+                  command:
+                  - c2j
+                  args:
+                  - run
+                  - --job-id
+                  - job-123
+                  - --worker-id
+                  - launch-001
+                  - --on-not-ready
+                  - fail
+                  - --ci
+                  - --input-mode
+                  - fail
+                  env:
+                    C2J_JOBDB: https://jobdb.example/acme
+                    C2J_EXECUTION_CPU: '2'
+                    C2J_EXECUTION_MEMORY: 4Gi
+                    C2J_EXECUTION_EPHEMERAL_STORAGE: 1Gi
+                    C2J_EXECUTION_PLATFORM: linux/amd64
+                    C2J_EXECUTION_IMAGE: registry.example/runner:1.2
+      responses:
+        '200':
+          description: Complete per-item results. Mixed outcomes are normal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitResponse'
+              example:
+                results:
+                - launch_id: launch-001
+                  status: accepted
+                  inspection_uri: /v1/launches/launch-001
+                  refs: []
+        '400':
+          description: Malformed request or duplicate launch IDs. No items processed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Authentication failed before processing any items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Batch authorization denied before processing any items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: Request too large. No items processed; maximum batch size is 100.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: Request schema validation failed. No items processed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Unexpected failure. For submission, acceptance of unreported items is uncertain; no immediate
+            fallback.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/launches/{launch_id}:
+    get:
+      operationId: getLaunch
+      summary: Inspect a launch and its correlation metadata
+      description: Diagnostic lookup, including before runner assignment. A missing record is not evidence that
+        a submission never ran.
+      parameters:
+      - name: launch_id
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/LaunchId'
+      responses:
+        '200':
+          description: Launch record owned by this principal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LaunchRecord'
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Access denied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: No inspectable record; may be absent or past retention.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        default:
+          description: Inspection failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    LaunchId:
+      type: string
+      pattern: ^[A-Za-z0-9._-]{1,128}$
+      description: Unique per launch attempt. Scoped by provider instance and authenticated principal; stable across
+        fallback within the attempt.
+    Metadata:
+      type: object
+      minProperties: 1
+      additionalProperties:
+        type: string
+      description: Opaque exact correlation envelope. Preserve it on the launch record before execution can start.
+        Do not place credentials here.
+    ComputeRequest:
+      type: object
+      properties:
+        launch_id:
+          $ref: '#/components/schemas/LaunchId'
+        image:
+          type: string
+          minLength: 1
+          description: OCI launch reference, including tag or digest as required.
+        platform:
+          type: string
+          minLength: 1
+          description: Normalized OCI os/architecture[/variant].
+        cpu_millis:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          description: Usable CPU in millicores; 1000 is one vCPU.
+        memory_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          description: Usable application memory, available simultaneously with scratch.
+        scratch_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          description: Usable ephemeral workspace capacity, available simultaneously with memory.
+        timeout_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          description: Maximum execution duration after container startup.
+        start_before:
+          type: string
+          format: date-time
+          description: Optional latest container startup time. Required if the provider queues the launch; not the
+            execution deadline.
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+      required:
+      - launch_id
+      - image
+      - platform
+      - cpu_millis
+      - memory_bytes
+      - scratch_bytes
+      - timeout_seconds
+      - metadata
+      additionalProperties: false
+    Allocation:
+      type: object
+      properties:
+        cpu_millis:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          description: Usable CPU in millicores; 1000 is one vCPU.
+        memory_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          description: Usable application memory, available simultaneously with scratch.
+        scratch_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          description: Usable ephemeral workspace capacity, available simultaneously with memory.
+        platform:
+          type: string
+          minLength: 1
+        image:
+          type: string
+          minLength: 1
+          description: Launch image reference whose meaning must be preserved when binding to content.
+        image_digest:
+          type: string
+          minLength: 1
+          description: Verified OCI manifest digest, if known. Distinct from image/config ID.
+        image_id:
+          type: string
+          minLength: 1
+          description: Runtime image/config ID if known; diagnostic only.
+      required:
+      - cpu_millis
+      - memory_bytes
+      - scratch_bytes
+      - platform
+      - image
+      additionalProperties: true
+    PreparedPlan:
+      type: object
+      properties:
+        token:
+          type: string
+          minLength: 1
+          description: Opaque authorization for the immutable prepared request, bound to its principal and launch
+            ID.
+        expires_at:
+          type: string
+          format: date-time
+          description: Latest time for first submission; does not invalidate an accepted launch or a recorded idempotent
+            replay.
+        allocation:
+          $ref: '#/components/schemas/Allocation'
+      required:
+      - token
+      - expires_at
+      - allocation
+      additionalProperties: true
+    PreparedResult:
+      type: object
+      properties:
+        launch_id:
+          $ref: '#/components/schemas/LaunchId'
+        status:
+          const: prepared
+          type: string
+        plan:
+          $ref: '#/components/schemas/PreparedPlan'
+      required:
+      - launch_id
+      - status
+      - plan
+      additionalProperties: true
+    DeclinedResult:
+      type: object
+      properties:
+        launch_id:
+          $ref: '#/components/schemas/LaunchId'
+        status:
+          type: string
+          enum:
+          - no_capacity
+          - unsupported
+          - unavailable
+          - rejected
+        reason:
+          type: string
+          minLength: 1
+          description: Diagnostic reason. Fallback depends on status, never text matching.
+      required:
+      - launch_id
+      - status
+      - reason
+      additionalProperties: true
+    PreparationResult:
+      oneOf:
+      - $ref: '#/components/schemas/PreparedResult'
+      - $ref: '#/components/schemas/DeclinedResult'
+    PrepareRequest:
+      type: object
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ComputeRequest'
+      required:
+      - items
+      additionalProperties: false
+    PrepareResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/PreparationResult'
+      required:
+      - results
+      additionalProperties: true
+    ProcessSpec:
+      type: object
+      properties:
+        command:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            minLength: 1
+          description: Explicit executable and optional entrypoint arguments; no implicit shell interpretation.
+        args:
+          type: array
+          items:
+            type: string
+        env:
+          type: object
+          additionalProperties:
+            type: string
+          description: Supplied values override image environment values. Preserve exact values; do not log secrets.
+        working_dir:
+          type: string
+          minLength: 1
+          description: Absolute container path. If omitted, use the image working directory.
+      required:
+      - command
+      - args
+      - env
+      additionalProperties: false
+    PreparedLaunch:
+      type: object
+      properties:
+        launch_id:
+          $ref: '#/components/schemas/LaunchId'
+        plan_token:
+          type: string
+          minLength: 1
+        process:
+          $ref: '#/components/schemas/ProcessSpec'
+      required:
+      - launch_id
+      - plan_token
+      - process
+      additionalProperties: false
+    AcceptedResult:
+      type: object
+      properties:
+        launch_id:
+          $ref: '#/components/schemas/LaunchId'
+        status:
+          type: string
+          enum:
+          - accepted
+        inspection_uri:
+          type: string
+          format: uri-reference
+          description: URI for the authenticated launch inspection endpoint, relative to this service or same-origin
+            absolute.
+        refs:
+          type: array
+          items:
+            type: string
+            minLength: 1
+          description: Known native resource/operation references; may be empty before assignment.
+      required:
+      - launch_id
+      - status
+      - inspection_uri
+      - refs
+      additionalProperties: true
+    UnknownResult:
+      type: object
+      properties:
+        launch_id:
+          $ref: '#/components/schemas/LaunchId'
+        status:
+          type: string
+          enum:
+          - unknown
+        reason:
+          type: string
+          minLength: 1
+        refs:
+          type: array
+          items:
+            type: string
+            minLength: 1
+      required:
+      - launch_id
+      - status
+      - reason
+      additionalProperties: true
+    SubmissionResult:
+      oneOf:
+      - $ref: '#/components/schemas/AcceptedResult'
+      - $ref: '#/components/schemas/DeclinedResult'
+      - $ref: '#/components/schemas/UnknownResult'
+    SubmitRequest:
+      type: object
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/PreparedLaunch'
+      required:
+      - items
+      additionalProperties: false
+    SubmitResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/SubmissionResult'
+      required:
+      - results
+      additionalProperties: true
+    LaunchRecord:
+      type: object
+      properties:
+        launch_id:
+          $ref: '#/components/schemas/LaunchId'
+        state:
+          type: string
+          enum:
+          - queued
+          - starting
+          - running
+          - succeeded
+          - failed
+          - timed_out
+          - expired
+          - cancelled
+          - unknown
+          description: Provider execution state; succeeded does not assert application/job completion.
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+        allocation:
+          $ref: '#/components/schemas/Allocation'
+        refs:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        accepted_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        reason:
+          type: string
+      required:
+      - launch_id
+      - state
+      - metadata
+      - allocation
+      - refs
+      - accepted_at
+      additionalProperties: true
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+          minLength: 1
+        message:
+          type: string
+          minLength: 1
+      required:
+      - code
+      - message
+      additionalProperties: true
