@@ -30,12 +30,12 @@ The workflow is [.github/workflows/release.yaml](../.github/workflows/release.ya
 2. Use the same `anothrNick/github-tag-action` version and patch-bump default as c2j. Main-branch releases use `vMAJOR.MINOR.PATCH` tags.
 3. Build static Go executables and optionally sign/notarize both Darwin binaries before packaging.
 4. Pack the npm tarball and smoke-test its installer against the local, checksum-verified release archives.
-5. Resolve the latest **stable published c2j release once**, download and verify that release for both architectures, then build and smoke-test both non-root distroless images. Build arguments and image records retain the selected c2j version.
+5. Build and smoke-test both non-root distroless images with the c2j listing library pinned in `go.mod`. Record its module version in the release metadata. The default images contain no separate c2j executable.
 6. Publish the versioned images and multi-architecture manifest to GHCR; attach all artifacts to GitHub Releases.
 7. Test npm installation using the real published GitHub download URLs, then publish the **same tarball** attached to GitHub. This order ensures the npm installer can already fetch its binary.
 8. Promote the successful image release to `latest` after npm publishing succeeds.
 
-Release runs are serialized and are not canceled by new pushes. The workflow can also be dispatched manually; supply an existing tag to rebuild that release, or leave it empty on `main` to create one. Re-running **failed jobs** is preferable after a transient publish failure: it preserves the already-produced artifacts. Rebuilding an existing tag can select a newer c2j release or base image, so published image digests should be used when exact identity matters. npm versions cannot be overwritten; a full rebuild after npm publication requires a new version.
+Release runs are serialized and are not canceled by new pushes. The workflow can also be dispatched manually; supply an existing tag to rebuild that release, or leave it empty on `main` to create one. Re-running **failed jobs** is preferable after a transient publish failure: it preserves the already-produced artifacts. Rebuilding an existing tag can select a newer base image, so published image digests should be used when exact identity matters. npm versions cannot be overwritten; a full rebuild after npm publication requires a new version.
 
 No tags, npm packages, or images are published by local test commands. Pushing to this repository's `main` branch starts the release workflow once it is hosted on GitHub and configured below.
 
@@ -71,9 +71,11 @@ With all five present, Quill v0.7.1 signs and notarizes Darwin binaries before t
 
 ## Container composition
 
-[Dockerfile](../Dockerfile) cross-compiles Cortex and its supervisor with CGO disabled, and obtains the official c2j binary through [fetch_c2j.py](../scripts/fetch_c2j.py). Downloaded c2j archives must have a matching SHA-256 entry in the same release's `checksums.txt`. The final stage is `gcr.io/distroless/static-debian12:nonroot`, with no Go compiler, Python, shell, Git, or cloud SDKs.
+[Dockerfile](../Dockerfile) cross-compiles Cortex and its supervisor with CGO disabled. The default final stage is `gcr.io/distroless/static-debian12:nonroot`, containing those two executables and the embedded listing dependency’s license/version records. It contains no standalone c2j executable, Go compiler, Python, Node.js/npm, shell, Git, or cloud SDKs.
 
-The image uses the latest stable c2j available **at build time**, not the head of c2j's source branch and not a runtime downloader. Release builds pass an explicit `C2J_VERSION=vX.Y.Z` to both architectures. Local builds may omit it to resolve `latest`, but should pass the resolved tag explicitly to keep cache invalidation and metadata accurate. The exact tag is always saved at `/usr/share/cortex/c2j-version.txt`; the label is exact when an explicit version is supplied.
+The c2j Go module is pinned in `go.mod`; release builds do not resolve a newer version implicitly. The initial public API integration uses `v0.0.53-0.20260922032206-ef65f0001972`, because the API was available upstream before a containing tag was published. This is a remotely resolvable Go pseudo-version, with no development-only `replace`. Both architectures use that same dependency. The selected version is recorded at `/usr/share/cortex/c2j-version.txt` and in release `versions.txt`.
+
+The optional Docker build target `external-c2j` adds a separately downloaded CLI for deployments using `c2j.mode: external`. Its `C2J_VERSION` build argument selects an official c2j release; [fetch_c2j.py](../scripts/fetch_c2j.py) verifies the download’s SHA-256 checksum. Resolve and pass a tag explicitly for consistent caching and metadata. This optional binary’s version is recorded in `/usr/share/cortex/c2j-executable-version.txt` and `com.colony2.c2j.executable.version`. The default published images use the minimal `final` target.
 
 Remote providers work without external command-line tools. Cloud Run and Azure can use configured access-token environment variables; tokens must remain valid over the controller's lifetime. ECS requires AWS CLI v2 in a deployment-specific image. Executor job images are configured independently and must supply their recipe dependencies.
 
@@ -98,11 +100,10 @@ node scripts/smoke-npm.js 0.0.0
 With Docker and Buildx available:
 
 ```sh
-C2J_VERSION=$(python3 scripts/fetch_c2j.py)
 docker buildx build --load --platform linux/arm64 \
-  --build-arg VERSION=0.0.0 --build-arg "C2J_VERSION=$C2J_VERSION" \
+  --build-arg VERSION=0.0.0 \
   -t cortex:test-arm64 .
-scripts/smoke-container.sh cortex:test-arm64 0.0.0 linux/arm64 "$C2J_VERSION"
+scripts/smoke-container.sh cortex:test-arm64 0.0.0 linux/arm64
 ```
 
-Repeat for `linux/amd64`; execution on a different host architecture requires QEMU/binfmt support. CI configures this automatically. The smoke check runs both executable versions, validates Cortex configuration using bundled c2j on a read-only filesystem, exercises the supervisor, and checks the non-root image user.
+Repeat for `linux/amd64`; execution on a different host architecture requires QEMU/binfmt support. CI configures this automatically. The smoke check runs Cortex, validates embedded listing configuration on a read-only filesystem, exercises the supervisor, checks the non-root image user, and confirms the default image has no c2j executable. The CLI integration tests exercise embedded discovery through the JobDB HTTP protocol with an empty `PATH`; optional subprocess discovery is tested separately.

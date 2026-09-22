@@ -10,7 +10,7 @@ Cortex watches explicitly configured repository cells for jobs that need an exec
 
 ```mermaid
 flowchart LR
-    J[JobDB] -->|c2j list --json| C[Cortex]
+    J[JobDB] -->|c2j Go listing API| C[Cortex]
     C -->|Prepare and submit batches| P[Launch services]
     P --> D[Local Docker]
     P --> R[Remote runner service]
@@ -22,19 +22,18 @@ flowchart LR
 - **Small controller:** no database, notifications, or runner registry. Polling, per-job cooldowns, and round-robin cursors stay in memory.
 - **Portable requirements:** image, architecture, CPU, memory, and scratch capacity come from c2j, with configured defaults when absent. Executors receive the allocation the provider actually supplies.
 - **Batch placement:** services accept or decline individual jobs in a batch. Cortex tries equal-priority peers before moving to a lower-priority tier.
-- **Clear ownership:** c2j manages job leases, replay, and changes in execution requirements. Cortex supplies compute through the c2j executable interface.
+- **Clear ownership:** c2j manages job leases, replay, and changes in execution requirements. Cortex lists through c2j’s public Go API and supplies compute; executor containers run the c2j command.
 
 ## Install
 
 ### npm
 
 ```sh
-npm install --global @colony2/cortex @colony2/c2j
+npm install --global @colony2/cortex
 cortex -version
-c2j version
 ```
 
-The release workflow publishes `@colony2/cortex`. Its installer downloads the matching native executable from GitHub Releases and verifies its SHA-256 checksum. Node.js 22 or newer, `tar`, and HTTPS access to GitHub release assets are required. Install scripts must be enabled. `c2j` is a separate executable dependency; the container image bundles it.
+The release workflow publishes `@colony2/cortex`. Its installer downloads the matching native executable from GitHub Releases and verifies its SHA-256 checksum. Node.js 22 or newer, `tar`, and HTTPS access to GitHub release assets are required. Install scripts must be enabled. Job listing is embedded in Cortex through `github.com/colony-2/c2j/pkg/joblist`; the controller needs no separate c2j executable. Executor job images still need c2j.
 
 | Platform | AMD64 / x86-64 | ARM64 / Apple Silicon |
 | --- | --- | --- |
@@ -50,7 +49,7 @@ Download the archive for your platform from [GitHub Releases](https://github.com
 
 ## Quick start
 
-1. Install Cortex and a compatible c2j release with execution support.
+1. Install Cortex and select an executor image containing a compatible c2j release with execution support.
 2. Copy [examples/remote.yaml](examples/remote.yaml) to `cortex.yaml`. Set your JobDB tenant URL, repository cells, runner-service endpoint, and default executor image.
 3. Supply the provider token and start Cortex:
 
@@ -61,7 +60,7 @@ cortex -config cortex.yaml -once
 cortex -config cortex.yaml
 ```
 
-`-check` validates configuration, checks c2j's execution flags, and initializes providers. `-once` performs one polling pass. The normal mode keeps polling until SIGINT or SIGTERM. Logs are JSON on stderr; containers already launched continue under their own lifetime controls.
+`-check` validates configuration, initializes the listing backend, and initializes providers. Embedded listing makes no network request during this check; connection/authentication failures appear during polling. `-once` performs one polling pass. The normal mode keeps polling until SIGINT or SIGTERM. Logs are JSON on stderr; containers already launched continue under their own lifetime controls.
 
 For a local machine, start with [examples/docker.yaml](examples/docker.yaml). For cloud services, use [examples/clouds.yaml](examples/clouds.yaml).
 
@@ -72,7 +71,6 @@ Releases publish **`ghcr.io/colony-2/cortex`** for `linux/amd64` and `linux/arm6
 The image uses **distroless static Debian**, runs as UID/GID `65532:65532`, and contains:
 
 - `/usr/local/bin/cortex`
-- `/usr/local/bin/c2j` — the latest stable c2j release resolved when the Cortex release is built
 - `/usr/local/bin/cortex-exec`
 - CA certificates and bundled version/license records under `/usr/share/cortex`
 
@@ -86,13 +84,12 @@ docker run --rm --init \
   ghcr.io/colony-2/cortex:latest
 ```
 
-The mounted configuration must be readable by UID 65532. For repeatable deployments, select a release tag such as `:vX.Y.Z` or a manifest digest. `latest` advances after a successful release; an existing image keeps its bundled c2j version. Both architectures use the same c2j release, recorded in the image label `com.colony2.c2j.version` and the GitHub release's `versions.txt`.
+The mounted configuration must be readable by UID 65532. For repeatable deployments, select a release tag such as `:vX.Y.Z` or a manifest digest. `latest` advances after a successful release; both architectures embed the c2j module version pinned in `go.mod`, recorded in `/usr/share/cortex/c2j-version.txt` and the GitHub release's `versions.txt`. The default image contains no c2j executable, Node.js, npm, shell, or Git.
 
 Inspect the executables without a shell:
 
 ```sh
 docker run --rm ghcr.io/colony-2/cortex:latest -version
-docker run --rm --entrypoint /usr/local/bin/c2j ghcr.io/colony-2/cortex:latest version
 ```
 
 **Provider dependencies inside the image:** remote services work directly. Cloud Run and Azure support access tokens through `token_env`; token renewal must be handled by the deployment. The image does not contain `gcloud`, `az`, or `aws`. The ECS adapter requires AWS CLI v2, so use a deployment image supplying that CLI. Local Docker needs socket permissions, a shared host lock directory, and a supervisor path visible at the same absolute location to the controller and daemon. See [provider operations](docs/providers.md).
@@ -101,12 +98,10 @@ This is a controller image. Configure `defaults.image` for your workload's execu
 
 ### Build an image locally
 
-Resolve c2j before building so both architectures use one version and the build cache can distinguish upgrades:
+The default image uses the pinned listing library and builds without downloading a c2j executable:
 
 ```sh
-C2J_VERSION=$(python3 scripts/fetch_c2j.py)
 docker buildx build --load \
-  --build-arg "C2J_VERSION=$C2J_VERSION" \
   --build-arg VERSION=dev \
   -t cortex:local .
 ```
@@ -146,13 +141,39 @@ Define those service names under `providers` in the same file. Full examples inc
 
 Defaults include a 5-second poll interval, a 60-second per-job cooldown, and batches of at most 100 jobs. A confirmed `no_capacity`, `unsupported`, or `unavailable` response permits fallback. An uncertain submission retains its cooldown without immediate fallback, since compute may already have started.
 
-Only recipe job routes are selected by default. Cell selectors must match the repository metadata used at submission; a local path and its Git remote selector need not be interchangeable. Use explicit repository selectors in container deployments. `c2j.expected_version` optionally pins the **complete** output of `c2j version`, for example `c2j version 0.0.52` for that official release binary.
+Only recipe job routes are selected by default. With the default `c2j.mode: embedded`, cells must be explicit repository identities, such as `github.com/acme/app` or `file:///absolute/repository/path`. They must match the metadata used at submission. Local filesystem paths, configured aliases, and current-directory discovery require external mode. The library performs no checkout or local configuration discovery.
+
+For authenticated JobDB access in embedded mode, set `jobdb_token_env: JOBDB_TOKEN` on the target and supply that environment variable. Cortex sends it as a bearer token to that target and does not follow HTTP redirects. Provider authentication remains configured separately.
+
+### Optional external c2j listing
+
+Use [examples/external-c2j.yaml](examples/external-c2j.yaml) when you need an independently installed CLI or its local cell resolution:
+
+```yaml
+c2j:
+  mode: external
+  executable: /usr/local/bin/c2j
+  # expected_version: c2j version 0.0.52
+  # working_dir: /srv/cortex
+```
+
+`executable`, `expected_version`, `working_dir`, and `env` are external-mode settings. Existing configurations using those fields must add `mode: external`, or remove them to use embedded listing. External mode checks the executable before starting; there is no automatic fallback between backends. `expected_version` matches the complete output of `c2j version`.
+
+To include an external binary in a deployment image, build the optional target:
+
+```sh
+C2J_VERSION=$(python3 scripts/fetch_c2j.py)
+docker buildx build --load --target external-c2j \
+  --build-arg "C2J_VERSION=$C2J_VERSION" -t cortex:external .
+```
+
+Configure `mode: external` to use it. The default published image uses embedded listing. Both modes leave executor job commands and resource handoff semantics unchanged.
 
 A controller restart loses its cooldown and may cause duplicate compute. JobDB leases protect job ownership; job side effects still need their normal idempotency. Provider resources are retained for inspection; configure terminal-resource cleanup for your deployment.
 
 ## Development
 
-Go 1.24 or newer is required. Packaging tests also use Node.js 22+, Python 3, and standard Unix archive tools.
+Go 1.26 or newer is required. Packaging tests also use Node.js 22+, Python 3, and standard Unix archive tools.
 
 ```sh
 make build          # bin/cortex and bin/cortex-exec
@@ -161,9 +182,11 @@ make vet
 make test-packaging # npm installer and c2j download verification
 ```
 
+The public listing API is currently pinned to `v0.0.53-0.20260922032206-ef65f0001972`, a published Go pseudo-version for the upstream commit containing it; no tagged release contained the API when integrated. There is no local module replacement.
+
 The suite covers scheduler concurrency/fallback, CLI-to-remote integration, Docker accounting/recovery, cloud request mappings, and package installation. CI runs on Linux AMD64, Linux ARM64, and macOS, cross-compiles all four release executables, and smoke-tests both container architectures.
 
-The c2j JSON contract has also been checked against c2j v0.0.52 and a temporary JobDB server. To repeat that read-only integration check against your own seeded test tenant:
+The embedded adapter is tested against the real JobDB HTTP protocol, including cancellation, tenant isolation, pagination, and demand projection. CLI-to-provider integration runs with an empty `PATH` in embedded mode. The optional external adapter’s JSON contract has also been checked against c2j v0.0.52 and a temporary JobDB server. To repeat that read-only integration check against your own seeded test tenant:
 
 ```sh
 CORTEX_TEST_C2J=/path/to/c2j \

@@ -10,10 +10,14 @@ Each milestone receives its own tested commit.
 6. Cloud Run, ECS, and Azure Container Apps Jobs adapters.
 7. CLI/provider wiring, integration checks, operational documentation, and CI.
 
-Cloud credentials and a Docker daemon are not assumed available in the development environment. Use fake HTTP/command endpoints for deterministic integration tests, and explicitly report which live checks were possible. c2j is an executable dependency, never an imported library.
+Cloud credentials and a Docker daemon are not assumed available in the development environment. Use fake HTTP/command endpoints for deterministic integration tests, and explicitly report which live checks were possible. The controller now embeds c2j’s public listing library by default, with optional external CLI listing. Executor containers continue to invoke c2j.
 
 ## Completed validation
 
 The core, remote client, c2j/config/controller, Docker/supervisor, and cloud adapter milestones passed their targeted race-enabled tests before their commits. Final CLI wiring adds executable-to-remote integration, a real c2j/temporary JobDB discovery check, protocol validation, builds, and CI. See README.md for live-deployment checks still requiring infrastructure.
 
 Implementation commits use `colony2.com <col2bot@colony2.com>` as requested.
+
+## Public listing API migration
+
+The controller uses `github.com/colony-2/c2j/pkg/joblist` by default. The dependency is pinned to a remotely resolvable pseudo-version containing the new API; Go 1.26 is now required. `c2j.mode: external` retains subprocess listing. Default images include Cortex and its supervisor; the optional `external-c2j` Docker target adds a CLI.

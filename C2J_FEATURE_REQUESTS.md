@@ -1,5 +1,7 @@
 # Feature request: a supported public Go API for job listing
 
+Status: fulfilled by c2j’s public `pkg/joblist` API, reviewed in [the response](C2J_FEATURE_REQUESTS_RESPONSE.md) and integrated as Cortex’s default listing backend. The original request is retained below for context. No further c2j enhancement is needed for this integration.
+
 ## Summary
 
 Expose a documented, supported public Go API for listing c2j jobs and their execution requirements. A Go application should be able to obtain the information available through `c2j list --json` without installing or invoking the c2j executable, parsing CLI output, importing CLI-internal packages, or independently reconstructing c2j's JobDB queries and execution metadata interpretation.

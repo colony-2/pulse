@@ -333,7 +333,7 @@ Example controller configuration:
 
 ```yaml
 c2j:
-  executable: c2j
+  mode: embedded
 poll_interval: 5s
 cooldown: 60s
 call_timeout: 10s
@@ -367,7 +367,7 @@ cortex -config cortex.yaml -check
 cortex -config cortex.yaml -once
 ```
 
-`-check` validates configuration and c2j, but does **not** make a remote-provider health request. Use `-once` against a seeded test JobDB tenant to exercise actual preparation and submission. For a local test server, `allow_http: true` explicitly permits HTTP; normal deployments use HTTPS.
+`-check` validates configuration and initializes the listing backend, but does **not** make a JobDB or remote-provider health request in embedded mode. Use `-once` against a seeded test JobDB tenant to exercise actual preparation and submission. For a local test server, `allow_http: true` explicitly permits HTTP; normal deployments use HTTPS.
 
 ### Conformance checklist
 
