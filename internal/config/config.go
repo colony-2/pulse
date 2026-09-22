@@ -9,8 +9,10 @@ import (
 	"github.com/distribution/reference"
 	"gopkg.in/yaml.v3"
 	"io"
+	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -62,6 +64,9 @@ type Provider struct {
 	Command         string   `yaml:"command"`
 }
 type Config struct {
+	HTTP struct {
+		Listen string `yaml:"listen"`
+	} `yaml:"http"`
 	PollInterval string `yaml:"poll_interval"`
 	Cooldown     string `yaml:"cooldown"`
 	CallTimeout  string `yaml:"call_timeout"`
@@ -110,6 +115,18 @@ func Parse(b []byte) (*Config, error) {
 	var extra any
 	if e := d.Decode(&extra); e != io.EOF {
 		return nil, fmt.Errorf("configuration must contain one YAML document")
+	}
+	if c.HTTP.Listen == "" {
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		c.HTTP.Listen = ":" + port
+	}
+	_, port, err := net.SplitHostPort(c.HTTP.Listen)
+	n, portErr := strconv.Atoi(port)
+	if err != nil || portErr != nil || n < 0 || n > 65535 {
+		return nil, fmt.Errorf("http.listen must be a host:port address")
 	}
 	if c.PollInterval == "" {
 		c.PollInterval = "5s"

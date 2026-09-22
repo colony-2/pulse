@@ -70,3 +70,7 @@ func TestCellIsolationPaginationAndCooldown(t *testing.T) {
 		t.Fatal("cooldown bypassed")
 	}
 }
+
+func (p *accept) List(context.Context, compute.ListRequest) (compute.ListResponse, error) {
+	return compute.ListResponse{Items: []compute.Instance{}}, nil
+}

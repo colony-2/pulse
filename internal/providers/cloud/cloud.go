@@ -15,7 +15,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -39,7 +38,7 @@ type Provider struct {
 	quotaProject string
 	ecs          *ecs.Client
 	BaseURL      string
-	mu           sync.Mutex
+	gate         chan struct{}
 }
 type plan struct {
 	Request                        compute.Request
@@ -73,7 +72,7 @@ func New(c Config) (*Provider, error) {
 	default:
 		return nil, fmt.Errorf("unknown cloud kind")
 	}
-	p := &Provider{cfg: c, HTTP: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	p := &Provider{cfg: c, gate: make(chan struct{}, 1), HTTP: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	if c.Kind == "cloudrun" {
 		p.BaseURL = "https://run.googleapis.com"
 	} else if c.Kind == "azurejobs" {
@@ -292,8 +291,10 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		return nil, err
 	}
 	// Native calls may be singular; one adapter batch keeps the controller uniform.
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	if err := p.acquire(ctx); err != nil {
+		return nil, err
+	}
+	defer p.release()
 	out := []compute.Submission{}
 	for _, l := range ls {
 		result := compute.Submission{LaunchID: l.LaunchID}
@@ -536,3 +537,13 @@ func (p *Provider) submitECS(ctx context.Context, l compute.Launch, pl plan) (co
 	}
 	return r, fmt.Errorf("ECS declined task: %s", failures[0].Reason)
 }
+
+func (p *Provider) acquire(ctx context.Context) error {
+	select {
+	case p.gate <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func (p *Provider) release() { <-p.gate }

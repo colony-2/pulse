@@ -11,6 +11,7 @@ import (
 	"github.com/colony-2/cortex/pkg/compute"
 	"log/slog"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -24,9 +25,26 @@ type Controller struct {
 	Providers map[string]compute.Provider
 	Log       *slog.Logger
 	pass      int
+	statusMu  sync.RWMutex
+	status    PollStatus
 }
 
-func (c *Controller) Once(ctx context.Context) error {
+func (c *Controller) Once(ctx context.Context) (passErr error) {
+	c.statusMu.Lock()
+	c.status.Running = true
+	c.status.LastStarted = time.Now().UTC()
+	c.statusMu.Unlock()
+	defer func() {
+		c.statusMu.Lock()
+		defer c.statusMu.Unlock()
+		c.status.Running = false
+		c.status.LastFinished = time.Now().UTC()
+		c.status.Passes++
+		c.status.LastSucceeded = passErr == nil
+		if passErr != nil {
+			c.status.FailedPasses++
+		}
+	}()
 	type scope struct {
 		target config.Target
 		cell   string
@@ -148,4 +166,20 @@ func (c *Controller) Run(ctx context.Context) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+// PollStatus intentionally excludes raw errors, which can contain credentials.
+type PollStatus struct {
+	Running       bool      `json:"running"`
+	LastStarted   time.Time `json:"last_started"`
+	LastFinished  time.Time `json:"last_finished"`
+	LastSucceeded bool      `json:"last_succeeded"`
+	Passes        uint64    `json:"passes"`
+	FailedPasses  uint64    `json:"failed_passes"`
+}
+
+func (c *Controller) Status() PollStatus {
+	c.statusMu.RLock()
+	defer c.statusMu.RUnlock()
+	return c.status
 }

@@ -47,7 +47,12 @@ func (c *Client) call(ctx context.Context, method, path string, body any, out an
 		}
 	}
 	u := *c.base
-	u.Path = strings.TrimRight(u.Path, "/") + path
+	relative, err := url.Parse(path)
+	if err != nil {
+		return 0, err
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + relative.Path
+	u.RawQuery = relative.RawQuery
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), bytes.NewReader(data))
 	if err != nil {
 		return 0, err
@@ -143,12 +148,7 @@ func (c *Client) Submit(ctx context.Context, ls []compute.Launch) ([]compute.Sub
 		if r.Status == compute.Accepted {
 			var keys map[string]json.RawMessage
 			_ = json.Unmarshal(raw, &keys)
-			valid = valid && r.InspectionURI != "" && len(keys["refs"]) > 0 && string(keys["refs"]) != "null"
-			u, e := url.Parse(r.InspectionURI)
-			valid = valid && e == nil
-			if e == nil && u.IsAbs() {
-				valid = valid && u.Scheme == c.base.Scheme && u.Host == c.base.Host
-			}
+			valid = valid && len(keys["refs"]) > 0 && string(keys["refs"]) != "null"
 		}
 		if r.Status != compute.Accepted && r.Reason == "" {
 			valid = false
@@ -162,12 +162,33 @@ func (c *Client) Submit(ctx context.Context, ls []compute.Launch) ([]compute.Sub
 	return out, nil
 }
 
-// Inspect is diagnostic only and never used to bypass the scheduler cooldown.
-func (c *Client) Inspect(ctx context.Context, id string) (json.RawMessage, error) {
-	if strings.ContainsAny(id, "/?#") || id == "" {
-		return nil, fmt.Errorf("invalid launch ID")
+// List returns active provider instances; it never changes placement decisions.
+func (c *Client) List(ctx context.Context, q compute.ListRequest) (compute.ListResponse, error) {
+	q, err := q.Normalize()
+	if err != nil {
+		return compute.ListResponse{}, err
 	}
-	var out json.RawMessage
-	_, err := c.call(ctx, "GET", "/v1/launches/"+url.PathEscape(id), nil, &out)
-	return out, err
+	values := url.Values{"page_size": {fmt.Sprint(q.PageSize)}}
+	if q.PageToken != "" {
+		values.Set("page_token", q.PageToken)
+	}
+	if q.LaunchID != "" {
+		values.Set("launch_id", q.LaunchID)
+	}
+	var out compute.ListResponse
+	_, err = c.call(ctx, "GET", "/v1/launches?"+values.Encode(), nil, &out)
+	if err != nil {
+		return compute.ListResponse{}, err
+	}
+	if out.Items == nil || len(out.Items) > q.PageSize || len(out.NextPageToken) > 16384 || (out.NextPageToken != "" && out.NextPageToken == q.PageToken) {
+		return compute.ListResponse{}, fmt.Errorf("invalid provider list response")
+	}
+	seen := map[string]bool{}
+	for _, item := range out.Items {
+		if err := item.Validate(); err != nil || seen[item.ID] || (q.LaunchID != "" && item.LaunchID != q.LaunchID) {
+			return compute.ListResponse{}, fmt.Errorf("invalid provider instance")
+		}
+		seen[item.ID] = true
+	}
+	return out, nil
 }

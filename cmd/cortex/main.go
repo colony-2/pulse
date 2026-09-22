@@ -8,12 +8,16 @@ import (
 	"github.com/colony-2/cortex/internal/c2j"
 	"github.com/colony-2/cortex/internal/config"
 	"github.com/colony-2/cortex/internal/controller"
+	"github.com/colony-2/cortex/internal/httpapi"
 	"github.com/colony-2/cortex/internal/providers"
 	"github.com/colony-2/cortex/internal/scheduler"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 var version = "dev"
@@ -78,8 +82,33 @@ func run() error {
 	if *once {
 		return c.Once(ctx)
 	}
-	e = c.Run(ctx)
-	if errors.Is(e, context.Canceled) {
+	api, e := httpapi.New(c, version)
+	if e != nil {
+		return e
+	}
+	listener, e := net.Listen("tcp", cfg.HTTP.Listen)
+	if e != nil {
+		return fmt.Errorf("listen for HTTP diagnostics: %w", e)
+	}
+	server := &http.Server{Handler: api.Handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, WriteTimeout: cfg.Call + 10*time.Second, MaxHeaderBytes: 64 << 10}
+	httpDone := make(chan error, 1)
+	go func() { httpDone <- server.Serve(listener) }()
+	c.Log.Info("read-only HTTP API listening", "address", listener.Addr().String())
+	controllerDone := make(chan error, 1)
+	go func() { controllerDone <- c.Run(ctx) }()
+	select {
+	case e = <-httpDone:
+		cancel()
+		<-controllerDone
+	case e = <-controllerDone:
+		cancel()
+	}
+	shutdownCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stop()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		_ = server.Close()
+	}
+	if errors.Is(e, context.Canceled) || errors.Is(e, http.ErrServerClosed) {
 		return nil
 	}
 	return e

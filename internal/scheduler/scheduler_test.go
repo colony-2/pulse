@@ -185,3 +185,37 @@ func TestInvalidJobDoesNotReachProvider(t *testing.T) {
 		}
 	}
 }
+
+func (p *fake) List(context.Context, compute.ListRequest) (compute.ListResponse, error) {
+	return compute.ListResponse{Items: []compute.Instance{}}, nil
+}
+
+func (p *blocking) List(context.Context, compute.ListRequest) (compute.ListResponse, error) {
+	return compute.ListResponse{Items: []compute.Instance{}}, nil
+}
+
+func TestCooldownInspectionDoesNotChangeEligibility(t *testing.T) {
+	s := New(time.Minute, time.Second)
+	now := time.Now()
+	s.Now = func() time.Time { return now }
+	calls := [][]string{}
+	if _, err := s.Run(context.Background(), "scope", []Service{{"p", 1, &fake{calls: &calls, name: "p"}}}, jobs(1)); err != nil {
+		t.Fatal(err)
+	}
+	before := s.Cooldowns()
+	if len(before) != 1 || s.Eligible(jobs(1)[0].Key) || before[0].InFlight {
+		t.Fatal(before)
+	}
+	for range 3 {
+		if !reflect.DeepEqual(before, s.Cooldowns()) {
+			t.Fatal("snapshot mutated")
+		}
+	}
+	now = now.Add(time.Minute)
+	if len(s.Cooldowns()) != 0 || !s.Eligible(jobs(1)[0].Key) {
+		t.Fatal("expired cooldown visible")
+	}
+	if len(s.entries) != 1 {
+		t.Fatal("inspection pruned storage")
+	}
+}

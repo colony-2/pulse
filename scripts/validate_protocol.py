@@ -17,7 +17,7 @@ def check(name, value, valid=True):
     assert bool(errors) != valid, (name, [error.message for error in errors])
 
 
-assert set(spec["paths"]) == {"/v1/submit", "/v1/launches/{launch_id}"}
+assert set(spec["paths"]) == {"/v1/submit", "/v1/launches"}
 assert spec["info"]["version"] == "1.0.0"
 for operations in spec["paths"].values():
     for op in operations.values():
@@ -49,7 +49,10 @@ for field in ("process", "metadata", "image", "cpu_millis"):
 bad = copy.deepcopy(request)
 bad["items"][0]["plan_token"] = "obsolete"
 check("SubmitRequest", bad, False)
-check("SubmissionResult", {"launch_id": "test", "status": "accepted", "refs": []}, False)
+check("SubmissionResult", {"launch_id": "test", "status": "accepted", "refs": []})
+check("SubmissionResult", {"launch_id": "test", "status": "accepted"}, False)
+check("ListResponse", {"items": []})
+check("ListResponse", {"items": [{"id":"native", "launch_id":"test", "state":"succeeded", "metadata":{"key":"value"}, "refs":[]}]}, False)
 check("SubmissionResult", {"launch_id": "test", "status": "unknown", "reason": "Connection lost."})
 check("SubmissionResult", {"launch_id": "test", "status": "prepared"}, False)
 print("OpenAPI schema, specification/documentation examples, and negative cases passed.")

@@ -14,17 +14,8 @@ import (
 // the provider. Native launch calls get one attempt: an ambiguous response must
 // remain unknown rather than causing a hidden retry.
 func (p *Provider) aws(ctx context.Context, action string, body any) (map[string]json.RawMessage, error) {
-	if p.ecs == nil {
-		cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(p.cfg.Region), config.WithHTTPClient(p.HTTP))
-		if err != nil {
-			return nil, err
-		}
-		p.ecs = ecs.NewFromConfig(cfg, func(o *ecs.Options) {
-			o.Retryer = aws.NopRetryer{}
-			if p.BaseURL != "" {
-				o.BaseEndpoint = aws.String(p.BaseURL)
-			}
-		})
+	if err := p.ecsClient(ctx); err != nil {
+		return nil, err
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -66,4 +57,20 @@ func (p *Provider) aws(ctx context.Context, action string, body any) (map[string
 		result[key] = data
 	}
 	return result, nil
+}
+
+func (p *Provider) ecsClient(ctx context.Context) error {
+	if p.ecs == nil {
+		cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(p.cfg.Region), config.WithHTTPClient(p.HTTP))
+		if err != nil {
+			return err
+		}
+		p.ecs = ecs.NewFromConfig(cfg, func(o *ecs.Options) {
+			o.Retryer = aws.NopRetryer{}
+			if p.BaseURL != "" {
+				o.BaseEndpoint = aws.String(p.BaseURL)
+			}
+		})
+	}
+	return nil
 }

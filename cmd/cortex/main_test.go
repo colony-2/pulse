@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"github.com/colony-2/c2j/pkg/joblist"
@@ -14,7 +15,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
@@ -66,7 +69,7 @@ esac
 					if item.CPUMillis != 1000 || item.Image == "" || item.Metadata["cortex_job_id"] == "" || item.Process.Env["C2J_EXECUTION_CPU"] != "1000m" || item.Process.Env["CORTEX_JOB_ID"] == "" {
 						t.Error(item)
 					}
-					results = append(results, map[string]any{"launch_id": item.LaunchID, "status": "accepted", "inspection_uri": "/v1/launches/" + item.LaunchID, "refs": []string{}})
+					results = append(results, map[string]any{"launch_id": item.LaunchID, "status": "accepted", "refs": []string{}})
 				}
 				mu.Lock()
 				submitted += len(in.Items)
@@ -120,4 +123,109 @@ type listOnlyRuntime struct {
 
 func (r listOnlyRuntime) ListJobs(ctx context.Context, req jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
 	return r.list(ctx, req)
+}
+
+func TestCLIHTTPAndShutdown(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "cortex")
+	if out, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %s %v", out, err)
+	}
+	db := httptest.NewServer(jobremote.NewServer(listOnlyRuntime{list: func(context.Context, jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
+		return jobdb.ListJobsResponse{Jobs: []jobdb.JobSummary{}}, nil
+	}}))
+	defer db.Close()
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/v1/launches" || r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Errorf("unexpected provider request: %s %s", r.Method, r.URL)
+			w.WriteHeader(400)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(compute.ListResponse{Items: []compute.Instance{{ID: "queued-one", LaunchID: "launch-one", State: "queued", Metadata: map[string]string{"cortex_launch_id": "launch-one"}, Refs: []string{}}}})
+	}))
+	defer provider.Close()
+	cfg := map[string]any{
+		"http":      map[string]any{"listen": "127.0.0.1:0"},
+		"defaults":  map[string]any{"image": "registry.example/runner:1", "platform": "linux/amd64", "cpu": "1", "memory": "1Gi", "scratch": "1Gi"},
+		"providers": map[string]any{"pool": map[string]any{"type": "remote", "endpoint": provider.URL, "allow_http": true, "token_env": "CORTEX_TEST_PROVIDER_TOKEN"}},
+		"targets":   []any{map[string]any{"instance_id": "test", "jobdb": db.URL + "/acme", "cells": []string{"github.com/acme/app"}, "launch_services": []any{map[string]any{"name": "pool", "priority": 1}}}},
+	}
+	data, _ := yaml.Marshal(cfg)
+	path := filepath.Join(dir, "cortex.yaml")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, "-config", path)
+	cmd.Env = []string{"PATH=" + t.TempDir(), "CORTEX_TEST_PROVIDER_TOKEN=test-token"}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	address := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			var record struct {
+				Address string `json:"address"`
+			}
+			if json.Unmarshal(scanner.Bytes(), &record) == nil && record.Address != "" {
+				select {
+				case address <- record.Address:
+				default:
+				}
+			}
+		}
+	}()
+	var base string
+	select {
+	case addr := <-address:
+		base = "http://" + addr
+	case err := <-done:
+		t.Fatalf("controller exited before listening: %v", err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	for _, endpoint := range []string{"/status", "/config", "/instances", "/providers/pool/instances", "/scheduler/cooldowns", "/scheduler/round-robin"} {
+		res, err := client.Get(base + endpoint) // Public: no Authorization header.
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]any
+		err = json.NewDecoder(res.Body).Decode(&body)
+		res.Body.Close()
+		if err != nil || res.StatusCode != 200 {
+			t.Fatalf("%s: %d %v", endpoint, res.StatusCode, err)
+		}
+		if endpoint == "/instances" && (body["complete"] != true || len(body["items"].([]any)) != 1) {
+			t.Fatal(body)
+		}
+		if endpoint == "/config" && body["http"].(map[string]any)["listen"] != "127.0.0.1:0" {
+			t.Fatal("empty config")
+		}
+	}
+	if err = cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err = <-done:
+		if err != nil {
+			t.Fatalf("shutdown: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("controller did not shut down")
+	}
+	if res, err := client.Get(base + "/status"); err == nil {
+		res.Body.Close()
+		t.Fatal("HTTP listener remained open after shutdown")
+	}
 }

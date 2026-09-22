@@ -1,8 +1,8 @@
 # Implementing a remote compute provider
 
-Build a service that accepts complete container launches through `POST /v1/submit` and exposes diagnostic inspection through `GET /v1/launches/{launch_id}`. The service can wrap a cloud API or manage registered runners, in any implementation language.
+Build a service that accepts complete container launches through `POST /v1/submit` and lists active instances through `GET /v1/launches`. The service can wrap a cloud API or manage registered runners, in any implementation language.
 
-The [v1 OpenAPI contract](../api/provider.openapi.yaml) defines the wire format. [Remote provider protocol](../REMOTE_PROVIDER_PROTOCOL.md) defines its semantics and includes complete examples of a [batch request](../REMOTE_PROVIDER_PROTOCOL.md#example-submit-two-launches), [partial response](../REMOTE_PROVIDER_PROTOCOL.md#example-partial-acceptance), [request rejection](../REMOTE_PROVIDER_PROTOCOL.md#example-whole-request-rejection), and [inspection response](../REMOTE_PROVIDER_PROTOCOL.md#example-inspect-a-running-launch). Cortex supplies the HTTP client; this repository does not include a remote provider server.
+The [v1 OpenAPI contract](../api/provider.openapi.yaml) defines the wire format. [Remote provider protocol](../REMOTE_PROVIDER_PROTOCOL.md) defines its semantics and includes complete examples of a [batch request](../REMOTE_PROVIDER_PROTOCOL.md#example-submit-two-launches), [partial response](../REMOTE_PROVIDER_PROTOCOL.md#example-partial-acceptance), [request rejection](../REMOTE_PROVIDER_PROTOCOL.md#example-whole-request-rejection), and [list response](../REMOTE_PROVIDER_PROTOCOL.md#example-list-active-instances-for-one-launch). Cortex supplies the HTTP client; this repository does not include a remote provider server.
 
 ## Responsibilities
 
@@ -10,7 +10,7 @@ The [v1 OpenAPI contract](../api/provider.openapi.yaml) defines the wire format.
 | --- | --- | --- |
 | Finding runnable jobs and selecting one to launch | Matching the requested image, platform, and resources to compute | Claiming the selected job and managing its lease |
 | Priority tiers, batch placement, and fallback | Capacity admission, optional queueing, and starting the supplied process | Execution, replay, and runtime requirement changes |
-| Building the process and environment from requested/defaulted resources | Resource enforcement, execution deadlines, idempotency, and inspection | JobDB state transitions |
+| Building the process and environment from requested/defaulted resources | Resource enforcement, execution deadlines, idempotency, and active instance listing | JobDB state transitions |
 | In-memory per-job cooldown | Recovering accepted or uncertain launches | Determining whether its reported allocation remains sufficient |
 
 Treat the process and correlation metadata as opaque inputs. Your service does not query JobDB, resolve recipes, or construct c2j arguments. Runner registration, heartbeats, authentication, and long polling are internal to the service.
@@ -27,7 +27,7 @@ For submission:
 - Support batches of 1–100, including a batch of one. Validate the whole envelope, schema, authentication, authorization, and ID uniqueness before processing anything.
 - Return HTTP `200` with exactly one result per input ID; mixed outcomes are normal. Correlate by `launch_id`, not position.
 - Reject unknown request options. Allow clients to ignore new response fields.
-- Do not redirect: Cortex does not follow redirects. An endpoint at `https://example.com/compute` receives `/compute/v1/submit` and `/compute/v1/launches/{id}`. Include that prefix in root-relative inspection URIs.
+- Do not redirect: Cortex does not follow redirects. An endpoint at `https://example.com/compute` receives `/compute/v1/submit` and `/compute/v1/launches`.
 
 HTTP `400`, `401`, `403`, `413`, and `422` guarantee that no item was processed. Once any item may have been processed, return per-item outcomes or an ambiguous failure instead of one of these whole-request rejections.
 
@@ -41,7 +41,7 @@ Each item includes `launch_id`, `image`, `platform`, `cpu_millis`, `memory_bytes
 4. Preserve supplied command/arguments/environment exactly. Values override image/provider defaults and remain literal; no placeholder expansion or implicit shell. Respect an explicit working directory; otherwise use the image's directory.
 5. Admit against committed capacity, including pending and uncertain starts. Do not use momentary utilization as available capacity. Serialize admissions or use an equivalent atomic capacity reservation.
 
-For a 1500m CPU request that your platform rounds to 2 CPUs, keep the supplied `C2J_EXECUTION_CPU=1500m`. Cortex advertises the requested guaranteed allocation, including defaults. Native sizing is internal; the provider does not rewrite c2j's environment to advertise the surplus. Inspection can report the larger allocation for diagnostics.
+For a 1500m CPU request that your platform rounds to 2 CPUs, keep the supplied `C2J_EXECUTION_CPU=1500m`. Cortex advertises the requested guaranteed allocation, including defaults. Native sizing is internal; the provider does not rewrite c2j's environment to advertise the surplus. Your native tooling can report the larger allocation for diagnostics.
 
 All quantities are positive JSON integers up to `9007199254740991`; timeouts are positive and at most one year. Smaller provider limits can produce `unsupported`. Continue considering later items after one does not fit: a smaller item may still fit.
 
@@ -56,7 +56,7 @@ All quantities are positive JSON integers up to `9007199254740991`; timeouts are
 | `rejected` | Invalid request/configuration or conflicting reuse of an existing ID. |
 | `unknown` | The operation might have initiated execution, but its outcome is uncertain. |
 
-Accepted results require both `inspection_uri` and `refs`. Use `"refs": []` before native assignment; omission and `null` are invalid. The inspection URI must be relative or same-origin absolute. Every other status requires a nonempty diagnostic `reason`.
+Accepted results require `refs`. Use `"refs": []` before native assignment; omission and `null` are invalid. Every other status requires a nonempty diagnostic `reason`.
 
 Definite declines guarantee no delayed execution from that submission. Creating an inert parent resource alone is insufficient for acceptance; an accepted asynchronous start operation can be sufficient. Track and clean up native parent resources internally.
 
@@ -91,7 +91,7 @@ A provider that queues work must require `start_before`. Without it, admit direc
 
 Cortex supplies startup deadlines when `defaults.start_window` is configured. It must be positive and no longer than `cooldown`. An HTTP request timeout is not an execution deadline.
 
-## Preserve reverse lookup and inspection
+## Preserve reverse lookup and list active instances
 
 Retain the exact `metadata` map, including unknown keys, before execution starts. Cortex sends:
 
@@ -106,9 +106,13 @@ Retain the exact `metadata` map, including unknown keys, before execution starts
 
 The instance/tenant/job combination identifies the originating entity. Metadata is correlation data, not proof of authorization. Attach it to native labels, annotations, tags, or equivalent fields. If native limits prevent this, attach a stable launch-record reference and retain the full mapping in your service. Environment variables alone cannot identify unassigned launches.
 
-Inspection must work immediately after acceptance, even before runner assignment. Include `launch_id`, state, metadata, allocation, refs, and `accepted_at`. Queued allocation describes the usable capacities you promise to enforce; optional verified manifest digests and diagnostic image/config IDs remain distinct. Include start/finish timestamps when known.
+Implement `GET /v1/launches` with optional `page_size` (1–100, default 100), opaque `page_token`, and exact `launch_id` filter. Return `{"items": [...]}` with an optional `next_page_token`. Each item contains a stable provider-local `id`, `launch_id`, state, original metadata, and `refs`; include `created_at` and `started_at` when known. Multiple native instances for one launch have distinct IDs.
 
-Allowed states are `queued`, `starting`, `running`, `succeeded`, `failed`, `timed_out`, `expired`, `cancelled`, and `unknown`. Provider success does not assert JobDB completion. A `404` means no inspectable record is available; it does not prove a past submission never ran. Cortex does not poll inspection or require completion callbacks.
+Include queued launches immediately after acceptance, before runner assignment. Use a stable instance ID and `refs: []` until native references exist. Keep the ID unchanged after assignment. List `queued`, `starting`, `running`, `paused`, and `stopping`; exclude terminal instances such as succeeded, failed, stopped, cancelled, expired, or timed out. Do not substitute an unknown state for a failed lookup: return an error.
+
+Scope every page and cursor to the authenticated principal. Preserve filters between pages. Return `items: []` for an empty page; callers continue if `next_page_token` is present. Cursors must advance, and IDs must be unique within a page. Listing may reflect changes between pages; it need not hold a durable snapshot. An absent launch returns an empty list, including when its retained record is terminal. Absence is not proof that the launch never ran.
+
+Keep terminal idempotency records for the retention period above even though they are hidden from listing. Preserve native metadata for reverse lookup after a failed launch. The list operation is read-only: it must not submit, cancel, restart, or reconcile work. Cortex exposes lists through its public [HTTP API](http-api.md), without using them to change scheduling or cooldowns. Process environments and credentials do not belong in list responses.
 
 ## Adapt this to external runners
 
@@ -160,7 +164,7 @@ cortex -config cortex.yaml -once
 
 `-check` validates configuration and initializes the listing backend; in default embedded mode it makes no JobDB/provider health request. Use `-once` with seeded test jobs to exercise submission. For development HTTP endpoints, explicitly set `allow_http: true`.
 
-Test single/maximum batches, invalid envelopes without side effects, partial acceptance, resource rounding with unchanged environment, concurrent capacity admission, duplicate/conflicting replays, response loss, crash recovery, deadlines, principal isolation, and inspection before assignment. Verify that native resources map back to the originating job. Keep bearer tokens and environment secrets out of logs. Schema validation alone cannot prove these behaviors.
+Test single/maximum batches, invalid envelopes without side effects, partial acceptance, resource rounding with unchanged environment, concurrent capacity admission, duplicate/conflicting replays, response loss, crash recovery, deadlines, principal isolation, queued visibility before assignment, pagination (including empty filtered pages), terminal exclusion, and read-only listing. Verify that native resources map back to the originating job. Keep bearer tokens and environment secrets out of logs. Schema validation alone cannot prove these behaviors.
 
 Useful references:
 

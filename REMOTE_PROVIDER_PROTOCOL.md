@@ -7,11 +7,11 @@ Cortex uses **one batch submission operation** to send complete container launch
 | Operation | Purpose |
 | --- | --- |
 | `POST /v1/submit` | Submit resources, process, deadlines, and metadata together; return an admission result for every item. |
-| `GET /v1/launches/{launch_id}` | Inspect a launch and its correlation metadata. Diagnostic only; not part of submission or scheduling. |
+| `GET /v1/launches` | List active instances and their correlation metadata, optionally filtered by launch ID. Read-only; not part of scheduling. |
 
 There is no preparation operation, plan token, or environment binding language. Provider priority and round robin remain Cortex configuration. Runner registration and long polling belong inside the provider service.
 
-Use HTTPS, bearer authentication, and JSON bodies. A configured endpoint identifies one provider instance/admission domain; the authenticated principal scopes launch IDs and inspection. Batch size is 1–100, including single-item requests. IDs must be unique within a batch; duplicate IDs invalidate the whole request before any processing. Correlate results by `launch_id`, never array position. HTTP `200` allows mixed outcomes.
+Use HTTPS, bearer authentication, and JSON bodies. A configured endpoint identifies one provider instance/admission domain; the authenticated principal scopes launch IDs and listing. Batch size is 1–100, including single-item requests. IDs must be unique within a batch; duplicate IDs invalidate the whole request before any processing. Correlate results by `launch_id`, never array position. HTTP `200` allows mixed outcomes.
 
 ## Complete launch requests
 
@@ -28,7 +28,7 @@ Cortex fills omitted resource requirements from deployment defaults, then builds
 
 This reports a conservative guaranteed allocation to c2j: extra capacity from provider rounding is not advertised. A later requirement exceeding the reported allocation can therefore cause a handoff even if it would fit the provider's larger native allocation.
 
-Providers execute the supplied process without interpreting c2j options, expanding environment placeholders, or adding shell interpretation. Supplied values override image/provider defaults; defaults may fill absent keys. Preserve image and platform constraints. If an option cannot be honored, return `unsupported` before accepting work. For a digest-pinned image, Cortex also sets `C2J_EXECUTION_IMAGE_DIGEST` to the requested digest because c2j requires it for compatibility; the provider must enforce that pin before startup. Tag requests omit this field. Other resolved image identities may appear in inspection; they do not feed back into the submitted environment.
+Providers execute the supplied process without interpreting c2j options, expanding environment placeholders, or adding shell interpretation. Supplied values override image/provider defaults; defaults may fill absent keys. Preserve image and platform constraints. If an option cannot be honored, return `unsupported` before accepting work. For a digest-pinned image, Cortex also sets `C2J_EXECUTION_IMAGE_DIGEST` to the requested digest because c2j requires it for compatibility; the provider must enforce that pin before startup. Tag requests omit this field. Listing does not negotiate allocation or feed values back into the submitted environment.
 
 ### Example: submit two launches
 
@@ -151,7 +151,6 @@ HTTP `200 OK`:
     {
       "launch_id": "launch-001",
       "status": "accepted",
-      "inspection_uri": "/v1/launches/launch-001",
       "refs": []
     },
     {
@@ -176,7 +175,7 @@ The service owns `launch-001`, even though no native reference exists yet. Corte
 | `rejected` | Invalid request or configuration problem. Stop this item's attempt and report the reason. |
 | `unknown` | Acceptance is uncertain. Stop this item's attempt without immediate fallback. |
 
-Every non-accepted result requires a nonempty `reason`. Each accepted result requires `inspection_uri` and `refs`; `refs` may be an empty array. Inspection URIs must be relative to the service or same-origin absolute URIs. Native references are diagnostic strings, not scheduling inputs.
+Every non-accepted result requires a nonempty `reason`. Each accepted result requires `refs`, which may be an empty array before native assignment. Native references are diagnostic strings, not scheduling inputs. There is no inspection URI; callers can filter the list by `launch_id`.
 
 All definite declines guarantee that execution cannot later start from that submission. An ID-conflict rejection leaves the original launch unchanged; it does not assert that the original never ran. A native failure after possibly initiating execution is `unknown`.
 
@@ -206,44 +205,50 @@ Serialize concurrent submissions of the same key. During retention, a logical re
 
 Retain accepted decisions throughout the launch's lifetime plus at least 24 hours after termination, and declined decisions for at least 24 hours. Unknown outcomes remain fenced against duplicate execution until resolved. Longer retention is permitted. After retention expires, idempotency is no longer guaranteed: **callers must not replay old submissions**. An elapsed `start_before` prevents a new start but does not erase the decision for a retained replay.
 
-Inspection retains the original metadata even before runner assignment. `404` means no inspectable record is available, possibly because retention expired; it is not proof that a past submission never ran. Cortex uses inspection only for diagnostics and keeps no persistent launch ledger.
+## Active instance listing
 
-### Example: inspect a running launch
+`GET /v1/launches` returns only active instances owned by the authenticated principal: `queued`, `starting`, `running`, `paused`, or `stopping`. Exclude succeeded, failed, stopped, cancelled, expired, and timed-out instances. Queued launches must be visible before runner assignment. A completed launch disappears from this view even while its idempotency record remains retained.
 
-`GET /v1/launches/launch-001`, authenticated as the submitting principal, returns HTTP `200 OK`:
+Parameters are optional `page_size` (1–100, default 100), opaque `page_token`, and exact `launch_id`. Each item has a stable provider-local `id`, originating `launch_id`, state, original metadata, and native references. Optional timestamps describe creation/start when known. One launch may have multiple native instances; preserve their distinct IDs.
 
-<!-- schema: LaunchRecord -->
+Return `items: []` for an empty page. If `next_page_token` exists, callers must continue even when the current page has no matching instances. Keep filters unchanged between pages. Listing is a changing view, not an atomic snapshot or historical ledger. Missing instances do not prove non-acceptance, completion, or available capacity. A failed list operation returns an error, never an empty success.
+
+Cortex implements the same list interface for all built-in adapters and exposes it through its [public read-only HTTP API](docs/http-api.md). It does not use listing to bypass cooldown, resolve uncertain submissions, or reserve capacity. Native resource reads, pagination, and credential refresh are allowed; listing must not submit, cancel, restart, or reconcile launches.
+
+### Example: list active instances for one launch
+
+`GET /v1/launches?launch_id=launch-001&page_size=100`, authenticated as the submitting principal, returns HTTP `200 OK`:
+
+<!-- schema: ListResponse -->
 ```json
 {
-  "launch_id": "launch-001",
-  "state": "running",
-  "metadata": {
-    "cortex_metadata_version": "1",
-    "cortex_managed_by": "cortex",
-    "cortex_jobdb_instance_id": "production",
-    "cortex_tenant_id": "acme",
-    "cortex_job_id": "job-123",
-    "cortex_launch_id": "launch-001"
-  },
-  "allocation": {
-    "cpu_millis": 2000,
-    "memory_bytes": 4294967296,
-    "scratch_bytes": 1073741824,
-    "platform": "linux/amd64",
-    "image": "registry.example/runner:1.2"
-  },
-  "refs": [
-    "runner-pool/runner-17/containers/container-456"
-  ],
-  "accepted_at": "2026-10-01T12:00:00Z",
-  "started_at": "2026-10-01T12:00:05Z"
+  "items": [
+    {
+      "id": "instance-001",
+      "launch_id": "launch-001",
+      "state": "running",
+      "metadata": {
+        "cortex_metadata_version": "1",
+        "cortex_managed_by": "cortex",
+        "cortex_jobdb_instance_id": "production",
+        "cortex_tenant_id": "acme",
+        "cortex_job_id": "job-123",
+        "cortex_launch_id": "launch-001"
+      },
+      "refs": [
+        "runner-pool/runner-17/containers/container-456"
+      ],
+      "created_at": "2026-10-01T12:00:00Z",
+      "started_at": "2026-10-01T12:00:05Z"
+    }
+  ]
 }
 ```
 
-Here the provider provisioned 2000m CPU. The submitted `C2J_EXECUTION_CPU` remains `1500m`. For a queued record, `allocation` describes the usable allocation the provider commits to enforce before assignment; `refs` can still be empty. Record manifest digests only when verified; image/config IDs are separate diagnostic facts.
+For an accepted launch awaiting assignment, the same response shape uses `state: "queued"` and `refs: []`. For a terminal or absent launch, return `{"items": []}`. A queued record's `id` must remain stable after assignment; native references can be filled in later.
 
 ## Evolution and conformance
 
 The URL carries the major version. Providers reject unrecognized request fields/options rather than silently ignoring constraints. Clients ignore new response fields and treat unknown statuses conservatively. Future breaking changes require a new major URL. V1 has no capacity endpoint, cancellation API, or completion callback requirement.
 
-Conformance covers mixed results, exact process/environment/metadata preservation, resource guarantees, deadlines, duplicate IDs, concurrent and conflicting replays, ambiguous responses, retention, and inspection before assignment. The repository supplies the client and contract; it does not include a remote provider server. Documentation examples are checked against the OpenAPI schemas by `scripts/validate_protocol.py`.
+Conformance covers mixed results, exact process/environment/metadata preservation, resource guarantees, deadlines, duplicate IDs, concurrent and conflicting replays, ambiguous responses, retention, and active listing before assignment. The repository supplies the client and contract; it does not include a remote provider server. Documentation examples are checked against the OpenAPI schemas by `scripts/validate_protocol.py`.

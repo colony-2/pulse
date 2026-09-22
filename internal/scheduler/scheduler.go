@@ -34,13 +34,14 @@ type Scheduler struct {
 	mu          sync.Mutex
 	entries     map[Key]entry
 	cursors     map[string]uint64
+	tiers       map[string]RoundRobinEntry
 	Cooldown    time.Duration
 	CallTimeout time.Duration
 	Now         func() time.Time
 }
 
 func New(cooldown, callTimeout time.Duration) *Scheduler {
-	return &Scheduler{entries: map[Key]entry{}, cursors: map[string]uint64{}, Cooldown: cooldown, CallTimeout: callTimeout, Now: time.Now}
+	return &Scheduler{entries: map[Key]entry{}, cursors: map[string]uint64{}, tiers: map[string]RoundRobinEntry{}, Cooldown: cooldown, CallTimeout: callTimeout, Now: time.Now}
 }
 func (s *Scheduler) order(scope string, services []Service) ([]Service, error) {
 	tiers := map[int][]Service{}
@@ -138,6 +139,11 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 			tier := append([]Service{}, ordered[index:end]...)
 			s.mu.Lock()
 			cursorKey := fmt.Sprintf("%s/%d", scope, ordered[index].Priority)
+			names := []string{}
+			for _, service := range tier {
+				names = append(names, service.Name)
+			}
+			s.tiers[cursorKey] = RoundRobinEntry{Scope: scope, Priority: ordered[index].Priority, Services: names}
 			offset := int(s.cursors[cursorKey] % uint64(len(tier)))
 			s.cursors[cursorKey]++
 			s.mu.Unlock()

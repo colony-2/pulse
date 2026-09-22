@@ -38,7 +38,7 @@ paths:
                 scratch_bytes: 1073741824
                 timeout_seconds: 3600
                 start_before: '2026-10-01T12:01:00Z'
-                metadata: &id001
+                metadata:
                   cortex_metadata_version: '1'
                   cortex_managed_by: cortex
                   cortex_jobdb_instance_id: production
@@ -125,7 +125,6 @@ paths:
                 results:
                 - launch_id: launch-001
                   status: accepted
-                  inspection_uri: /v1/launches/launch-001
                   refs: []
                 - launch_id: launch-002
                   status: no_capacity
@@ -170,39 +169,55 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /v1/launches/{launch_id}:
+  /v1/launches:
     get:
-      operationId: getLaunch
-      summary: Inspect a launch and its correlation metadata
-      description: Diagnostic lookup, including before runner assignment. A missing record is not evidence that
-        a submission never ran.
+      operationId: listInstances
+      summary: List active instances owned by the authenticated principal
+      description: Includes queued, starting, running, paused, and stopping instances; excludes terminal instances.
+        Results may change between pages and may lag native state. An empty page can carry a continuation token.
+        Absence is not proof of non-acceptance. This read-only operation does not change scheduling or capacity.
       parameters:
+      - name: page_size
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 100
+      - name: page_token
+        in: query
+        schema:
+          type: string
+          maxLength: 16384
+        description: Opaque continuation token; keep other filters unchanged.
       - name: launch_id
-        in: path
-        required: true
+        in: query
         schema:
           $ref: '#/components/schemas/LaunchId'
+        description: Optional exact launch filter. Still returns a collection of active instances.
       responses:
         '200':
-          description: Launch record owned by this principal.
+          description: One page of active instances. Follow next_page_token even if items is empty.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LaunchRecord'
+                $ref: '#/components/schemas/ListResponse'
               example:
-                launch_id: launch-001
-                state: running
-                metadata: *id001
-                allocation:
-                  cpu_millis: 2000
-                  memory_bytes: 4294967296
-                  scratch_bytes: 1073741824
-                  platform: linux/amd64
-                  image: registry.example/runner:1.2
-                refs:
-                - runner-pool/runner-17/containers/container-456
-                accepted_at: '2026-10-01T12:00:00Z'
-                started_at: '2026-10-01T12:00:05Z'
+                items:
+                - id: instance-001
+                  launch_id: launch-001
+                  state: running
+                  metadata:
+                    cortex_metadata_version: '1'
+                    cortex_managed_by: cortex
+                    cortex_jobdb_instance_id: production
+                    cortex_tenant_id: acme
+                    cortex_job_id: job-123
+                    cortex_launch_id: launch-001
+                  refs:
+                  - runner-pool/runner-17/containers/container-456
+                  created_at: '2026-10-01T12:00:00Z'
+                  started_at: '2026-10-01T12:00:05Z'
         '401':
           description: Authentication required.
           content:
@@ -215,14 +230,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        '404':
-          description: No inspectable record; may be absent or past retention.
+        default:
+          description: Listing failed; failure must not be represented as an empty successful page.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-        default:
-          description: Inspection failed.
+        '400':
+          description: Invalid list parameters or cursor.
           content:
             application/json:
               schema:
@@ -245,51 +260,6 @@ components:
         type: string
       description: Opaque exact correlation envelope. Preserve it on the launch record before execution can start.
         Do not place credentials here.
-    Allocation:
-      type: object
-      properties:
-        cpu_millis:
-          type: integer
-          format: int64
-          minimum: 1
-          maximum: 9007199254740991
-          description: Usable CPU in millicores; 1000 is one vCPU.
-        memory_bytes:
-          type: integer
-          format: int64
-          minimum: 1
-          maximum: 9007199254740991
-          description: Usable application memory, available simultaneously with scratch.
-        scratch_bytes:
-          type: integer
-          format: int64
-          minimum: 1
-          maximum: 9007199254740991
-          description: Usable ephemeral workspace capacity, available simultaneously with memory.
-        platform:
-          type: string
-          minLength: 1
-        image:
-          type: string
-          minLength: 1
-          description: Launch image reference whose meaning must be preserved when binding to content.
-        image_digest:
-          type: string
-          minLength: 1
-          description: Verified OCI manifest digest, if known. Distinct from image/config ID.
-        image_id:
-          type: string
-          minLength: 1
-          description: Runtime image/config ID if known; diagnostic only.
-      required:
-      - cpu_millis
-      - memory_bytes
-      - scratch_bytes
-      - platform
-      - image
-      additionalProperties: true
-      description: Provider-enforced usable allocation, at least the requested capacities. Queued records describe
-        the allocation promised before assignment. This diagnostic field does not change the submitted environment.
     DeclinedResult:
       type: object
       properties:
@@ -349,11 +319,6 @@ components:
           type: string
           enum:
           - accepted
-        inspection_uri:
-          type: string
-          format: uri-reference
-          description: URI for the authenticated launch inspection endpoint, relative to this service or same-origin
-            absolute.
         refs:
           type: array
           items:
@@ -363,7 +328,6 @@ components:
       required:
       - launch_id
       - status
-      - inspection_uri
       - refs
       additionalProperties: true
     UnknownResult:
@@ -416,52 +380,6 @@ components:
             $ref: '#/components/schemas/SubmissionResult'
       required:
       - results
-      additionalProperties: true
-    LaunchRecord:
-      type: object
-      properties:
-        launch_id:
-          $ref: '#/components/schemas/LaunchId'
-        state:
-          type: string
-          enum:
-          - queued
-          - starting
-          - running
-          - succeeded
-          - failed
-          - timed_out
-          - expired
-          - cancelled
-          - unknown
-          description: Provider execution state; succeeded does not assert application/job completion.
-        metadata:
-          $ref: '#/components/schemas/Metadata'
-        allocation:
-          $ref: '#/components/schemas/Allocation'
-        refs:
-          type: array
-          items:
-            type: string
-            minLength: 1
-        accepted_at:
-          type: string
-          format: date-time
-        started_at:
-          type: string
-          format: date-time
-        finished_at:
-          type: string
-          format: date-time
-        reason:
-          type: string
-      required:
-      - launch_id
-      - state
-      - metadata
-      - allocation
-      - refs
-      - accepted_at
       additionalProperties: true
     Error:
       type: object
@@ -536,3 +454,57 @@ components:
       description: Complete immutable launch request. Resource quantities are minimum usable capacities the provider
         must guarantee simultaneously. Provider sizing may round upward without changing the supplied process or
         environment.
+    Instance:
+      type: object
+      description: Active provider instance. Terminal instances are excluded; one launch can have multiple native
+        instances.
+      properties:
+        id:
+          type: string
+          minLength: 1
+          description: Stable instance identity within this configured provider.
+        launch_id:
+          $ref: '#/components/schemas/LaunchId'
+        state:
+          type: string
+          enum:
+          - queued
+          - starting
+          - running
+          - paused
+          - stopping
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+        refs:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - launch_id
+      - state
+      - metadata
+      - refs
+      additionalProperties: true
+    ListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/Instance'
+        next_page_token:
+          type: string
+          minLength: 1
+          maxLength: 16384
+      required:
+      - items
+      additionalProperties: true
