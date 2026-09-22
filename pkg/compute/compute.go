@@ -22,7 +22,6 @@ const MaxQuantity int64 = 9007199254740991
 type Status string
 
 const (
-	Prepared    Status = "prepared"
 	Accepted    Status = "accepted"
 	NoCapacity  Status = "no_capacity"
 	Unsupported Status = "unsupported"
@@ -33,7 +32,7 @@ const (
 
 func (s Status) Fallback() bool { return s == NoCapacity || s == Unsupported || s == Unavailable }
 func (s Status) Valid() bool {
-	return s == Prepared || s == Accepted || s.Fallback() || s == Rejected || s == Unknown
+	return s == Accepted || s.Fallback() || s == Rejected || s == Unknown
 }
 
 type Allocation struct {
@@ -111,13 +110,6 @@ func (r Request) Validate() error {
 	return nil
 }
 
-type Plan struct {
-	Token      string     `json:"token"`
-	ExpiresAt  time.Time  `json:"expires_at"`
-	Allocation Allocation `json:"allocation"`
-	// Native is private to an in-process adapter; never serialized on the wire.
-	Native any `json:"-"`
-}
 type Process struct {
 	Command    []string          `json:"command"`
 	Args       []string          `json:"args"`
@@ -145,17 +137,35 @@ func (p Process) Validate() error {
 	return nil
 }
 
-type PreparedLaunch struct {
-	LaunchID string
-	Plan     Plan
-	Process  Process
+// Launch is a complete immutable submission, reused unchanged on fallback.
+type Launch struct {
+	Request
+	Process Process `json:"process"`
 }
-type Preparation struct {
-	LaunchID string `json:"launch_id"`
-	Status   Status `json:"status"`
-	Plan     *Plan  `json:"plan,omitempty"`
-	Reason   string `json:"reason,omitempty"`
+
+func (l Launch) Validate() error {
+	if err := l.Request.Validate(); err != nil {
+		return err
+	}
+	return l.Process.Validate()
 }
+func ValidateLaunches(ls []Launch) error {
+	if len(ls) == 0 || len(ls) > MaxBatch {
+		return fmt.Errorf("batch must contain 1..%d launches", MaxBatch)
+	}
+	ids := map[string]bool{}
+	for _, l := range ls {
+		if err := l.Validate(); err != nil {
+			return err
+		}
+		if ids[l.LaunchID] {
+			return errors.New("duplicate launch ID")
+		}
+		ids[l.LaunchID] = true
+	}
+	return nil
+}
+
 type Submission struct {
 	LaunchID      string   `json:"launch_id"`
 	Status        Status   `json:"status"`
@@ -164,8 +174,7 @@ type Submission struct {
 	Reason        string   `json:"reason,omitempty"`
 }
 type Provider interface {
-	Prepare(context.Context, []Request) ([]Preparation, error)
-	Submit(context.Context, []PreparedLaunch) ([]Submission, error)
+	Submit(context.Context, []Launch) ([]Submission, error)
 }
 
 func NewID() string {

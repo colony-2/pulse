@@ -93,51 +93,16 @@ func requestWire(r compute.Request) map[string]any {
 	}
 	return m
 }
-func (c *Client) Prepare(ctx context.Context, rs []compute.Request) ([]compute.Preparation, error) {
-	if err := compute.ValidateBatch(rs); err != nil {
+func (c *Client) Submit(ctx context.Context, ls []compute.Launch) ([]compute.Submission, error) {
+
+	if err := compute.ValidateLaunches(ls); err != nil {
 		return nil, err
 	}
 	items := []map[string]any{}
-	for _, r := range rs {
-		items = append(items, requestWire(r))
-	}
-	var response struct {
-		Results []compute.Preparation `json:"results"`
-	}
-	code, err := c.call(ctx, "POST", "/v1/prepare", map[string]any{"items": items}, &response)
-	if err != nil {
-		status := compute.Unavailable
-		switch code {
-		case 200, 400, 401, 403, 413, 422:
-			status = compute.Rejected
-		}
-		out := []compute.Preparation{}
-		for _, r := range rs {
-			out = append(out, compute.Preparation{LaunchID: r.LaunchID, Status: status, Reason: err.Error()})
-		}
-		return out, err
-	}
-	return response.Results, nil
-}
-func (c *Client) Submit(ctx context.Context, ls []compute.PreparedLaunch) ([]compute.Submission, error) {
-	if len(ls) == 0 || len(ls) > compute.MaxBatch {
-		return nil, fmt.Errorf("invalid batch size")
-	}
-	type item struct {
-		LaunchID string          `json:"launch_id"`
-		Token    string          `json:"plan_token"`
-		Process  compute.Process `json:"process"`
-	}
-	items := []item{}
 	ids := map[string]bool{}
 	for _, l := range ls {
-		if ids[l.LaunchID] || l.LaunchID == "" || l.Plan.Token == "" {
-			return nil, fmt.Errorf("invalid or duplicate launch")
-		}
 		ids[l.LaunchID] = true
-		if err := l.Process.Validate(); err != nil {
-			return nil, err
-		}
+		item := requestWire(l.Request)
 		p := l.Process
 		if p.Args == nil {
 			p.Args = []string{}
@@ -145,8 +110,10 @@ func (c *Client) Submit(ctx context.Context, ls []compute.PreparedLaunch) ([]com
 		if p.Env == nil {
 			p.Env = map[string]string{}
 		}
-		items = append(items, item{l.LaunchID, l.Plan.Token, p})
+		item["process"] = p
+		items = append(items, item)
 	}
+
 	var response struct {
 		Results []json.RawMessage `json:"results"`
 	}
@@ -172,7 +139,7 @@ func (c *Client) Submit(ctx context.Context, ls []compute.PreparedLaunch) ([]com
 		if !ids[r.LaunchID] {
 			return nil, fmt.Errorf("unexpected launch ID in provider response")
 		}
-		valid := r.Status.Valid() && r.Status != compute.Prepared
+		valid := r.Status.Valid()
 		if r.Status == compute.Accepted {
 			var keys map[string]json.RawMessage
 			_ = json.Unmarshal(raw, &keys)

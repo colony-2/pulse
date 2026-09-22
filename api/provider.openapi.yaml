@@ -2,126 +2,26 @@ openapi: 3.1.1
 info:
   title: Cortex Remote Compute Provider Protocol
   version: 1.0.0
-  description: Proposed batch-only compute provider contract. See REMOTE_PROVIDER_PROTOCOL.md for admission, idempotency,
-    expiry, and fallback semantics. Providers do not interpret c2j or JobDB. Numeric priorities are controller configuration.
+  description: Batch-only compute provider contract. Each submission contains resources, process, deadlines, and
+    metadata. Providers preserve supplied environment values, including when rounding resource capacity upward.
+    See REMOTE_PROVIDER_PROTOCOL.md for admission, idempotency, retention, and fallback semantics. Providers do
+    not interpret c2j or JobDB. Numeric priorities are controller configuration.
 servers:
 - url: https://provider.example.com
 security:
 - bearerAuth: []
 paths:
-  /v1/prepare:
-    post:
-      operationId: prepareBatch
-      summary: Prepare a batch without starting execution
-      description: Return one result per launch ID. Validate the envelope before processing. Prepared plans may
-        expire and do not guarantee future capacity.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PrepareRequest'
-            example:
-              items:
-              - launch_id: launch-001
-                image: registry.example/runner:1.2
-                platform: linux/amd64
-                cpu_millis: 2000
-                memory_bytes: 4294967296
-                scratch_bytes: 1073741824
-                timeout_seconds: 3600
-                start_before: '2026-09-21T12:01:00Z'
-                metadata:
-                  cortex_metadata_version: '1'
-                  cortex_managed_by: cortex
-                  cortex_jobdb_instance_id: production
-                  cortex_tenant_id: acme
-                  cortex_job_id: job-123
-                  cortex_launch_id: launch-001
-              - launch_id: launch-002
-                image: registry.example/runner:1.2
-                platform: linux/amd64
-                cpu_millis: 2000
-                memory_bytes: 4294967296
-                scratch_bytes: 1073741824
-                timeout_seconds: 3600
-                start_before: '2026-09-21T12:01:00Z'
-                metadata:
-                  cortex_metadata_version: '1'
-                  cortex_managed_by: cortex
-                  cortex_jobdb_instance_id: production
-                  cortex_tenant_id: acme
-                  cortex_job_id: job-124
-                  cortex_launch_id: launch-002
-      responses:
-        '200':
-          description: Complete per-item results. Mixed outcomes are normal.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PrepareResponse'
-              example:
-                results:
-                - launch_id: launch-001
-                  status: prepared
-                  plan:
-                    token: opaque-plan-001
-                    expires_at: '2026-09-21T12:01:00Z'
-                    allocation:
-                      cpu_millis: 2000
-                      memory_bytes: 4294967296
-                      scratch_bytes: 1073741824
-                      platform: linux/amd64
-                      image: registry.example/runner:1.2
-                - launch_id: launch-002
-                  status: no_capacity
-                  reason: No compatible runner slot available.
-        '400':
-          description: Malformed request or duplicate launch IDs. No items processed.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '401':
-          description: Authentication failed before processing any items.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '403':
-          description: Batch authorization denied before processing any items.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '413':
-          description: Request too large. No items processed; maximum batch size is 100.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '422':
-          description: Request schema validation failed. No items processed.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        default:
-          description: Unexpected failure. For submission, acceptance of unreported items is uncertain; no immediate
-            fallback.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
   /v1/submit:
     post:
       operationId: submitBatch
-      summary: Submit a batch with per-item idempotency
-      description: 'Idempotency scope: provider instance, authenticated principal, launch ID. Exact logical retries
-        return the recorded result, independent of batch membership. Changed plans/processes for an existing ID
-        are rejected without changing its original launch. Retain decisions at least through plan expiry and 24
-        hours after a terminal decision or accepted launch termination. Definite declines authorize fallback; missing
-        or unknown outcomes do not.'
+      summary: Submit complete launches in one batch
+      description: Validate the envelope before processing any items. Size resources and admit each launch in this
+        operation. Idempotency is scoped to provider instance, authenticated principal, and launch ID, independent
+        of batch membership. During retention, logical retries return the recorded decision; changed request or
+        process for an existing ID is rejected without changing its original launch. Retain accepted launches throughout
+        their lifetime plus at least 24 hours after termination, and declines for at least 24 hours. After retention,
+        callers must not replay old submissions. Definite declines authorize fallback; missing or unknown outcomes
+        do not.
       requestBody:
         required: true
         content:
@@ -131,7 +31,20 @@ paths:
             example:
               items:
               - launch_id: launch-001
-                plan_token: opaque-plan-001
+                image: registry.example/runner:1.2
+                platform: linux/amd64
+                cpu_millis: 1500
+                memory_bytes: 4294967296
+                scratch_bytes: 1073741824
+                timeout_seconds: 3600
+                start_before: '2026-10-01T12:01:00Z'
+                metadata: &id001
+                  cortex_metadata_version: '1'
+                  cortex_managed_by: cortex
+                  cortex_jobdb_instance_id: production
+                  cortex_tenant_id: acme
+                  cortex_job_id: job-123
+                  cortex_launch_id: launch-001
                 process:
                   command:
                   - c2j
@@ -148,11 +61,59 @@ paths:
                   - fail
                   env:
                     C2J_JOBDB: https://jobdb.example/acme
-                    C2J_EXECUTION_CPU: '2'
-                    C2J_EXECUTION_MEMORY: 4Gi
-                    C2J_EXECUTION_EPHEMERAL_STORAGE: 1Gi
+                    C2J_EXECUTION_CPU: 1500m
+                    C2J_EXECUTION_MEMORY: 4194304Ki
+                    C2J_EXECUTION_EPHEMERAL_STORAGE: 1048576Ki
                     C2J_EXECUTION_PLATFORM: linux/amd64
                     C2J_EXECUTION_IMAGE: registry.example/runner:1.2
+                    CORTEX_METADATA_VERSION: '1'
+                    CORTEX_MANAGED_BY: cortex
+                    CORTEX_JOBDB_INSTANCE_ID: production
+                    CORTEX_TENANT_ID: acme
+                    CORTEX_JOB_ID: job-123
+                    CORTEX_LAUNCH_ID: launch-001
+              - launch_id: launch-002
+                image: registry.example/runner:1.2
+                platform: linux/amd64
+                cpu_millis: 1500
+                memory_bytes: 4294967296
+                scratch_bytes: 1073741824
+                timeout_seconds: 3600
+                start_before: '2026-10-01T12:01:00Z'
+                metadata:
+                  cortex_metadata_version: '1'
+                  cortex_managed_by: cortex
+                  cortex_jobdb_instance_id: production
+                  cortex_tenant_id: acme
+                  cortex_job_id: job-124
+                  cortex_launch_id: launch-002
+                process:
+                  command:
+                  - c2j
+                  args:
+                  - run
+                  - --job-id
+                  - job-124
+                  - --worker-id
+                  - launch-002
+                  - --on-not-ready
+                  - fail
+                  - --ci
+                  - --input-mode
+                  - fail
+                  env:
+                    C2J_JOBDB: https://jobdb.example/acme
+                    C2J_EXECUTION_CPU: 1500m
+                    C2J_EXECUTION_MEMORY: 4194304Ki
+                    C2J_EXECUTION_EPHEMERAL_STORAGE: 1048576Ki
+                    C2J_EXECUTION_PLATFORM: linux/amd64
+                    C2J_EXECUTION_IMAGE: registry.example/runner:1.2
+                    CORTEX_METADATA_VERSION: '1'
+                    CORTEX_MANAGED_BY: cortex
+                    CORTEX_JOBDB_INSTANCE_ID: production
+                    CORTEX_TENANT_ID: acme
+                    CORTEX_JOB_ID: job-124
+                    CORTEX_LAUNCH_ID: launch-002
       responses:
         '200':
           description: Complete per-item results. Mixed outcomes are normal.
@@ -166,12 +127,18 @@ paths:
                   status: accepted
                   inspection_uri: /v1/launches/launch-001
                   refs: []
+                - launch_id: launch-002
+                  status: no_capacity
+                  reason: No compatible runner slot available.
         '400':
           description: Malformed request or duplicate launch IDs. No items processed.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+              example:
+                code: duplicate_launch_id
+                message: Each launch_id must be unique within a batch; no items were processed.
         '401':
           description: Authentication failed before processing any items.
           content:
@@ -222,6 +189,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/LaunchRecord'
+              example:
+                launch_id: launch-001
+                state: running
+                metadata: *id001
+                allocation:
+                  cpu_millis: 2000
+                  memory_bytes: 4294967296
+                  scratch_bytes: 1073741824
+                  platform: linux/amd64
+                  image: registry.example/runner:1.2
+                refs:
+                - runner-pool/runner-17/containers/container-456
+                accepted_at: '2026-10-01T12:00:00Z'
+                started_at: '2026-10-01T12:00:05Z'
         '401':
           description: Authentication required.
           content:
@@ -264,60 +245,6 @@ components:
         type: string
       description: Opaque exact correlation envelope. Preserve it on the launch record before execution can start.
         Do not place credentials here.
-    ComputeRequest:
-      type: object
-      properties:
-        launch_id:
-          $ref: '#/components/schemas/LaunchId'
-        image:
-          type: string
-          minLength: 1
-          description: OCI launch reference, including tag or digest as required.
-        platform:
-          type: string
-          minLength: 1
-          description: Normalized OCI os/architecture[/variant].
-        cpu_millis:
-          type: integer
-          format: int64
-          minimum: 1
-          maximum: 9007199254740991
-          description: Usable CPU in millicores; 1000 is one vCPU.
-        memory_bytes:
-          type: integer
-          format: int64
-          minimum: 1
-          maximum: 9007199254740991
-          description: Usable application memory, available simultaneously with scratch.
-        scratch_bytes:
-          type: integer
-          format: int64
-          minimum: 1
-          maximum: 9007199254740991
-          description: Usable ephemeral workspace capacity, available simultaneously with memory.
-        timeout_seconds:
-          type: integer
-          format: int64
-          minimum: 1
-          maximum: 9007199254740991
-          description: Maximum execution duration after container startup.
-        start_before:
-          type: string
-          format: date-time
-          description: Optional latest container startup time. Required if the provider queues the launch; not the
-            execution deadline.
-        metadata:
-          $ref: '#/components/schemas/Metadata'
-      required:
-      - launch_id
-      - image
-      - platform
-      - cpu_millis
-      - memory_bytes
-      - scratch_bytes
-      - timeout_seconds
-      - metadata
-      additionalProperties: false
     Allocation:
       type: object
       properties:
@@ -361,41 +288,8 @@ components:
       - platform
       - image
       additionalProperties: true
-    PreparedPlan:
-      type: object
-      properties:
-        token:
-          type: string
-          minLength: 1
-          description: Opaque authorization for the immutable prepared request, bound to its principal and launch
-            ID.
-        expires_at:
-          type: string
-          format: date-time
-          description: Latest time for first submission; does not invalidate an accepted launch or a recorded idempotent
-            replay.
-        allocation:
-          $ref: '#/components/schemas/Allocation'
-      required:
-      - token
-      - expires_at
-      - allocation
-      additionalProperties: true
-    PreparedResult:
-      type: object
-      properties:
-        launch_id:
-          $ref: '#/components/schemas/LaunchId'
-        status:
-          const: prepared
-          type: string
-        plan:
-          $ref: '#/components/schemas/PreparedPlan'
-      required:
-      - launch_id
-      - status
-      - plan
-      additionalProperties: true
+      description: Provider-enforced usable allocation, at least the requested capacities. Queued records describe
+        the allocation promised before assignment. This diagnostic field does not change the submitted environment.
     DeclinedResult:
       type: object
       properties:
@@ -417,34 +311,6 @@ components:
       - status
       - reason
       additionalProperties: true
-    PreparationResult:
-      oneOf:
-      - $ref: '#/components/schemas/PreparedResult'
-      - $ref: '#/components/schemas/DeclinedResult'
-    PrepareRequest:
-      type: object
-      properties:
-        items:
-          type: array
-          minItems: 1
-          maxItems: 100
-          items:
-            $ref: '#/components/schemas/ComputeRequest'
-      required:
-      - items
-      additionalProperties: false
-    PrepareResponse:
-      type: object
-      properties:
-        results:
-          type: array
-          minItems: 1
-          maxItems: 100
-          items:
-            $ref: '#/components/schemas/PreparationResult'
-      required:
-      - results
-      additionalProperties: true
     ProcessSpec:
       type: object
       properties:
@@ -463,7 +329,8 @@ components:
           type: object
           additionalProperties:
             type: string
-          description: Supplied values override image environment values. Preserve exact values; do not log secrets.
+          description: Literal supplied values override image and provider defaults. Preserve exact values; no substitution
+            or changes based on provider sizing. Do not log secrets.
         working_dir:
           type: string
           minLength: 1
@@ -472,21 +339,6 @@ components:
       - command
       - args
       - env
-      additionalProperties: false
-    PreparedLaunch:
-      type: object
-      properties:
-        launch_id:
-          $ref: '#/components/schemas/LaunchId'
-        plan_token:
-          type: string
-          minLength: 1
-        process:
-          $ref: '#/components/schemas/ProcessSpec'
-      required:
-      - launch_id
-      - plan_token
-      - process
       additionalProperties: false
     AcceptedResult:
       type: object
@@ -549,7 +401,7 @@ components:
           minItems: 1
           maxItems: 100
           items:
-            $ref: '#/components/schemas/PreparedLaunch'
+            $ref: '#/components/schemas/Launch'
       required:
       - items
       additionalProperties: false
@@ -624,3 +476,63 @@ components:
       - code
       - message
       additionalProperties: true
+    Launch:
+      type: object
+      properties:
+        launch_id:
+          $ref: '#/components/schemas/LaunchId'
+        image:
+          type: string
+          minLength: 1
+          description: OCI launch reference, including tag or digest as required.
+        platform:
+          type: string
+          minLength: 1
+          description: Normalized OCI os/architecture[/variant].
+        cpu_millis:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          description: Usable CPU in millicores; 1000 is one vCPU.
+        memory_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          description: Usable application memory, available simultaneously with scratch.
+        scratch_bytes:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9007199254740991
+          description: Usable ephemeral workspace capacity, available simultaneously with memory.
+        timeout_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 31536000
+          description: Maximum execution duration after container startup.
+        start_before:
+          type: string
+          format: date-time
+          description: Optional latest container startup time. Required if the provider queues the launch; not the
+            execution deadline.
+        metadata:
+          $ref: '#/components/schemas/Metadata'
+        process:
+          $ref: '#/components/schemas/ProcessSpec'
+      required:
+      - launch_id
+      - image
+      - platform
+      - cpu_millis
+      - memory_bytes
+      - scratch_bytes
+      - timeout_seconds
+      - metadata
+      - process
+      additionalProperties: false
+      description: Complete immutable launch request. Resource quantities are minimum usable capacities the provider
+        must guarantee simultaneously. Provider sizing may round upward without changing the supplied process or
+        environment.

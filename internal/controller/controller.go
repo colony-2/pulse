@@ -95,11 +95,13 @@ func (c *Controller) Once(ctx context.Context) error {
 					deadline := time.Now().Add(c.Config.StartWindow)
 					req.StartBefore = &deadline
 				}
-				jobID := j.ID
-				jobdb := t.JobDB
-				jobs = append(jobs, scheduler.Job{Key: k, Request: req, Build: func(a compute.Allocation) (compute.Process, error) {
-					return c2j.Process(jobdb, jobID, id, a, c.Config.Defaults.Env, metadata)
-				}})
+
+				process, e := c2j.Process(t.JobDB, j.ID, id, req.Allocation, c.Config.Defaults.Env, metadata)
+				if e != nil {
+					errs = append(errs, e)
+					continue
+				}
+				jobs = append(jobs, scheduler.Job{Key: k, Request: req, Process: process})
 				selected[k] = true
 				if len(jobs) >= c.Config.PerCell {
 					break

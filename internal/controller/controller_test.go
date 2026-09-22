@@ -24,17 +24,10 @@ type accept struct {
 	process  []compute.Process
 }
 
-func (p *accept) Prepare(_ context.Context, rs []compute.Request) ([]compute.Preparation, error) {
-	p.requests = append(p.requests, rs...)
-	out := []compute.Preparation{}
-	for _, r := range rs {
-		out = append(out, compute.Preparation{LaunchID: r.LaunchID, Status: compute.Prepared, Plan: &compute.Plan{Token: r.LaunchID, ExpiresAt: time.Now().Add(time.Hour), Allocation: r.Allocation}})
-	}
-	return out, nil
-}
-func (p *accept) Submit(_ context.Context, ls []compute.PreparedLaunch) ([]compute.Submission, error) {
+func (p *accept) Submit(_ context.Context, ls []compute.Launch) ([]compute.Submission, error) {
 	out := []compute.Submission{}
 	for _, l := range ls {
+		p.requests = append(p.requests, l.Request)
 		p.process = append(p.process, l.Process)
 		out = append(out, compute.Submission{LaunchID: l.LaunchID, Status: compute.Accepted})
 	}

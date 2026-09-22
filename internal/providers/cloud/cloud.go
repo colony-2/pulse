@@ -97,136 +97,126 @@ func runCommand(ctx context.Context, name string, args []string, input []byte) (
 	return out.Bytes(), nil
 }
 func ceil(n, unit int64) int64 { return (n + unit - 1) / unit * unit }
-func (p *Provider) Prepare(_ context.Context, rs []compute.Request) ([]compute.Preparation, error) {
-	if err := compute.ValidateBatch(rs); err != nil {
-		return nil, err
+func (p *Provider) size(r compute.Request) (plan, string) {
+	a := r.Allocation
+	a.ImageID = ""
+	a.ImageDigest = ""
+	if _, digest, ok := strings.Cut(r.Image, "@"); ok {
+		a.ImageDigest = digest
 	}
-	out := []compute.Preparation{}
-	for _, r := range rs {
-		a := r.Allocation
-		a.ImageID = ""
-		a.ImageDigest = ""
-		if _, digest, ok := strings.Cut(r.Image, "@"); ok {
-			a.ImageDigest = digest
-		}
-		pl := plan{Request: r, Allocation: a}
-		reason := ""
-		if r.StartBefore != nil {
-			reason = "cloud adapter does not enforce queued start deadlines"
-		}
-		switch p.cfg.Kind {
-		case "cloudrun":
-			if r.Platform != "linux/amd64" {
-				reason = "Cloud Run adapter requires linux/amd64"
-			}
-			if r.TimeoutSeconds > 604800 {
-				reason = "Cloud Run task timeout exceeds seven days"
-			}
-			pl.TotalMemory = ceil(r.MemoryBytes+r.ScratchBytes, Mi)
-			found := false
-			for _, size := range []struct{ cpu, min, max int64 }{{1000, 512 * Mi, 4 * Gi}, {2000, 512 * Mi, 8 * Gi}, {4000, 2 * Gi, 16 * Gi}, {6000, 4 * Gi, 24 * Gi}, {8000, 4 * Gi, 32 * Gi}} {
-				if size.cpu >= r.CPUMillis && max(pl.TotalMemory, size.min) <= size.max {
-					pl.Allocation.CPUMillis = size.cpu
-					pl.TotalMemory = max(pl.TotalMemory, size.min)
-					pl.Allocation.MemoryBytes = pl.TotalMemory - r.ScratchBytes
-					found = true
-					break
-				}
-			}
-			if !found {
-				reason = "Cloud Run resource limits exceeded"
-			}
-		case "ecs":
-			if r.Platform != "linux/amd64" && r.Platform != "linux/arm64" {
-				reason = "unsupported Fargate platform"
-			}
-			bound, known := p.cfg.ImageStorageBounds[r.Image]
-			if !known || bound <= 0 || !strings.Contains(r.Image, "@") {
-				reason = "Fargate scratch requires a configured storage bound for this digest-pinned image"
-			}
-			pl.DiskGiB = max(int64(20), ceil(r.ScratchBytes+bound, Gi)/Gi)
-			if pl.DiskGiB > 200 {
-				reason = "Fargate ephemeral storage limit exceeded"
-			}
-			pl.Allocation.ScratchBytes = pl.DiskGiB*Gi - bound
-			found := false
-			for _, size := range []struct{ milli, units, min, max, step int64 }{{250, 256, 512, 2048, 512}, {500, 512, 1024, 4096, 1024}, {1000, 1024, 2048, 8192, 1024}, {2000, 2048, 4096, 16384, 1024}, {4000, 4096, 8192, 30720, 1024}, {8000, 8192, 16384, 61440, 4096}, {16000, 16384, 32768, 122880, 8192}} {
-				if size.milli < r.CPUMillis {
-					continue
-				}
-				memory := max(size.min, ceil(r.MemoryBytes, Mi)/Mi)
-				if size.units == 256 && memory > 1024 {
-					memory = 2048
-				} else {
-					memory = ceil(memory, size.step)
-				}
-				if memory <= size.max {
-					pl.CPUUnits = size.units
-					pl.Allocation.CPUMillis = size.milli
-					pl.Allocation.MemoryBytes = memory * Mi
-					found = true
-					break
-				}
-			}
-			if !found {
-				reason = "Fargate CPU/memory combinations exceeded"
-			}
-		case "azurejobs":
-			if r.Platform != "linux/amd64" {
-				reason = "Azure adapter requires linux/amd64"
-			}
-			bound, known := p.cfg.ImageStorageBounds[r.Image]
-			if !known || bound <= 0 || !strings.Contains(r.Image, "@") {
-				reason = "Azure scratch requires a configured storage bound for this digest-pinned image"
-			}
-			found := false
-			for cpu := int64(250); cpu <= p.cfg.MaxAzureCPU; cpu += 250 {
-				memory := cpu * 2 * Gi / 1000
-				disk := int64(8) * Gi
-				switch {
-				case cpu <= 250:
-					disk = Gi
-				case cpu <= 500:
-					disk = 2 * Gi
-				case cpu <= 1000:
-					disk = 4 * Gi
-				}
-				if cpu >= r.CPUMillis && memory >= r.MemoryBytes && disk-bound >= r.ScratchBytes {
-					pl.Allocation.CPUMillis = cpu
-					pl.Allocation.MemoryBytes = memory
-					pl.Allocation.ScratchBytes = disk - bound
-					found = true
-					break
-				}
-			}
-			if !found {
-				reason = "Azure consumption CPU/memory/scratch limits exceeded"
-			}
-		}
-		result := compute.Preparation{LaunchID: r.LaunchID}
-		if reason != "" {
-			result.Status = compute.Unsupported
-			result.Reason = reason
-		} else {
-			result.Status = compute.Prepared
-			result.Plan = &compute.Plan{Token: compute.NewID(), ExpiresAt: time.Now().Add(5 * time.Minute), Allocation: pl.Allocation, Native: pl}
-		}
-		out = append(out, result)
+	pl := plan{Request: r, Allocation: a}
+	reason := ""
+	if r.StartBefore != nil {
+		reason = "cloud adapter does not enforce queued start deadlines"
 	}
-	return out, nil
+	switch p.cfg.Kind {
+	case "cloudrun":
+		if r.Platform != "linux/amd64" {
+			reason = "Cloud Run adapter requires linux/amd64"
+		}
+		if r.TimeoutSeconds > 604800 {
+			reason = "Cloud Run task timeout exceeds seven days"
+		}
+		pl.TotalMemory = ceil(r.MemoryBytes+r.ScratchBytes, Mi)
+		found := false
+		for _, size := range []struct{ cpu, min, max int64 }{{1000, 512 * Mi, 4 * Gi}, {2000, 512 * Mi, 8 * Gi}, {4000, 2 * Gi, 16 * Gi}, {6000, 4 * Gi, 24 * Gi}, {8000, 4 * Gi, 32 * Gi}} {
+			if size.cpu >= r.CPUMillis && max(pl.TotalMemory, size.min) <= size.max {
+				pl.Allocation.CPUMillis = size.cpu
+				pl.TotalMemory = max(pl.TotalMemory, size.min)
+				pl.Allocation.MemoryBytes = pl.TotalMemory - r.ScratchBytes
+				found = true
+				break
+			}
+		}
+		if !found {
+			reason = "Cloud Run resource limits exceeded"
+		}
+	case "ecs":
+		if r.Platform != "linux/amd64" && r.Platform != "linux/arm64" {
+			reason = "unsupported Fargate platform"
+		}
+		bound, known := p.cfg.ImageStorageBounds[r.Image]
+		if !known || bound <= 0 || !strings.Contains(r.Image, "@") {
+			reason = "Fargate scratch requires a configured storage bound for this digest-pinned image"
+		}
+		pl.DiskGiB = max(int64(20), ceil(r.ScratchBytes+bound, Gi)/Gi)
+		if pl.DiskGiB > 200 {
+			reason = "Fargate ephemeral storage limit exceeded"
+		}
+		pl.Allocation.ScratchBytes = pl.DiskGiB*Gi - bound
+		found := false
+		for _, size := range []struct{ milli, units, min, max, step int64 }{{250, 256, 512, 2048, 512}, {500, 512, 1024, 4096, 1024}, {1000, 1024, 2048, 8192, 1024}, {2000, 2048, 4096, 16384, 1024}, {4000, 4096, 8192, 30720, 1024}, {8000, 8192, 16384, 61440, 4096}, {16000, 16384, 32768, 122880, 8192}} {
+			if size.milli < r.CPUMillis {
+				continue
+			}
+			memory := max(size.min, ceil(r.MemoryBytes, Mi)/Mi)
+			if size.units == 256 && memory > 1024 {
+				memory = 2048
+			} else {
+				memory = ceil(memory, size.step)
+			}
+			if memory <= size.max {
+				pl.CPUUnits = size.units
+				pl.Allocation.CPUMillis = size.milli
+				pl.Allocation.MemoryBytes = memory * Mi
+				found = true
+				break
+			}
+		}
+		if !found {
+			reason = "Fargate CPU/memory combinations exceeded"
+		}
+	case "azurejobs":
+		if r.Platform != "linux/amd64" {
+			reason = "Azure adapter requires linux/amd64"
+		}
+		bound, known := p.cfg.ImageStorageBounds[r.Image]
+		if !known || bound <= 0 || !strings.Contains(r.Image, "@") {
+			reason = "Azure scratch requires a configured storage bound for this digest-pinned image"
+		}
+		found := false
+		for cpu := int64(250); cpu <= p.cfg.MaxAzureCPU; cpu += 250 {
+			memory := cpu * 2 * Gi / 1000
+			disk := int64(8) * Gi
+			switch {
+			case cpu <= 250:
+				disk = Gi
+			case cpu <= 500:
+				disk = 2 * Gi
+			case cpu <= 1000:
+				disk = 4 * Gi
+			}
+			if cpu >= r.CPUMillis && memory >= r.MemoryBytes && disk-bound >= r.ScratchBytes {
+				pl.Allocation.CPUMillis = cpu
+				pl.Allocation.MemoryBytes = memory
+				pl.Allocation.ScratchBytes = disk - bound
+				found = true
+				break
+			}
+		}
+		if !found {
+			reason = "Azure consumption CPU/memory/scratch limits exceeded"
+		}
+	}
+	return pl, reason
 }
+
 func envList(process compute.Process, metadata map[string]string) []map[string]string {
 	env := map[string]string{}
 	for k, v := range process.Env {
 		env[k] = v
 	}
 	for k, v := range metadata {
-		env[strings.ToUpper(k)] = v
+		if _, supplied := env[strings.ToUpper(k)]; !supplied {
+			env[strings.ToUpper(k)] = v
+		}
 	}
 	if _, ok := env["TMPDIR"]; !ok {
 		env["TMPDIR"] = "/scratch"
 	}
-	env["CORTEX_SCRATCH_DIR"] = "/scratch"
+	if _, supplied := env["CORTEX_SCRATCH_DIR"]; !supplied {
+		env["CORTEX_SCRATCH_DIR"] = "/scratch"
+	}
 	keys := []string{}
 	for k := range env {
 		keys = append(keys, k)
@@ -333,16 +323,9 @@ func (p *Provider) waitGoogle(ctx context.Context, token string, op map[string]j
 		}
 	}
 }
-func (p *Provider) Submit(ctx context.Context, ls []compute.PreparedLaunch) ([]compute.Submission, error) {
-	if len(ls) == 0 || len(ls) > compute.MaxBatch {
-		return nil, fmt.Errorf("invalid batch size")
-	}
-	ids := map[string]bool{}
-	for _, l := range ls {
-		if ids[l.LaunchID] {
-			return nil, fmt.Errorf("duplicate launch ID")
-		}
-		ids[l.LaunchID] = true
+func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.Submission, error) {
+	if err := compute.ValidateLaunches(ls); err != nil {
+		return nil, err
 	}
 	// Native calls may be singular; one adapter batch keeps the controller uniform.
 	p.mu.Lock()
@@ -350,19 +333,14 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.PreparedLaunch) ([]c
 	out := []compute.Submission{}
 	for _, l := range ls {
 		result := compute.Submission{LaunchID: l.LaunchID}
-		pl, ok := l.Plan.Native.(plan)
-		if !ok || pl.Request.LaunchID != l.LaunchID || pl.Allocation != l.Plan.Allocation || !l.Plan.ExpiresAt.After(time.Now()) {
-			result.Status = compute.Rejected
-			result.Reason = "invalid or expired cloud plan"
+
+		pl, reason := p.size(l.Request)
+		if reason != "" {
+			result.Status, result.Reason = compute.Unsupported, reason
 			out = append(out, result)
 			continue
 		}
-		if err := l.Process.Validate(); err != nil {
-			result.Status = compute.Rejected
-			result.Reason = err.Error()
-			out = append(out, result)
-			continue
-		}
+
 		if l.Process.WorkingDir != "" && p.cfg.Kind != "ecs" {
 			result.Status = compute.Unsupported
 			result.Reason = "working directory override unsupported"
@@ -393,7 +371,7 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.PreparedLaunch) ([]c
 	}
 	return out, nil
 }
-func (p *Provider) submitGoogle(ctx context.Context, token string, l compute.PreparedLaunch, pl plan) (compute.Submission, error) {
+func (p *Provider) submitGoogle(ctx context.Context, token string, l compute.Launch, pl plan) (compute.Submission, error) {
 	r := compute.Submission{LaunchID: l.LaunchID, Status: compute.Unavailable}
 	name := nameFor(l.LaunchID)
 	parent := "projects/" + url.PathEscape(p.cfg.Project) + "/locations/" + url.PathEscape(p.cfg.Region)
@@ -443,7 +421,7 @@ func (p *Provider) submitGoogle(ctx context.Context, token string, l compute.Pre
 	r.Status = compute.Accepted
 	return r, nil
 }
-func (p *Provider) submitAzure(ctx context.Context, token string, l compute.PreparedLaunch, pl plan) (compute.Submission, error) {
+func (p *Provider) submitAzure(ctx context.Context, token string, l compute.Launch, pl plan) (compute.Submission, error) {
 	r := compute.Submission{LaunchID: l.LaunchID, Status: compute.Unavailable}
 	resource := "/subscriptions/" + url.PathEscape(p.cfg.Subscription) + "/resourceGroups/" + url.PathEscape(p.cfg.ResourceGroup) + "/providers/Microsoft.App/jobs/" + nameFor(l.LaunchID)
 	path := resource + "?api-version=2025-07-01"
@@ -536,7 +514,7 @@ func (p *Provider) aws(ctx context.Context, action string, body any) (map[string
 	err = json.Unmarshal(b, &out)
 	return out, err
 }
-func (p *Provider) submitECS(ctx context.Context, l compute.PreparedLaunch, pl plan) (compute.Submission, error) {
+func (p *Provider) submitECS(ctx context.Context, l compute.Launch, pl plan) (compute.Submission, error) {
 	r := compute.Submission{LaunchID: l.LaunchID, Status: compute.Unavailable}
 	a := pl.Allocation
 	arch := "X86_64"

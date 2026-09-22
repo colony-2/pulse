@@ -14,16 +14,8 @@ import (
 func request(id string) compute.Request {
 	return compute.Request{LaunchID: id, Allocation: compute.Allocation{CPUMillis: 1500, MemoryBytes: 3 * Gi, ScratchBytes: Gi, Image: "registry.example/runner@sha256:" + strings.Repeat("a", 64), Platform: "linux/amd64"}, TimeoutSeconds: 60, Metadata: map[string]string{"cortex_job_id": "job", "cortex_launch_id": id}}
 }
-func prepared(t *testing.T, p *Provider, r compute.Request) compute.PreparedLaunch {
-	t.Helper()
-	rs, e := p.Prepare(context.Background(), []compute.Request{r})
-	if e != nil || rs[0].Status != compute.Prepared {
-		t.Fatal(rs, e)
-	}
-	if e = rs[0].Plan.Allocation.Satisfies(r.Allocation); e != nil {
-		t.Fatal(e)
-	}
-	return compute.PreparedLaunch{LaunchID: r.LaunchID, Plan: *rs[0].Plan, Process: compute.Process{Command: []string{"c2j"}, Args: []string{"run"}, Env: map[string]string{"TEST": "literal $value"}}}
+func launch(r compute.Request) compute.Launch {
+	return compute.Launch{Request: r, Process: compute.Process{Command: []string{"c2j"}, Args: []string{"run"}, Env: map[string]string{"TEST": "literal $value", "C2J_EXECUTION_CPU": "1500m"}}}
 }
 func TestCloudRunNativeRequestAndAcceptance(t *testing.T) {
 	p, e := New(Config{Kind: "cloudrun", Project: "project", Region: "region"})
@@ -54,13 +46,24 @@ func TestCloudRunNativeRequestAndAcceptance(t *testing.T) {
 		if limits["cpu"] != "2" || limits["memory"] != "4096Mi" {
 			t.Fatal(limits)
 		}
+		container := task["containers"].([]any)[0].(map[string]any)
+		found := false
+		for _, e := range container["env"].([]any) {
+			entry := e.(map[string]any)
+			if entry["name"] == "C2J_EXECUTION_CPU" {
+				found = entry["value"] == "1500m"
+			}
+		}
+		if !found {
+			t.Fatal("rounded CPU changed requested environment", container)
+		}
 		created = true
 		enc.Encode(map[string]any{"done": true})
 	}))
 	defer s.Close()
 	p.BaseURL = s.URL
 	p.HTTP = s.Client()
-	r, e := p.Submit(context.Background(), []compute.PreparedLaunch{prepared(t, p, request("a"))})
+	r, e := p.Submit(context.Background(), []compute.Launch{launch(request("a"))})
 	if e != nil || r[0].Status != compute.Accepted || len(r[0].Refs) != 2 {
 		t.Fatal(r, e)
 	}
@@ -78,7 +81,7 @@ func TestGoogleCapacityAndUnknownStart(t *testing.T) {
 		}))
 		p.BaseURL = s.URL
 		p.HTTP = s.Client()
-		out, _ := p.Submit(context.Background(), []compute.PreparedLaunch{prepared(t, p, request("a"))})
+		out, _ := p.Submit(context.Background(), []compute.Launch{launch(request("a"))})
 		want := compute.Unknown
 		if code == 429 {
 			want = compute.NoCapacity
@@ -125,7 +128,7 @@ func TestECSNativeTaskAndFailure(t *testing.T) {
 			}
 			return []byte(`{"tasks":[{"taskArn":"arn:task"}],"failures":[]}`), nil
 		}
-		out, e := p.Submit(context.Background(), []compute.PreparedLaunch{prepared(t, p, req)})
+		out, e := p.Submit(context.Background(), []compute.Launch{launch(req)})
 		want := compute.Accepted
 		if full {
 			want = compute.NoCapacity
@@ -171,15 +174,25 @@ func TestAzureCreateBeforeStart(t *testing.T) {
 	defer s.Close()
 	p.BaseURL = s.URL
 	p.HTTP = s.Client()
-	out, e := p.Submit(context.Background(), []compute.PreparedLaunch{prepared(t, p, req)})
+	out, e := p.Submit(context.Background(), []compute.Launch{launch(req)})
 	if e != nil || out[0].Status != compute.Accepted {
 		t.Fatal(out, e)
 	}
 }
 func TestUnsupportedScratchEvidence(t *testing.T) {
 	p, _ := New(Config{Kind: "ecs", Region: "r", Cluster: "c", Subnets: []string{"s"}, ExecutionRole: "role", SupervisorPath: "helper"})
-	out, e := p.Prepare(context.Background(), []compute.Request{request("a")})
+	out, e := p.Submit(context.Background(), []compute.Launch{launch(request("a"))})
 	if e != nil || out[0].Status != compute.Unsupported {
 		t.Fatal(out, e)
+	}
+}
+
+func TestEnvironmentPreservesSuppliedValues(t *testing.T) {
+	supplied := map[string]string{"CORTEX_JOB_ID": "literal", "CORTEX_SCRATCH_DIR": "/custom", "TMPDIR": "/custom/tmp", "C2J_EXECUTION_CPU": "1500m"}
+	entries := envList(compute.Process{Env: supplied}, map[string]string{"cortex_job_id": "metadata"})
+	for _, entry := range entries {
+		if want, ok := supplied[entry["name"]]; ok && entry["value"] != want {
+			t.Fatal(entry)
+		}
 	}
 }

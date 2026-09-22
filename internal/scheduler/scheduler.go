@@ -14,7 +14,7 @@ type Key struct{ Instance, Tenant, Job string }
 type Job struct {
 	Key     Key
 	Request compute.Request
-	Build   func(compute.Allocation) (compute.Process, error)
+	Process compute.Process
 }
 type Service struct {
 	Name     string
@@ -112,8 +112,8 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 	validPending := []Job{}
 	for _, j := range pending {
 		err := j.Request.Validate()
-		if err == nil && j.Build == nil {
-			err = fmt.Errorf("missing process builder")
+		if err == nil {
+			err = j.Process.Validate()
 		}
 		if err != nil {
 			results[j.Key] = Result{Key: j.Key, Submission: compute.Submission{LaunchID: j.Request.LaunchID, Status: compute.Rejected, Reason: err.Error()}}
@@ -145,70 +145,15 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 			copy(ordered[index:end], rotated)
 		}
 		p := ordered[index]
-		reqs := make([]compute.Request, len(pending))
-		for i, j := range pending {
-			reqs[i] = j.Request
-		}
-		c, cancel := context.WithTimeout(ctx, s.CallTimeout)
-		prepared, prepErr := p.Provider.Prepare(c, reqs)
-		cancel()
-		preps := map[string]compute.Preparation{}
-		duplicate := map[string]bool{}
-		for _, r := range prepared {
-			if _, ok := preps[r.LaunchID]; ok {
-				duplicate[r.LaunchID] = true
-			}
-			preps[r.LaunchID] = r
-		}
+
 		next := []Job{}
-		launches := []compute.PreparedLaunch{}
+		launches := make([]compute.Launch, len(pending))
 		launchJobs := map[string]Job{}
-		for _, j := range pending {
-			r, ok := preps[j.Request.LaunchID]
-			finish := func(status compute.Status, reason string) {
-				results[j.Key] = Result{j.Key, p.Name, compute.Submission{LaunchID: j.Request.LaunchID, Status: status, Reason: reason}}
-			}
-			if !ok && prepErr != nil {
-				finish(compute.Unavailable, "provider preparation unavailable")
-				next = append(next, j)
-				continue
-			}
-			if !ok || duplicate[j.Request.LaunchID] {
-				finish(compute.Rejected, fmt.Sprintf("missing or duplicate preparation result: %v", prepErr))
-				continue
-			}
-			if r.Status.Fallback() {
-				finish(r.Status, r.Reason)
-				next = append(next, j)
-				continue
-			}
-			if r.Status != compute.Prepared || r.Plan == nil {
-				finish(compute.Rejected, r.Reason)
-				continue
-			}
-			if err := r.Plan.Allocation.Satisfies(j.Request.Allocation); err != nil {
-				finish(compute.Rejected, err.Error())
-				continue
-			}
-			if r.Plan.Token == "" || !r.Plan.ExpiresAt.After(s.Now()) {
-				finish(compute.Rejected, "invalid or expired plan")
-				continue
-			}
-			if j.Build == nil {
-				finish(compute.Rejected, "missing process builder")
-				continue
-			}
-			process, err := j.Build(r.Plan.Allocation)
-			if err == nil {
-				err = process.Validate()
-			}
-			if err != nil {
-				finish(compute.Rejected, err.Error())
-				continue
-			}
-			launches = append(launches, compute.PreparedLaunch{LaunchID: j.Request.LaunchID, Plan: *r.Plan, Process: process})
+		for i, j := range pending {
+			launches[i] = compute.Launch{Request: j.Request, Process: j.Process}
 			launchJobs[j.Request.LaunchID] = j
 		}
+
 		if len(launches) > 0 {
 			c, cancel := context.WithTimeout(ctx, s.CallTimeout)
 			submitted, submitErr := p.Provider.Submit(c, launches)
@@ -224,7 +169,7 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 			for _, launch := range launches {
 				j := launchJobs[launch.LaunchID]
 				r, ok := subs[launch.LaunchID]
-				if !ok || dups[launch.LaunchID] || !r.Status.Valid() || r.Status == compute.Prepared {
+				if !ok || dups[launch.LaunchID] || !r.Status.Valid() {
 					r = compute.Submission{LaunchID: launch.LaunchID, Status: compute.Unknown, Reason: fmt.Sprintf("missing or invalid submission result: %v", submitErr)}
 				}
 				results[j.Key] = Result{j.Key, p.Name, r}

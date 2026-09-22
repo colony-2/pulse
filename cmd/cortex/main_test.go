@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
-	"time"
 )
 
 func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
@@ -50,35 +49,13 @@ esac
 					t.Error("missing auth")
 				}
 				w.Header().Set("Content-Type", "application/json")
-				if r.URL.Path == "/v1/prepare" {
-					var in struct {
-						Items []compute.Request `json:"items"`
-					}
-					if e := json.NewDecoder(r.Body).Decode(&in); e != nil {
-						t.Error(e)
-						w.WriteHeader(400)
-						return
-					}
-					out := []compute.Preparation{}
-					for _, item := range in.Items {
-						a := item.Allocation
-						a.CPUMillis = 2000
-						out = append(out, compute.Preparation{LaunchID: item.LaunchID, Status: compute.Prepared, Plan: &compute.Plan{Token: "opaque", ExpiresAt: time.Now().Add(time.Hour), Allocation: a}})
-					}
-					json.NewEncoder(w).Encode(map[string]any{"results": out})
-					return
-				}
 				if r.URL.Path != "/v1/submit" {
 					t.Error(r.URL.Path)
 					w.WriteHeader(404)
 					return
 				}
 				var in struct {
-					Items []struct {
-						ID      string          `json:"launch_id"`
-						Token   string          `json:"plan_token"`
-						Process compute.Process `json:"process"`
-					} `json:"items"`
+					Items []compute.Launch `json:"items"`
 				}
 				if e := json.NewDecoder(r.Body).Decode(&in); e != nil {
 					t.Error(e)
@@ -86,10 +63,10 @@ esac
 				}
 				results := []map[string]any{}
 				for _, item := range in.Items {
-					if item.Token != "opaque" || item.Process.Env["C2J_EXECUTION_CPU"] != "2000m" || item.Process.Env["CORTEX_JOB_ID"] == "" {
+					if item.CPUMillis != 1000 || item.Image == "" || item.Metadata["cortex_job_id"] == "" || item.Process.Env["C2J_EXECUTION_CPU"] != "1000m" || item.Process.Env["CORTEX_JOB_ID"] == "" {
 						t.Error(item)
 					}
-					results = append(results, map[string]any{"launch_id": item.ID, "status": "accepted", "inspection_uri": "/v1/launches/" + item.ID, "refs": []string{}})
+					results = append(results, map[string]any{"launch_id": item.LaunchID, "status": "accepted", "inspection_uri": "/v1/launches/" + item.LaunchID, "refs": []string{}})
 				}
 				mu.Lock()
 				submitted += len(in.Items)

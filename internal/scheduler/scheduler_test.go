@@ -14,25 +14,15 @@ import (
 type fake struct {
 	calls  *[][]string
 	name   string
-	submit func([]compute.PreparedLaunch) ([]compute.Submission, error)
-	cpu    int64
+	submit func([]compute.Launch) ([]compute.Submission, error)
 }
 
-func (f *fake) Prepare(_ context.Context, rs []compute.Request) ([]compute.Preparation, error) {
+func (f *fake) Submit(_ context.Context, ls []compute.Launch) ([]compute.Submission, error) {
 	ids := []string{f.name}
-	out := []compute.Preparation{}
-	for _, r := range rs {
-		ids = append(ids, r.Metadata["job"])
-		a := r.Allocation
-		if f.cpu > 0 {
-			a.CPUMillis = f.cpu
-		}
-		out = append(out, compute.Preparation{LaunchID: r.LaunchID, Status: compute.Prepared, Plan: &compute.Plan{Token: r.LaunchID, ExpiresAt: time.Now().Add(time.Hour), Allocation: a}})
+	for _, l := range ls {
+		ids = append(ids, l.Metadata["job"])
 	}
 	*f.calls = append(*f.calls, ids)
-	return out, nil
-}
-func (f *fake) Submit(_ context.Context, ls []compute.PreparedLaunch) ([]compute.Submission, error) {
 	if f.submit != nil {
 		return f.submit(ls)
 	}
@@ -46,25 +36,19 @@ func jobs(n int) []Job {
 	out := []Job{}
 	for i := 0; i < n; i++ {
 		id := string(rune('a' + i))
-		out = append(out, Job{Key: Key{"db", "tenant", id}, Request: compute.Request{Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Image: "runner:1", Platform: "linux/amd64"}, TimeoutSeconds: 60, Metadata: map[string]string{"job": id}}, Build: func(a compute.Allocation) (compute.Process, error) {
-			return compute.Process{Command: []string{"run"}, Env: map[string]string{"cpu": fmtCPU(a.CPUMillis)}}, nil
-		}})
+		out = append(out, Job{Key: Key{"db", "tenant", id}, Request: compute.Request{Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Image: "runner:1", Platform: "linux/amd64"}, TimeoutSeconds: 60, Metadata: map[string]string{"job": id}}, Process: compute.Process{Command: []string{"run"}, Env: map[string]string{"cpu": "1"}}})
 	}
 	return out
 }
-func fmtCPU(n int64) string {
-	if n == 2000 {
-		return "2"
-	}
-	return "1"
-}
-func TestPartialFallbackAndFreshAllocation(t *testing.T) {
+func TestPartialFallbackPreservesRequestAndProcess(t *testing.T) {
 	calls := [][]string{}
-	a := &fake{calls: &calls, name: "a", submit: func(ls []compute.PreparedLaunch) ([]compute.Submission, error) {
+	var fallback compute.Launch
+	a := &fake{calls: &calls, name: "a", submit: func(ls []compute.Launch) ([]compute.Submission, error) {
+		fallback = ls[1]
 		return []compute.Submission{{LaunchID: ls[0].LaunchID, Status: compute.Accepted}, {LaunchID: ls[1].LaunchID, Status: compute.NoCapacity}}, nil
 	}}
-	b := &fake{calls: &calls, name: "b", cpu: 2000, submit: func(ls []compute.PreparedLaunch) ([]compute.Submission, error) {
-		if len(ls) != 1 || ls[0].Process.Env["cpu"] != "2" {
+	b := &fake{calls: &calls, name: "b", submit: func(ls []compute.Launch) ([]compute.Submission, error) {
+		if len(ls) != 1 || !reflect.DeepEqual(ls[0], fallback) || ls[0].Process.Env["cpu"] != "1" {
 			t.Fatalf("wrong fallback: %+v", ls)
 		}
 		return []compute.Submission{{LaunchID: ls[0].LaunchID, Status: compute.Accepted}}, nil
@@ -86,7 +70,7 @@ func TestUnknownPartialAndDuplicateResultsDoNotFallThrough(t *testing.T) {
 	for _, duplicate := range []bool{false, true} {
 		t.Run(map[bool]string{false: "missing", true: "duplicate"}[duplicate], func(t *testing.T) {
 			calls := [][]string{}
-			a := &fake{calls: &calls, name: "a", submit: func(ls []compute.PreparedLaunch) ([]compute.Submission, error) {
+			a := &fake{calls: &calls, name: "a", submit: func(ls []compute.Launch) ([]compute.Submission, error) {
 				r := []compute.Submission{{LaunchID: ls[0].LaunchID, Status: compute.NoCapacity}}
 				if duplicate {
 					r = append(r, compute.Submission{LaunchID: ls[0].LaunchID, Status: compute.Accepted})
@@ -111,7 +95,7 @@ func TestUnknownPartialAndDuplicateResultsDoNotFallThrough(t *testing.T) {
 func TestTiersRoundRobin(t *testing.T) {
 	s := New(time.Minute, time.Second)
 	calls := [][]string{}
-	decline := func(ls []compute.PreparedLaunch) ([]compute.Submission, error) {
+	decline := func(ls []compute.Launch) ([]compute.Submission, error) {
 		out := []compute.Submission{}
 		for _, l := range ls {
 			out = append(out, compute.Submission{LaunchID: l.LaunchID, Status: compute.NoCapacity})
@@ -143,16 +127,13 @@ type blocking struct {
 	once    sync.Once
 }
 
-func (b *blocking) Prepare(ctx context.Context, r []compute.Request) ([]compute.Preparation, error) {
+func (b *blocking) Submit(ctx context.Context, r []compute.Launch) ([]compute.Submission, error) {
 	b.once.Do(func() { close(b.entered) })
 	select {
 	case <-b.release:
 	case <-ctx.Done():
 	}
 	return nil, errors.New("stop")
-}
-func (b *blocking) Submit(context.Context, []compute.PreparedLaunch) ([]compute.Submission, error) {
-	panic("unexpected")
 }
 func TestInFlightExclusion(t *testing.T) {
 	s := New(time.Minute, time.Second)
@@ -169,7 +150,7 @@ func TestInFlightExclusion(t *testing.T) {
 	<-done
 }
 
-func TestPreparationFailureFallsThrough(t *testing.T) {
+func TestSubmissionErrorDoesNotFallThrough(t *testing.T) {
 	calls := [][]string{}
 	b := &blocking{entered: make(chan struct{}), release: make(chan struct{})}
 	close(b.release)
@@ -178,21 +159,21 @@ func TestPreparationFailureFallsThrough(t *testing.T) {
 		{"unavailable", 1, b},
 		{"fallback", 2, &fake{calls: &calls, name: "fallback"}},
 	}, jobs(2))
-	if err != nil || len(r) != 2 || len(calls) != 1 || len(calls[0]) != 3 {
+	if err != nil || len(r) != 2 || len(calls) != 0 {
 		t.Fatal(r, calls, err)
 	}
 	for _, result := range r {
-		if result.Submission.Status != compute.Accepted || result.Service != "fallback" {
+		if result.Submission.Status != compute.Unknown || result.Service != "unavailable" {
 			t.Fatal(result)
 		}
 	}
 }
 
 func TestInvalidJobDoesNotReachProvider(t *testing.T) {
-	for _, invalidBuilder := range []bool{false, true} {
+	for _, invalidProcess := range []bool{false, true} {
 		batch := jobs(1)
-		if invalidBuilder {
-			batch[0].Build = nil
+		if invalidProcess {
+			batch[0].Process.Command = nil
 		} else {
 			batch[0].Request.MemoryBytes = 0
 		}

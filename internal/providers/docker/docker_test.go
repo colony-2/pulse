@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 )
 
 type daemon struct {
@@ -94,18 +93,10 @@ func requests(ids ...string) []compute.Request {
 	}
 	return rs
 }
-func launches(t *testing.T, p *Provider, rs []compute.Request) []compute.PreparedLaunch {
-	t.Helper()
-	plans, e := p.Prepare(context.Background(), rs)
-	if e != nil {
-		t.Fatal(e)
-	}
-	out := []compute.PreparedLaunch{}
-	for _, r := range plans {
-		if r.Status != compute.Prepared {
-			t.Fatalf("not prepared: %+v", r)
-		}
-		out = append(out, compute.PreparedLaunch{LaunchID: r.LaunchID, Plan: *r.Plan, Process: compute.Process{Command: []string{"c2j"}, Args: []string{}, Env: map[string]string{}}})
+func launches(rs []compute.Request) []compute.Launch {
+	out := []compute.Launch{}
+	for _, r := range rs {
+		out = append(out, compute.Launch{Request: r, Process: compute.Process{Command: []string{"c2j"}, Args: []string{}, Env: map[string]string{}}})
 	}
 	return out
 }
@@ -113,11 +104,11 @@ func TestConcurrentBatchesAndRestart(t *testing.T) {
 	d := &daemon{containers: map[string]container{}}
 	p, s := testProvider(t, d)
 	defer s.Close()
-	a := launches(t, p, requests("a", "b"))
-	b := launches(t, p, requests("c", "d"))
+	a := launches(requests("a", "b"))
+	b := launches(requests("c", "d"))
 	results := make(chan []compute.Submission, 2)
-	for _, ls := range [][]compute.PreparedLaunch{a, b} {
-		go func(ls []compute.PreparedLaunch) {
+	for _, ls := range [][]compute.Launch{a, b} {
+		go func(ls []compute.Launch) {
 			r, e := p.Submit(context.Background(), ls)
 			if e != nil {
 				t.Error(e)
@@ -149,7 +140,7 @@ func TestConcurrentBatchesAndRestart(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	plans, e := restarted.Prepare(context.Background(), requests("next"))
+	plans, e := restarted.Submit(context.Background(), launches(requests("next")))
 	if e != nil || plans[0].Status != compute.NoCapacity {
 		t.Fatal(plans, e)
 	}
@@ -159,8 +150,8 @@ func TestConcurrentBatchesAndRestart(t *testing.T) {
 		d.containers[id] = c
 	}
 	d.mu.Unlock()
-	plans, e = restarted.Prepare(context.Background(), requests("next"))
-	if e != nil || plans[0].Status != compute.Prepared {
+	plans, e = restarted.Submit(context.Background(), launches(requests("next")))
+	if e != nil || plans[0].Status != compute.Accepted {
 		t.Fatal(plans, e)
 	}
 }
@@ -168,12 +159,12 @@ func TestUnknownCreateRetainsCharge(t *testing.T) {
 	d := &daemon{containers: map[string]container{}, createError: true}
 	p, s := testProvider(t, d)
 	defer s.Close()
-	ls := launches(t, p, requests("a", "b"))
+	ls := launches(requests("a", "b"))
 	r, e := p.Submit(context.Background(), ls)
 	if e != nil || r[0].Status != compute.Unknown {
 		t.Fatal(r, e)
 	}
-	plans, e := p.Prepare(context.Background(), requests("c"))
+	plans, e := p.Submit(context.Background(), launches(requests("c")))
 	if e != nil || plans[0].Status != compute.NoCapacity {
 		t.Fatal(plans, e)
 	}
@@ -182,7 +173,7 @@ func TestRetriedLaunchDoesNotRestart(t *testing.T) {
 	d := &daemon{containers: map[string]container{}}
 	p, s := testProvider(t, d)
 	defer s.Close()
-	ls := launches(t, p, requests("a"))
+	ls := launches(requests("a"))
 	r, _ := p.Submit(context.Background(), ls)
 	if r[0].Status != compute.Accepted {
 		t.Fatal(r)
@@ -192,7 +183,6 @@ func TestRetriedLaunchDoesNotRestart(t *testing.T) {
 	c.State.Status = "exited"
 	d.containers["a"] = c
 	d.mu.Unlock()
-	ls[0].Plan.ExpiresAt = time.Now().Add(-time.Hour)
 	r, _ = p.Submit(context.Background(), ls)
 	if r[0].Status != compute.Accepted || len(d.creates) != 1 {
 		t.Fatal(r)
@@ -201,5 +191,36 @@ func TestRetriedLaunchDoesNotRestart(t *testing.T) {
 	r, _ = p.Submit(context.Background(), ls)
 	if r[0].Status != compute.Rejected {
 		t.Fatal(r)
+	}
+}
+
+func TestRoundingPreservesRequestedEnvironment(t *testing.T) {
+	d := &daemon{containers: map[string]container{}}
+	p, s := testProvider(t, d)
+	defer s.Close()
+	rs := requests("round")
+	rs[0].CPUMillis = 1001
+	ls := launches(rs)
+	ls[0].Process.Env = map[string]string{"C2J_EXECUTION_CPU": "1001m", "CORTEX_SCRATCH_DIR": "/custom", "TMPDIR": "/custom/tmp", "LITERAL": "$HOME"}
+	out, err := p.Submit(context.Background(), ls)
+	if err != nil || out[0].Status != compute.Accepted {
+		t.Fatal(out, err)
+	}
+	body := d.creates[0]
+	if body["HostConfig"].(map[string]any)["NanoCpus"] != float64(1010*1000000) {
+		t.Fatal(body)
+	}
+	seen := map[string]string{}
+	for _, v := range body["Env"].([]any) {
+		k, value, _ := strings.Cut(v.(string), "=")
+		if _, exists := seen[k]; exists {
+			t.Fatal("duplicate environment key", k)
+		}
+		seen[k] = value
+	}
+	for k, v := range ls[0].Process.Env {
+		if seen[k] != v {
+			t.Fatal(k, seen[k], v)
+		}
 	}
 }
