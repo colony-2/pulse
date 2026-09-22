@@ -1,339 +1,130 @@
 # Implementing a remote compute provider
 
-This guide explains how to build a service that Cortex can use to launch containers. It applies both to an adapter around a compute API and to a service that manages its own registered runners.
+Build a service that accepts complete container launches through `POST /v1/submit` and exposes diagnostic inspection through `GET /v1/launches/{launch_id}`. The service can wrap a cloud API or manage registered runners, in any implementation language.
 
-The service can use any implementation language. Its public interface is the [v1 OpenAPI contract](../api/provider.openapi.yaml); [REMOTE_PROVIDER_PROTOCOL.md](../REMOTE_PROVIDER_PROTOCOL.md) defines the accompanying semantics. Cortex already implements the HTTP client. This repository does not supply a remote provider server or runner-registration service.
+The [v1 OpenAPI contract](../api/provider.openapi.yaml) defines the wire format. [Remote provider protocol](../REMOTE_PROVIDER_PROTOCOL.md) defines its semantics and includes complete examples of a [batch request](../REMOTE_PROVIDER_PROTOCOL.md#example-submit-two-launches), [partial response](../REMOTE_PROVIDER_PROTOCOL.md#example-partial-acceptance), [request rejection](../REMOTE_PROVIDER_PROTOCOL.md#example-whole-request-rejection), and [inspection response](../REMOTE_PROVIDER_PROTOCOL.md#example-inspect-a-running-launch). Cortex supplies the HTTP client; this repository does not include a remote provider server.
 
-## 1. Keep the responsibilities clear
+## Responsibilities
 
 | Cortex owns | Your provider owns | c2j owns |
 | --- | --- | --- |
 | Finding runnable jobs and selecting one to launch | Matching the requested image, platform, and resources to compute | Claiming the selected job and managing its lease |
-| Priority tiers, batch placement, and fallback | Admission, optional queueing, and starting the supplied process | Job execution, replay, and runtime requirement changes |
-| Building the process command and environment from the prepared allocation | Execution deadlines, launch idempotency, and inspection records | JobDB state transitions |
-| In-memory per-job cooldown | Retaining enough information to recover accepted or uncertain launches | Determining whether the existing allocation remains sufficient |
+| Priority tiers, batch placement, and fallback | Capacity admission, optional queueing, and starting the supplied process | Execution, replay, and runtime requirement changes |
+| Building the process and environment from requested/defaulted resources | Resource enforcement, execution deadlines, idempotency, and inspection | JobDB state transitions |
+| In-memory per-job cooldown | Recovering accepted or uncertain launches | Determining whether its reported allocation remains sufficient |
 
-Treat the process specification and correlation metadata as opaque inputs. Your service does not need to query JobDB, interpret recipes, or construct c2j arguments. If it manages external runners, registration, heartbeats, authentication, and long polling are internal to that service.
+Treat the process and correlation metadata as opaque inputs. Your service does not query JobDB, resolve recipes, or construct c2j arguments. Runner registration, heartbeats, authentication, and long polling are internal to the service.
 
-A useful first implementation is **immediate admission with no queue**: either commit a compatible execution slot or return `no_capacity`. Add queueing only if your deployment needs it.
+Start with immediate admission: commit compatible capacity or return `no_capacity`. Add a queue only if the deployment needs it.
 
-## 2. Implement three endpoints
+## HTTP contract
 
-| Endpoint | Required behavior |
+Use HTTPS, bearer authentication, and JSON bodies. One configured endpoint identifies one provider instance/admission domain. Scope launch records to the authenticated principal. Replicas behind that endpoint must share capacity and idempotency decisions.
+
+For submission:
+
+- Accept `{"items": [...]}` and return `{"results": [...]}`.
+- Support batches of 1–100, including a batch of one. Validate the whole envelope, schema, authentication, authorization, and ID uniqueness before processing anything.
+- Return HTTP `200` with exactly one result per input ID; mixed outcomes are normal. Correlate by `launch_id`, not position.
+- Reject unknown request options. Allow clients to ignore new response fields.
+- Do not redirect: Cortex does not follow redirects. An endpoint at `https://example.com/compute` receives `/compute/v1/submit` and `/compute/v1/launches/{id}`. Include that prefix in root-relative inspection URIs.
+
+HTTP `400`, `401`, `403`, `413`, and `422` guarantee that no item was processed. Once any item may have been processed, return per-item outcomes or an ambiguous failure instead of one of these whole-request rejections.
+
+## Size and admit complete requests
+
+Each item includes `launch_id`, `image`, `platform`, `cpu_millis`, `memory_bytes`, `scratch_bytes`, `timeout_seconds`, optional `start_before`, `metadata`, and `process`. There are no plan tokens or separate allocation negotiation calls.
+
+1. Match the image and platform. A digest-pinned image must launch that content. Cortex includes its requested digest in `C2J_EXECUTION_IMAGE_DIGEST` for c2j compatibility, so enforcing the pin is part of honoring the submitted environment. Do not silently substitute an image or architecture.
+2. Guarantee at least the requested usable CPU, memory, and scratch simultaneously. Round up to native sizes when needed; subtract image/provider overhead where it consumes usable capacity.
+3. Account for shared limits. For example, 2 GiB application memory plus 1 GiB tmpfs needs room for both; a shared 2 GiB limit cannot promise both allocations.
+4. Preserve supplied command/arguments/environment exactly. Values override image/provider defaults and remain literal; no placeholder expansion or implicit shell. Respect an explicit working directory; otherwise use the image's directory.
+5. Admit against committed capacity, including pending and uncertain starts. Do not use momentary utilization as available capacity. Serialize admissions or use an equivalent atomic capacity reservation.
+
+For a 1500m CPU request that your platform rounds to 2 CPUs, keep the supplied `C2J_EXECUTION_CPU=1500m`. Cortex advertises the requested guaranteed allocation, including defaults. Native sizing is internal; the provider does not rewrite c2j's environment to advertise the surplus. Inspection can report the larger allocation for diagnostics.
+
+All quantities are positive JSON integers up to `9007199254740991`; timeouts are positive and at most one year. Smaller provider limits can produce `unsupported`. Continue considering later items after one does not fit: a smaller item may still fit.
+
+## Report admission accurately
+
+| Status | Use when |
 | --- | --- |
-| `POST /v1/prepare` | Return an expiring plan and concrete allocation for each supported item. Never start or queue execution. |
-| `POST /v1/submit` | Accept or decline each prepared launch independently. Preserve the supplied process exactly. |
-| `GET /v1/launches/{launch_id}` | Return the launch's allocation, original metadata, execution state, and native references. |
+| `accepted` | You own a durable launch commitment, whether queued, starting, running, or terminal. |
+| `no_capacity` | Nothing was launched or queued, and the pool is full now. |
+| `unsupported` | Nothing was launched or queued, and a required option cannot be honored. |
+| `unavailable` | You can confirm non-acceptance caused by temporary unavailability. |
+| `rejected` | Invalid request/configuration or conflicting reuse of an existing ID. |
+| `unknown` | The operation might have initiated execution, but its outcome is uncertain. |
 
-Use HTTPS, `Authorization: Bearer <token>`, and JSON request/response bodies. A configured endpoint identifies one provider instance and admission domain. Scope plans and launch records to the authenticated principal. Replicas behind that endpoint must share the same idempotency and capacity decisions.
+Accepted results require both `inspection_uri` and `refs`. Use `"refs": []` before native assignment; omission and `null` are invalid. The inspection URI must be relative or same-origin absolute. Every other status requires a nonempty diagnostic `reason`.
 
-For both POST endpoints:
+Definite declines guarantee no delayed execution from that submission. Creating an inert parent resource alone is insufficient for acceptance; an accepted asynchronous start operation can be sufficient. Track and clean up native parent resources internally.
 
-- The envelope is `{"items": [...]}`; the response is `{"results": [...]}`.
-- Batches contain 1–100 items. There is no separate single-submit API.
-- Validate the envelope, schema, authentication, authorization, and uniqueness of launch IDs **before processing any items**.
-- Return HTTP `200` with exactly one result for every input `launch_id`. Match by ID, not array position. Mixed outcomes are normal.
-- Reject unknown request fields or options rather than silently discarding constraints. Allow clients to ignore additional response fields.
+A lost response after calling a native launch API is usually `unknown`. Do not map generic HTTP `429`, `5xx`, or transport failures to safe fallback. If you know the pool is full, return HTTP `200` with per-item `no_capacity`. Cortex stops uncertain items for this attempt; it can retry the job with a fresh ID after cooldown.
 
-Do not redirect these endpoints: Cortex deliberately does not follow redirects. An endpoint configured as `https://example.com/compute` receives requests at `/compute/v1/prepare`, `/compute/v1/submit`, and `/compute/v1/launches/{id}`.
+## Make idempotency survive crashes
 
-## 3. Prepare an allocation
+The key is `(provider instance, authenticated principal, launch_id)`. It identifies one attempt, not the JobDB job: that job can legitimately need later executions.
 
-Preparation answers: **if this launch is accepted, what will its container actually receive?**
-
-A request includes:
-
-| Field | Meaning |
-| --- | --- |
-| `launch_id` | Attempt identity: 1–128 letters, digits, dots, underscores, or hyphens. |
-| `image` | OCI image reference, possibly digest-pinned. |
-| `platform` | Normalized OS/architecture, optionally with a variant. |
-| `cpu_millis` | Usable CPU; 1000 equals one vCPU. |
-| `memory_bytes` | Usable application memory. |
-| `scratch_bytes` | Usable ephemeral workspace, available simultaneously with the memory allocation. |
-| `timeout_seconds` | Maximum execution duration after startup. |
-| `start_before` | Optional latest startup time; required if your service queues the launch. |
-| `metadata` | Exact string-to-string correlation envelope to retain. |
-
-All resource quantities are positive integer JSON numbers, at most `9007199254740991`. Cortex has already supplied defaults. The current Cortex implementation also limits execution timeouts to one year; your provider can support a smaller range and return `unsupported` for larger requests.
-
-### Allocation rules
-
-1. Match the image and platform. The current client requires `allocation.image` and `allocation.platform` to equal the request values exactly. Keep the requested image reference in `image` even if you bind execution to a resolved digest internally.
-2. Round resource capacities **up**, never down. Report the usable quantities you will enforce, not the host's total resources or the requested quantities when you provision something different.
-3. Account for resources that share a limit. For example, 2 GiB usable memory plus 1 GiB tmpfs scratch requires room for both; advertising both from a shared 2 GiB allowance is incorrect. Subtract image/system overhead where it consumes the advertised workspace capacity.
-4. Use `image_digest` only for an established OCI manifest digest. Use `image_id` for a runtime/config ID, if known; they are different facts. If the request contains `image@sha256:...`, the current client requires the matching verified digest in `allocation.image_digest`. An unsupported explicit constraint must return `unsupported`.
-5. Establish an immutable plan binding the principal, launch ID, original request, allocation, deadlines, and metadata. Return its opaque token and expiry. A token can reference a stored plan or carry integrity-protected data; it must not expose credentials.
-
-Preparation may inspect images or make short-lived capacity reservations, but it must not enqueue or launch execution. Reservations must expire automatically. A prepared plan does not guarantee that capacity will still exist at submission time.
-
-### Example: round CPU and memory upward
-
-The timestamps below are illustrative. Use fresh UTC timestamps when trying the example.
-
-**`POST /v1/prepare` request**
-
-```json
-{
-  "items": [
-    {
-      "launch_id": "launch-001",
-      "image": "registry.example/runner:1.2",
-      "platform": "linux/amd64",
-      "cpu_millis": 1500,
-      "memory_bytes": 1073741824,
-      "scratch_bytes": 1073741824,
-      "timeout_seconds": 3600,
-      "start_before": "2026-09-23T12:00:45Z",
-      "metadata": {
-        "cortex_metadata_version": "1",
-        "cortex_managed_by": "cortex",
-        "cortex_jobdb_instance_id": "production",
-        "cortex_tenant_id": "acme",
-        "cortex_job_id": "job-123",
-        "cortex_launch_id": "launch-001"
-      }
-    }
-  ]
-}
-```
-
-**HTTP `200` response**
-
-```json
-{
-  "results": [
-    {
-      "launch_id": "launch-001",
-      "status": "prepared",
-      "plan": {
-        "token": "opaque-plan-001",
-        "expires_at": "2026-09-23T12:00:30Z",
-        "allocation": {
-          "cpu_millis": 2000,
-          "memory_bytes": 2147483648,
-          "scratch_bytes": 1073741824,
-          "platform": "linux/amd64",
-          "image": "registry.example/runner:1.2"
-        }
-      }
-    }
-  ]
-}
-```
-
-Preparation can also return `no_capacity`, `unsupported`, `unavailable`, or `rejected`, each with a nonempty `reason`. It does not return `accepted` or `unknown`, because it cannot initiate execution.
-
-## 4. Submit the supplied process
-
-Cortex uses the prepared allocation to construct the executor environment. Submission contains the launch ID, plan token, and process; it does **not** resend the original request or metadata. Your service must recover those from the plan.
-
-**`POST /v1/submit` request**
-
-```json
-{
-  "items": [
-    {
-      "launch_id": "launch-001",
-      "plan_token": "opaque-plan-001",
-      "process": {
-        "command": ["c2j"],
-        "args": [
-          "run", "--jobdb", "https://jobdb.example.com/acme",
-          "--job-id", "job-123", "--worker-id", "launch-001",
-          "--on-not-ready", "fail", "--ci", "--input-mode", "fail"
-        ],
-        "env": {
-          "C2J_EXECUTION_CPU": "2000m",
-          "C2J_EXECUTION_MEMORY": "2097152Ki",
-          "C2J_EXECUTION_EPHEMERAL_STORAGE": "1048576Ki",
-          "C2J_EXECUTION_PLATFORM": "linux/amd64",
-          "C2J_EXECUTION_IMAGE": "registry.example/runner:1.2",
-          "CORTEX_METADATA_VERSION": "1",
-          "CORTEX_MANAGED_BY": "cortex",
-          "CORTEX_JOBDB_INSTANCE_ID": "production",
-          "CORTEX_TENANT_ID": "acme",
-          "CORTEX_JOB_ID": "job-123",
-          "CORTEX_LAUNCH_ID": "launch-001"
-        }
-      }
-    }
-  ]
-}
-```
-
-**HTTP `200` response**
-
-```json
-{
-  "results": [
-    {
-      "launch_id": "launch-001",
-      "status": "accepted",
-      "inspection_uri": "/v1/launches/launch-001",
-      "refs": ["runner-pool/executions/exec-789"]
-    }
-  ]
-}
-```
-
-An accepted response must contain both `inspection_uri` and `refs`. Return `"refs": []` when no native identifier exists yet; omission and `null` are invalid. Use a relative inspection URI or a same-origin absolute URI. Include the deployment's path prefix when returning a root-relative URI.
-
-### Preserve process semantics
-
-- Execute `command` followed by `args` as an argument vector. Do not join them into a shell string or reinterpret quoting.
-- Override the image entrypoint/command with the supplied values. Supplied environment values override the corresponding image environment values.
-- Preserve arguments and environment values exactly, including empty strings. Do not recompute `C2J_EXECUTION_*` values or replace the selected job with an arbitrary available job.
-- Honor an absolute `working_dir` when supplied; otherwise retain the image's working directory. Return `unsupported` if you cannot honor an option.
-- Execute inside the prepared image/platform and enforce the prepared allocation and execution timeout independently of the Cortex process or HTTP connection.
-
-`accepted` means the provider owns the launch: it can be queued, starting, running, or already finished. Saving a plan or creating an inert cloud parent without arranging execution is insufficient. A disconnected caller must not abandon an accepted launch.
-
-## 5. Return capacity and failure outcomes precisely
-
-| Per-item status | Provider guarantee | What Cortex does |
-| --- | --- | --- |
-| `accepted` | Owns the launch and exposes inspection. | Stops placement for this item. |
-| `no_capacity` | No room now; this submission will never start later. | Tries another service. |
-| `unsupported` | Cannot honor a required option; nothing will start. | Tries another service. |
-| `unavailable` | Temporary failure with confirmed non-acceptance. | Tries another service. |
-| `rejected` | Invalid plan/request or configuration problem. | Stops this attempt and reports the reason. |
-| `unknown` | Acceptance might have happened. | Stops this attempt without immediate fallback. |
-
-All non-accepted results require a nonempty `reason`. An `unknown` result can include native `refs` if any are known. For a conflicting replay, `rejected` rejects the new request while leaving the original launch intact.
-
-For a five-item submission with capacity for three, return HTTP `200` with five results: three `accepted` and two `no_capacity`. Do not queue the two declined items. Cortex can send those two together to another service. Admission must be atomic against other concurrent batches, including pending starts; idle CPU usage is not evidence that previously committed capacity is free.
-
-### HTTP-level failures
-
-Use `400`, `401`, `403`, `413`, or `422` only for request-level rejection **before processing any items**. The error body is:
-
-```json
-{"code": "invalid_batch", "message": "Duplicate launch_id: launch-001"}
-```
-
-Once processing starts, use per-item results for known outcomes. A capacity response should be HTTP `200` plus `no_capacity`, rather than HTTP `429` or `503`.
-
-The current Cortex client treats submission timeouts, truncated/invalid JSON, unexpected HTTP statuses (including `429` and `5xx`), and invalid or missing item results as uncertain. It decodes the complete JSON envelope; a truncated response does not salvage an earlier JSON prefix. In an otherwise valid response, individually invalid or missing results cannot authorize fallback. Disable automatic submission retries in gateways or client middleware unless they preserve the same idempotency identity.
-
-Preparation is different: it cannot launch work, so a transport failure or server error can permit fallback. Do not use this distinction as permission to start anything in `/prepare`.
-
-## 6. Make idempotency survive crashes
-
-The idempotency key is:
-
-```text
-(provider instance, authenticated principal, launch_id)
-```
-
-Cortex preserves a launch ID while trying different providers during one attempt. A later cooldown attempt uses a **new** ID. The provider should not replace this identity with the JobDB job ID; the same job may legitimately need another execution.
-
-A practical submission sequence is:
+A practical submission sequence:
 
 1. Validate the whole batch before side effects.
-2. For each item, serialize access to its idempotency key and look for an existing decision.
-3. For a logical replay of the same plan and process, return the recorded result and references. Check this before treating token expiry as a new-submission failure.
-4. For conflicting reuse of the ID, return per-item `rejected` without changing the original launch. Compare logical content; JSON object-key and batch-item order must not affect identity. Preserve argument-array order.
-5. For a new submission, authenticate the plan, validate its binding/expiry and process, and atomically admit capacity.
-6. Record the launch identity, immutable inputs, original metadata, and admission commitment before execution can start. Use native idempotency/deterministic resource identity where available.
-7. Arrange execution, retain its decision/references, and return the result. If a native API call may have succeeded, keep the item fenced against another start and report `unknown` until its outcome is resolved.
+2. Serialize each item's key and look for an existing decision.
+3. Return the recorded decision/references for a logical replay. Compare all resources, image, process, metadata, and deadlines. Ignore JSON object-key order and batch membership; argument order and literal values matter.
+4. Reject conflicting reuse without altering the original launch. Check retained records before treating an elapsed start deadline as a new-submission failure.
+5. For a new item, validate provider support and atomically admit capacity. Record declines as well as admissions.
+6. Retain immutable inputs, metadata, and admission commitment before execution can start. Use native idempotency keys or deterministic resource identity where available.
+7. Arrange execution and retain the decision/references. Fence uncertain operations against another start until you resolve their outcome.
 
-The record and native API call usually cannot share one transaction. Design explicitly for a crash between them: after restart, reconcile an in-progress record against the native operation before retrying a launch. A lock held only during an HTTP request is insufficient. Use storage or native resources that let your service reconstruct these decisions; a separate database is an implementation choice.
+Your record and the native API call usually cannot share a transaction. Recover from a crash between them by inspecting native operations before retrying. A lock held only while handling HTTP is insufficient; use storage or native resources that reconstruct decisions. A separate database is an implementation choice.
 
-Retention requirements:
+Retain accepted records throughout execution plus at least 24 hours after termination, declined decisions for at least 24 hours, and unknown records until resolved. Within retention, replaying `no_capacity` returns that same decision even if capacity is now available. After retention expires, replay protection is no longer guaranteed and callers must not replay old submissions. Longer retention is allowed.
 
-- Keep decisions through the plan's expiry.
-- Keep accepted launches for their entire lifetime and at least 24 hours after terminal state.
-- Keep declined decisions for at least 24 hours as well.
-- Keep uncertain submissions fenced while resolving their outcome.
-- After a record is removed, its expired plan must still be unable to authorize a new launch.
-
-A replay of a recorded `no_capacity` decision remains that decision even if capacity has since become available. Cortex will use a fresh launch ID for a later attempt.
-
-## 7. Enforce both kinds of deadline
-
-These are three separate clocks:
+## Enforce deadlines independently
 
 | Clock | Rule |
 | --- | --- |
-| Plan `expires_at` | Limits first submission. An expired plan cannot authorize a new launch; a recorded replay can still return its result. |
-| Request `start_before` | Latest time execution can start. Expire an accepted launch that misses it without starting the container. |
-| Request `timeout_seconds` | Bounds execution duration after startup. Terminate execution when it is exceeded. |
+| `start_before` | Prevent startup at or after this timestamp. Mark an accepted launch `expired` if it misses the deadline. |
+| `timeout_seconds` | Terminate execution when its duration after startup reaches the limit. |
 
-If your service queues accepted work, require `start_before`. When it is absent, either admit directly without queueing or return `unsupported` for queue-only operation. Check the deadline again at actual startup, not just when assigning a runner. Timeouts and deadline enforcement must continue after Cortex disconnects or restarts.
+A provider that queues work must require `start_before`. Without it, admit directly or return `unsupported` if only queueing is available. Check again at actual startup, including on the runner; admission-time checking alone is insufficient. Enforcement must continue after Cortex disconnects or restarts.
 
-Cortex supplies startup deadlines when `defaults.start_window` is configured. That duration must be positive and no longer than `cooldown`. Neither a token expiry nor an HTTP request timeout substitutes for a startup or execution deadline.
+Cortex supplies startup deadlines when `defaults.start_window` is configured. It must be positive and no longer than `cooldown`. An HTTP request timeout is not an execution deadline.
 
-## 8. Preserve reverse lookup and implement inspection
+## Preserve reverse lookup and inspection
 
-Persist the exact `metadata` map before execution starts, including keys your implementation does not recognize. Cortex currently sends:
+Retain the exact `metadata` map, including unknown keys, before execution starts. Cortex sends:
 
 | Key | Meaning |
 | --- | --- |
-| `cortex_metadata_version` | Correlation format version, currently `1`. |
+| `cortex_metadata_version` | Correlation version, currently `1`. |
 | `cortex_managed_by` | `cortex`. |
-| `cortex_jobdb_instance_id` | Configured JobDB instance identity. |
-| `cortex_tenant_id` | Tenant identity. |
-| `cortex_job_id` | JobDB job identity. |
-| `cortex_launch_id` | Cortex launch attempt identity. |
+| `cortex_jobdb_instance_id` | Configured JobDB instance. |
+| `cortex_tenant_id` | Tenant. |
+| `cortex_job_id` | JobDB job. |
+| `cortex_launch_id` | Launch attempt. |
 
-The instance/tenant/job combination identifies the originating job. Treat these values as correlation data, not as credentials or proof of authorization.
+The instance/tenant/job combination identifies the originating entity. Metadata is correlation data, not proof of authorization. Attach it to native labels, annotations, tags, or equivalent fields. If native limits prevent this, attach a stable launch-record reference and retain the full mapping in your service. Environment variables alone cannot identify unassigned launches.
 
-Attach the envelope to native resource labels, annotations, tags, or equivalent metadata where possible. If a native system cannot hold it, attach a stable launch-record reference and retain the complete mapping in your service. Someone starting from the native execution must be able to find the originating JobDB entity. Environment variables alone are insufficient for a queued or unassigned launch.
+Inspection must work immediately after acceptance, even before runner assignment. Include `launch_id`, state, metadata, allocation, refs, and `accepted_at`. Queued allocation describes the usable capacities you promise to enforce; optional verified manifest digests and diagnostic image/config IDs remain distinct. Include start/finish timestamps when known.
 
-**`GET /v1/launches/launch-001` response**
+Allowed states are `queued`, `starting`, `running`, `succeeded`, `failed`, `timed_out`, `expired`, `cancelled`, and `unknown`. Provider success does not assert JobDB completion. A `404` means no inspectable record is available; it does not prove a past submission never ran. Cortex does not poll inspection or require completion callbacks.
 
-```json
-{
-  "launch_id": "launch-001",
-  "state": "running",
-  "metadata": {
-    "cortex_metadata_version": "1",
-    "cortex_managed_by": "cortex",
-    "cortex_jobdb_instance_id": "production",
-    "cortex_tenant_id": "acme",
-    "cortex_job_id": "job-123",
-    "cortex_launch_id": "launch-001"
-  },
-  "allocation": {
-    "cpu_millis": 2000,
-    "memory_bytes": 2147483648,
-    "scratch_bytes": 1073741824,
-    "platform": "linux/amd64",
-    "image": "registry.example/runner:1.2"
-  },
-  "refs": ["runner-pool/executions/exec-789"],
-  "accepted_at": "2026-09-23T12:00:10Z",
-  "started_at": "2026-09-23T12:00:12Z"
-}
-```
+## Adapt this to external runners
 
-Allowed states are `queued`, `starting`, `running`, `succeeded`, `failed`, `timed_out`, `expired`, `cancelled`, and `unknown`. Include `finished_at` and a diagnostic `reason` when appropriate. Provider execution success does not assert that the JobDB job is complete.
+1. Runners register platforms, runtime capabilities, and allocatable capacity with your service.
+2. `/submit` checks compatibility and commits capacity or a bounded queue entry. Return `no_capacity` when fallback is preferable to waiting.
+3. A runner long-polls your internal API. Assign the complete immutable launch under an exclusive assignment identity.
+4. Before startup, verify that assignment is still valid, its deadline has not passed, and the requested resources can be guaranteed. Preserve the supplied environment even if the runner allocates more capacity.
+5. Track state, enforce timeout, and retain correlation. Release capacity only when execution has stopped or cannot start.
 
-Inspection must work immediately after acceptance, including before a runner is assigned; `refs` can then be empty. A `404` means no inspectable record is available, not proof that a prior submission never ran. Cortex's scheduling loop does not poll this endpoint, wait for completion callbacks, or use inspection to bypass cooldown.
+A missed heartbeat does not prove execution stopped. Prevent a revoked assignment from starting before reassigning uncertain work. Runner dispatch leases and c2j job leases have separate responsibilities.
 
-## 9. Adapt this to registered external runners
+Prefer immediate assignment or a short queue bounded by `start_before`. Accepted queued work can remain runnable in c2j, producing fresh launch IDs after cooldown; per-launch idempotency does not deduplicate these. Longer queues require provider-owned handling of repeated/stale pending work before enabling them. Cortex needs no registry, long-poll API, or persistent state.
 
-For a service resembling an external CI runner pool:
-
-1. Runners register their supported platforms, image/runtime capabilities, and allocatable resources with your service.
-2. `/prepare` checks whether the pool can honor a request and produces an allocation that any eventual selected runner must satisfy.
-3. `/submit` commits capacity or a bounded queue entry. If no compatible capacity exists and you prefer Cortex to try another provider, return `no_capacity`.
-4. A runner long-polls your internal API for assignments. Assign the immutable plan/process and metadata under an exclusive assignment identity.
-5. Before execution starts, verify the assignment remains valid, its startup deadline has not passed, and its allocation can still be honored.
-6. Track execution state, enforce the timeout, and retain the correlation record. Release capacity only when you can establish that the execution has stopped or cannot start.
-
-Handle a lost runner connection as an uncertain execution until you can establish its outcome or prevent the old assignment from running. A missed heartbeat alone does not prove the process stopped; immediately reassigning the same launch can create duplicate execution. Your runner protocol needs a way to prevent an old assignment from starting after it has been revoked or replaced.
-
-These runner APIs and their storage remain inside the provider service. Cortex needs no runner-registration endpoint, capacity-count endpoint, notifications, or new persistent state.
-
-## 10. Connect Cortex and verify your service
-
-Example controller configuration:
+## Connect and verify
 
 ```yaml
-c2j:
-  mode: embedded
 poll_interval: 5s
 cooldown: 60s
 call_timeout: 10s
@@ -360,38 +151,21 @@ targets:
         priority: 1
 ```
 
-Supply `CORTEX_RUNNER_TOKEN` in the controller environment, then run:
+Set `CORTEX_RUNNER_TOKEN`, then run:
 
 ```sh
 cortex -config cortex.yaml -check
 cortex -config cortex.yaml -once
 ```
 
-`-check` validates configuration and initializes the listing backend, but does **not** make a JobDB or remote-provider health request in embedded mode. Use `-once` against a seeded test JobDB tenant to exercise actual preparation and submission. For a local test server, `allow_http: true` explicitly permits HTTP; normal deployments use HTTPS.
+`-check` validates configuration and initializes the listing backend; in default embedded mode it makes no JobDB/provider health request. Use `-once` with seeded test jobs to exercise submission. For development HTTP endpoints, explicitly set `allow_http: true`.
 
-### Conformance checklist
+Test single/maximum batches, invalid envelopes without side effects, partial acceptance, resource rounding with unchanged environment, concurrent capacity admission, duplicate/conflicting replays, response loss, crash recovery, deadlines, principal isolation, and inspection before assignment. Verify that native resources map back to the originating job. Keep bearer tokens and environment secrets out of logs. Schema validation alone cannot prove these behaviors.
 
-- Single-item and 100-item batches work; empty/oversized batches, duplicate IDs, and schema failures cause no partial execution.
-- Resource rounding is reported accurately; unsupported images, platforms, digests, or process options cannot launch.
-- Preparation never starts work, even when its response is lost.
-- A partially accepted batch returns one result per ID; declined items never start later.
-- Concurrent submissions cannot overcommit the same capacity or start an ID twice.
-- Logical replay survives object-key/batch reordering, response loss, and service restart; conflicting replay leaves the original launch unchanged.
-- A crash after calling the native launch API is reconciled without blindly starting again.
-- Expired plans cannot create new launches; known replays still return their recorded decisions.
-- Queued work cannot start after `start_before`; execution stops at its timeout independently of the HTTP caller.
-- Inspection works before assignment and preserves all metadata and native references.
-- Native execution records can be traced back to the correct JobDB instance, tenant, and job.
-- Authentication separates principals; environment secrets and bearer/plan tokens stay out of diagnostic logs.
+Useful references:
 
-Validate request/response examples against the OpenAPI schemas as well as testing these behaviors. Schema validation alone cannot prove idempotency, capacity admission, deadline enforcement, or crash recovery.
+- [HTTP client](../internal/providers/remote/remote.go) and [tests](../internal/providers/remote/remote_test.go).
+- [Compute types](../pkg/compute/compute.go) and [scheduler](../internal/scheduler/scheduler.go).
+- [CLI integration test](../cmd/cortex/main_test.go) and [schema/example validator](../scripts/validate_protocol.py).
 
-### Useful code references
-
-- [HTTP client and response handling](../internal/providers/remote/remote.go)
-- [Remote client tests](../internal/providers/remote/remote_test.go)
-- [Allocation validation and provider types](../pkg/compute/compute.go)
-- [Scheduler fallback behavior](../internal/scheduler/scheduler.go)
-- [Executable-to-remote integration test](../cmd/cortex/main_test.go)
-
-For a Go server, define wire response types that faithfully implement the OpenAPI schema. In particular, `compute.Submission.Refs` has `omitempty` for in-process use: directly serializing that type with an empty slice omits the required `refs` field on an accepted HTTP result. Likewise, the in-process `PreparedLaunch` type is not the HTTP submission DTO.
+For a Go server, define HTTP DTOs that honor the schema. `compute.Submission.Refs` uses `omitempty` for in-process use; directly serializing it with an empty slice omits the required HTTP `refs` field. Complete `compute.Launch` inputs contain request/process data, but the HTTP schema remains authoritative: emit empty arguments/environment as `[]`/`{}`, and reject unknown fields.

@@ -21,3 +21,7 @@ Implementation commits use `colony2.com <col2bot@colony2.com>` as requested.
 ## Public listing API migration
 
 The controller uses `github.com/colony-2/c2j/pkg/joblist` by default. The dependency is pinned to a remotely resolvable pseudo-version containing the new API; Go 1.26 is now required. `c2j.mode: external` retains subprocess listing. Default images include Cortex and its supervisor; the optional `external-c2j` Docker target adds a CLI.
+
+## Single-operation provider v1
+
+All adapters implement `Submit` with complete resources, process, deadlines, and metadata. Cortex builds the environment from requested/defaulted values once and preserves it during fallback. Providers size and admit internally; no preparation API or plan token remains. The v1 OpenAPI and protocol examples are updated in place and checked by the schema validator. Regression coverage includes unchanged environments under provider rounding, partial fallback, uncertain submission failures, Docker capacity/replay, and both listing modes through the remote client.

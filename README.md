@@ -11,7 +11,7 @@ Cortex watches explicitly configured repository cells for jobs that need an exec
 ```mermaid
 flowchart LR
     J[JobDB] -->|c2j Go listing API| C[Cortex]
-    C -->|Prepare and submit batches| P[Launch services]
+    C -->|Submit complete batches| P[Launch services]
     P --> D[Local Docker]
     P --> R[Remote runner service]
     P --> G[Cloud Run / ECS / Azure Jobs]
@@ -20,7 +20,7 @@ flowchart LR
 ```
 
 - **Small controller:** no database, notifications, or runner registry. Polling, per-job cooldowns, and round-robin cursors stay in memory.
-- **Portable requirements:** image, architecture, CPU, memory, and scratch capacity come from c2j, with configured defaults when absent. Executors receive the allocation the provider actually supplies.
+- **Portable requirements:** image, architecture, CPU, memory, and scratch capacity come from c2j, with configured defaults when absent. Executor environments report the requested/defaulted resources; providers guarantee at least those capacities without changing supplied values.
 - **Batch placement:** services accept or decline individual jobs in a batch. Cortex tries equal-priority peers before moving to a lower-priority tier.
 - **Clear ownership:** c2j manages job leases, replay, and changes in execution requirements. Cortex lists through c2j’s public Go API and supplies compute; executor containers run the c2j command.
 
@@ -118,7 +118,7 @@ For a multi-architecture registry build, replace `--load` with `--platform linux
 | AWS ECS Fargate | `ecs` | Standalone tasks with supported task sizes and the execution supervisor. |
 | Azure Container Apps Jobs | `azurejobs` | Manual jobs with supported CPU/memory pairs and native execution timeout. |
 
-A future service that registers external runners and dispatches work by long polling can implement the remote protocol. Cortex needs only its prepare/submit API.
+A future service that registers external runners and dispatches work by long polling can implement the remote protocol. Cortex sends complete batches through its submit API; launch inspection is available for diagnostics.
 
 See [provider configuration and limitations](docs/providers.md) for authentication, image storage bounds, Docker admission, retention, and cloud allocation details.
 

@@ -2,7 +2,7 @@
 
 Status: architecture for the initial Go implementation. See [README.md](README.md) for implemented behavior, configuration, validation, and deployment limitations. The [execution tracking guide](GUIDE-Execution-Tracking.md) describes the c2j contract.
 
-**Runtime requirement changes are handled by c2j.** Cortex provisions from published demand and supplies the actual allocation. There is no additional Cortex mechanism or outstanding c2j feature request for this behavior.
+**Runtime requirement changes are handled by c2j.** Cortex provisions from published demand and advertises the requested, provider-guaranteed allocation. There is no additional Cortex mechanism or outstanding c2j feature request for this behavior.
 
 ## Purpose
 
@@ -94,7 +94,7 @@ Every launch uses the effective demand's image when one is supplied; otherwise i
 
 CPU is canonical millicores; memory and storage are canonical bytes. Public c2j values use quantities such as `2`, `500m`, `4Gi`, and `10Gi`. Numeric requirements are minima; image and platform are compatibility constraints. Cortex uses c2j's documented normalization semantics and provider adapters validate the chosen allocation.
 
-The adapter resolves provider-supported sizing before Cortex constructs the process environment. It may round capacities up but cannot weaken an explicit requirement. CPU, usable memory, and usable scratch capacity must be simultaneously available after overhead. For memory-backed scratch, do not advertise the whole memory limit as application memory and separately promise scratch from those same bytes.
+Cortex constructs the process environment from requested/defaulted resources before submission. The adapter resolves provider-supported sizing during submission. It may round capacities up but cannot weaken an explicit requirement or change the supplied environment. CPU, usable memory, and usable scratch capacity must be simultaneously available after overhead. For memory-backed scratch, do not advertise the whole memory limit as application memory and separately promise scratch from those same bytes.
 
 Provider accounts, regions, networks, credentials, workload identities, timeouts, and routing remain deployment configuration. Invalid or unsupported demand is a placement error, not permission to repeatedly launch the default image. A later poll can retry after configuration changes, subject to the normal cooldown.
 
@@ -104,29 +104,29 @@ Provider accounts, regions, networks, credentials, workload identities, timeouts
 - The default image must support recipe/source resolution and access to jobdb and required source credentials. It need not include every tool a later recipe operation requires: preflight can publish demand for another image before that work begins.
 - Cortex supplies an explicit executable and argument vector rather than relying on a recipe-selected entrypoint. Adapters translate that process specification into each provider's command/argument model.
 - Select the required platform for a multi-platform image. Record the launch reference, resolved OCI manifest digest, and runtime image/config ID as distinct facts. Never use a config/image ID as though it were a manifest digest.
-- A digest-constrained launch must establish the actual matching manifest identity. Preserve the relationship between an image index and the selected platform manifest; if the pinned c2j version cannot verify the required identity, reject it rather than claiming compatibility.
-- Tag requests may launch by tag, with that actual reference supplied to c2j. Only advertise a manifest digest when the provider binds the pull to that content or runtime startup verifies what was pulled. A registry lookup before a moving-tag pull is not sufficient evidence. Any optimization that replaces a tag with a digest must preserve c2j's defined reference-matching behavior and keep the actual pull identity explicit.
+- A digest-constrained launch must enforce the requested manifest identity. Preserve the relationship between an image index and the selected platform manifest; if the pinned c2j version cannot verify the required identity, reject it rather than claiming compatibility.
+- Tag requests launch with that reference supplied to c2j, without a digest variable. A provider may bind a tag to resolved content internally while preserving the requested reference and process environment. Resolved content identities belong in native/provider inspection records.
 - Missing tools or an unsupported c2j version produce an execution/configuration error. They do not justify silently substituting another image.
 
 ## Container startup and allocation inputs
 
-Cortex builds an immutable allocation descriptor from the provider configuration actually applied to that attempt. It injects the descriptor into the container's c2j process using the implemented per-field contract in the guide:
+Cortex builds an immutable allocation descriptor from the requested resources after applying defaults. Providers must guarantee at least these usable capacities before starting the process; internal sizing can provide more. It injects the descriptor into the container's c2j process using the implemented per-field contract in the guide:
 
-| Container environment variable | Value supplied by Cortex or verified runtime startup |
+| Container environment variable | Value supplied by Cortex |
 | --- | --- |
-| `C2J_EXECUTION_CPU` | Usable allocated CPU, including provider rounding. |
-| `C2J_EXECUTION_MEMORY` | Usable allocated memory for c2j and recipe processes. |
-| `C2J_EXECUTION_EPHEMERAL_STORAGE` | Usable scratch capacity after image/provider overhead. |
-| `C2J_EXECUTION_PLATFORM` | Actual `os/architecture[/variant]`. |
+| `C2J_EXECUTION_CPU` | Requested/defaulted CPU guaranteed by the provider. |
+| `C2J_EXECUTION_MEMORY` | Requested/defaulted usable memory for c2j and recipe processes. |
+| `C2J_EXECUTION_EPHEMERAL_STORAGE` | Requested/defaulted scratch capacity, guaranteed after overhead. |
+| `C2J_EXECUTION_PLATFORM` | Requested/defaulted `os/architecture[/variant]`, enforced by the provider. |
 | `C2J_EXECUTION_IMAGE` | Image launch reference. |
-| `C2J_EXECUTION_IMAGE_DIGEST` | Verified OCI manifest digest, when known. |
-| `C2J_EXECUTION_IMAGE_ID` | Runtime-reported image/config identity, when known. |
+| `C2J_EXECUTION_IMAGE_DIGEST` | Digest from a digest-pinned requested image; provider must enforce that pin. |
+| `C2J_EXECUTION_IMAGE_ID` | Not supplied by Cortex; native runtime IDs remain diagnostic metadata. |
 
-Unknown optional facts are omitted, never fabricated from a request. An unknown field cannot satisfy an explicit requirement. If a required fact can only be verified inside the container, an adapter-supported startup path must obtain it before c2j starts, or that adapter cannot support the constrained launch. c2j does not infer available resources from host totals or assume unlimited capacity.
+For digest-pinned requests, Cortex includes the requested manifest digest because c2j requires that field for compatibility. The provider must bind execution to that content or decline the launch. Tag requests do not receive an invented digest, and runtime image/config IDs are not injected by Cortex. Resource and image values express the provider's obligations, not independent measurements.
 
-The allocation is what the environment supplies, not what the job requested. For example, a 1500m/3Gi request placed on a 2-vCPU/4Gi allocation must advertise `2` and `4Gi`. Report usable scratch only when it can be justified alongside that memory allocation.
+For example, a 1500m/3Gi request placed on a 2-vCPU/4Gi allocation still advertises `1500m` and `3Gi`. This conservative allocation keeps submissions identical across providers. It can cause an extra handoff if later demand exceeds the reported request even though native rounding supplied enough surplus. Providers must guarantee usable scratch alongside application memory, including any overhead.
 
-Illustrative container specification after provider sizing (not a complete cloud manifest):
+Illustrative requested container specification (not a complete cloud manifest):
 
 ```yaml
 image: registry.example/recipe-runner:1.2
@@ -151,11 +151,11 @@ env:
   C2J_EXECUTION_IMAGE: registry.example/recipe-runner:1.2
 ```
 
-The example assumes the adapter can supply those simultaneous usable capacities. Add verified digest/image-ID variables when available; omitting them in this example is not sufficient for a digest requirement. Default-image launches receive allocation inputs just like requirement-selected launches.
+The example assumes the adapter guarantees those simultaneous usable capacities. A digest-pinned image also receives the corresponding `C2J_EXECUTION_IMAGE_DIGEST`; a tag request omits it. Default-image launches receive allocation inputs just like requirement-selected launches.
 
 Equivalent `--execution-*` CLI arguments override their corresponding environment variables. Cortex will use the environment form consistently and prevent image defaults or user configuration from adding conflicting allocation flags. Reserve `C2J_EXECUTION_*`, jobdb targeting, and the supplied job/worker arguments for the trusted launch configuration. Keep provider correlation under `CORTEX_*` separate from c2j's allocation inputs. Recipe inputs cannot redefine the allocation descriptor.
 
-These facts assert what the provisioner configured; they are not security attestations. A provider must fail a launch rather than silently reduce its plan after allocation values have been injected.
+These values are the requested allocation guaranteed by the provider, not security attestations. A provider must decline or fail a launch rather than silently weaken a requirement or rewrite its environment.
 
 ## Executor preflight and environment changes
 
@@ -163,7 +163,7 @@ JobDB grants a lease using its typed-route, readiness, and ownership rules. **Re
 
 ### Bootstrap and initial preflight
 
-1. Cortex launches the requested image, or the default image when none is known, with actual allocation inputs.
+1. Cortex launches the requested image, or the default image when none is known, with requested, provider-guaranteed allocation inputs.
 2. c2j acquires the targeted lease and resolves/loads the pinned recipe through its normal durable execution path.
 3. c2j compares the effective recipe-plus-job demand to its allocated environment.
 4. If sufficient, it continues without an unnecessary handoff. Otherwise it publishes the full demand through a lease-owned reschedule and exits before dependent work.
@@ -232,8 +232,8 @@ For each polling pass:
 1. Invoke `c2j list` for each configured target/cell pair with explicit readiness filters and retrieve all pages. Decode typed routes and execution views, and deduplicate by job identity. c2j retains the authoritative lease and cancellation checks.
 2. Skip unsupported routes and malformed/unsupported demand, and report a bounded diagnostic. Do not use compatibility filtering against the default allocation.
 3. Collect a fair, bounded batch of jobs sharing the same launch-service configuration. Atomically reserve each eligible job in memory and record its attempt time, excluding keys already in flight or within cooldown. Give each job its own launch ID.
-4. Apply defaults to omitted demand fields. Visit priority tiers from lowest number to highest, rotating the first service within each tier for each batch. Send the batch to the selected service's `Prepare`, build a targeted process and allocation environment for each prepared item, and call `Submit` once with those items.
-5. Remove accepted, rejected, and uncertain items from further consideration. Pass only explicitly declined, fallback-eligible items to the next service in the same tier, preparing fresh allocations and process environments there. Try each service at most once per batch. Move remaining items to the next tier only after exhausting the current tier.
+4. Apply defaults to omitted demand fields. Visit priority tiers from lowest number to highest, rotating the first service within each tier for each batch. Build each targeted process and environment from the requested resources, then call the selected service's `Submit` once with the complete items.
+5. Remove accepted, rejected, and uncertain items from further consideration. Pass only explicitly declined, fallback-eligible items to the next service in the same tier, preserving the same complete request and process environment. Try each service at most once per batch. Move remaining items to the next tier only after exhausting the current tier.
 6. Clear each job's in-flight marker after its batch attempt finishes. Keep its cooldown whether accepted, declined by every service, failed, or uncertain. Log per-item results and any native references.
 7. Expire entries after `X` when no longer in flight. Bound provider calls and the overall batch attempt so jobs cannot stay stuck indefinitely.
 
@@ -253,61 +253,39 @@ Cortex does not wait for containers to finish. c2j/jobdb determine subsequent de
 
 ## Generic compute interface
 
-Providers know nothing about c2j or JobDB. Both preparation and submission are batch-only, including a batch containing one job. Preparation remains separate so Cortex can construct truthful allocation inputs before submission.
+Providers know nothing about c2j or JobDB. Submission is batch-only, including a batch containing one job. Each launch contains resources, process, deadlines, and metadata together.
 
 ```go
 type Provider interface {
-    Prepare(ctx context.Context, reqs []ComputeRequest) ([]PreparationResult, error)
-    Submit(ctx context.Context, launches []PreparedLaunch) ([]SubmissionResult, error)
+    Submit(ctx context.Context, launches []Launch) ([]Submission, error)
 }
 
-type ComputeRequest struct {
-    LaunchID     string
-    Image        string
-    Platform     string
-    CPUMillis    int64
-    MemoryBytes  int64
-    ScratchBytes int64
-    StartBefore  time.Time
-    Timeout      time.Duration
-    Metadata     map[string]string
+type Launch struct {
+    Request // launch ID, image, platform, resources, deadlines, metadata
+    Process Process
 }
 
-type ProcessSpec struct {
+type Process struct {
     Command    []string
     Args       []string
     Env        map[string]string
     WorkingDir string // optional; empty uses the image's working directory
 }
 
-type PreparationResult struct {
-    LaunchID string
-    Status   string // prepared, no_capacity, unsupported, unavailable, rejected
-    Plan     *PreparedRun
-    Reason   string
-}
-
-type PreparedLaunch struct {
-    LaunchID string
-    Plan     PreparedRun
-    Process  ProcessSpec
-}
-
-type SubmissionResult struct {
-    LaunchID string
-    Status   string // accepted, no_capacity, unsupported, unavailable, rejected, unknown
-    Refs     []string
-    Reason   string
+type Submission struct {
+    LaunchID      string
+    Status        Status // accepted, no_capacity, unsupported, unavailable, rejected, unknown
+    Refs          []string
+    InspectionURI string
+    Reason        string
 }
 ```
 
-This is an interface sketch. `PreparedRun` contains concrete allocation facts, image identities, and an adapter-owned plan. Results are keyed by launch ID, not response position, with exactly one result per input in a complete response. Batch operations are not all-or-nothing. Expected per-item declines belong in results; the method error reports a call-level failure and may accompany partial results.
+See `pkg/compute` for the full types. Results are keyed by launch ID, with one result per input in a complete response. Batches are not all-or-nothing. Expected per-item declines belong in results; the method error reports a call-level failure and may accompany partial results.
 
-`Prepare` validates and sizes the entire candidate batch without starting compute. It may return plans for some requests and decline others based on capacity or compatibility. Cortex keeps plans only in memory. An adapter may carry opaque remote plan references; any capacity reservations must expire without Cortex cleanup. A prepared plan is not an accepted launch, and capacity can still disappear before submission.
+`Submit` validates the complete batch, sizes resources, and admits or declines each item. Capacity reservations and native provisioning details stay inside the provider. Providers must not mutate input requests or their process environment. Round native capacity upward as needed while preserving the supplied requested/defaulted values; there is no allocation response that changes the process before launch. On fallback, reuse the entire item unchanged at the next service.
 
-Cortex builds each process environment from that service's prepared allocation. `Submit` must apply that allocation and process specification without changing advertised capacities or image identities. Provider-native templates must match the prepared image/platform/resources. On fallback, prepare again at the next service; never reuse the first service's allocation descriptor.
-
-`StartBefore`, when set, is the latest permitted start time for a queued container; `Timeout` limits execution duration. A provider supporting queued launches must enforce the start deadline. An adapter that cannot enforce it rejects that option rather than silently ignoring it. Immediate/cloud submission paths may leave it unset.
+`StartBefore`, when set, is the latest permitted start time for a queued container; `TimeoutSeconds` limits execution duration. A provider supporting queued launches must enforce the start deadline. An adapter that cannot enforce it rejects that option rather than silently ignoring it. Immediate/cloud submission paths may leave it unset.
 
 ### Priority, capacity, and partial acceptance
 
@@ -315,7 +293,7 @@ Each launch service has an explicit positive integer `priority`; smaller numbers
 
 For example, three priority-1 services A, B, C receive first choice in successive batches as A, then B, then C. A batch starting at B tries B, C, A before either priority-2 service. The priority-2 tier rotates independently when batches reach it. Rotation distributes first choice across batches; it does not guarantee equal job counts or resource usage.
 
-Capacity is specific to the requested workload: a service may accept three jobs while declining two with different resource needs. There is no separate capacity-check API or Cortex-maintained count; preparation/submission results drive selection.
+Capacity is specific to the requested workload: a service may accept three jobs while declining two with different resource needs. There is no separate capacity-check API or Cortex-maintained count; submission results drive selection.
 
 | Per-item result | Meaning and Cortex action |
 | --- | --- |
@@ -328,7 +306,7 @@ Capacity is specific to the requested workload: a service may accept three jobs 
 
 A non-accepted submission result other than `unknown` guarantees that no new execution is queued or can later start for that submission. Rejecting a conflicting reuse of a launch ID leaves its original launch unchanged. For multi-step cloud APIs, a created parent alone is not acceptance; an accepted asynchronous start operation is sufficient. Parent cleanup remains provider-owned.
 
-Example: service A receives five launches and accepts three, returning `no_capacity` for two. Cortex prepares and submits just those two to the next service in the tier, or the next tier if no peers remain. It does not retry A separately for each declined job. Services process the batch together; adapters may internally use bounded individual calls when a cloud API lacks native batch support.
+Example: service A receives five launches and accepts three, returning `no_capacity` for two. Cortex submits just those two to the next service in the tier, or the next tier if no peers remain. It does not retry A separately for each declined job. Services process the batch together; adapters may internally use bounded individual calls when a cloud API lacks native batch support.
 
 A timeout or missing per-item submission result is `unknown`, not `no_capacity`. Preserve valid explicit results from a partial response; do not infer rejection of unreported items. Validate returned IDs and statuses. Cortex never immediately sends an uncertain item to another service, although the existing cooldown policy still permits a later retry and possible duplicate compute.
 
@@ -338,11 +316,10 @@ Keep each job's launch ID across fallback within the attempt; use it for per-ite
 
 The remote adapter implements [the v1 protocol](REMOTE_PROVIDER_PROTOCOL.md), with a concrete [OpenAPI 3.1.1 contract](api/provider.openapi.yaml):
 
-- `POST /v1/prepare`: batch requests to per-item allocation plans and expiring tokens.
-- `POST /v1/submit`: batch plan tokens and process specifications to per-item admission results.
+- `POST /v1/submit`: complete batch launch requests to per-item admission results.
 - `GET /v1/launches/{launch_id}`: diagnostic inspection with exact correlation metadata, including before execution starts.
 
-Use authenticated HTTPS, batches of 1–100 items, canonical integer resource quantities, and per-item launch IDs. Remote providers must support idempotent submission; the protocol specifies expiry, retention, partial failures, and uncertain outcomes. Inspection is available to operators and tooling without adding a scheduling reconciliation loop. Built-in adapters use the same logical contract without HTTP. Runner registration/long polling remains an implementation detail of a remote provider.
+Use authenticated HTTPS, batches of 1–100 items, canonical integer resource quantities, and per-item launch IDs. Remote providers must support idempotent submission; the protocol specifies deadlines, retention, partial failures, and uncertain outcomes. Inspection is available to operators and tooling without adding a scheduling reconciliation loop. Built-in adapters use the same logical contract without HTTP. Runner registration/long polling remains an implementation detail of a remote provider.
 
 ### Built-in local Docker provider
 
@@ -356,7 +333,7 @@ Prefer a separate runner service, reached through a normal compute adapter. It o
 
 ```mermaid
 flowchart LR
-    C[Cortex] -->|prepare and submit batches| S[Runner service]
+    C[Cortex] -->|submit complete batches| S[Runner service]
     R[Runner agent] -->|register and long-poll| S
     S -->|assigned launch| R
     R --> E[Container running targeted c2j]
@@ -370,7 +347,7 @@ This keeps runner availability and queue state outside Cortex and lets the servi
 Provider-contract details matter:
 
 - **Capacity and priority.** The runner service returns per-item acceptance or declines. To prefer fallback over waiting, configure it to return `no_capacity` when no suitable runner is available. If it accepts an item into a queue, Cortex considers that item placed and does not also submit it to a lower-priority service.
-- **Allocation before submission.** Batch `Prepare` returns per-item allocations the service can enforce on eligible runners. It can describe a fixed container allocation without choosing a particular host yet. Runner registration advertises capacity; it is not proof of a launch's actual allocation. Before starting, the service must assign sufficient capacity and apply the prepared image/platform/resource configuration. Runtime-only image facts follow the existing verified-startup contract. If the service cannot honor a plan, it rejects or expires the launch instead of inventing allocation values. Cortex does not negotiate with individual runners.
+- **Requested resource guarantees.** Each batch item contains resources and a complete process. The service must assign sufficient capacity and enforce the requested image/platform/resources before startup, while preserving the supplied environment exactly. Runner registration describes the pool; it does not establish an individual launch's allocation. If the service cannot honor the request, it declines before admission, or expires/fails an accepted launch without starting inadequate compute. Cortex does not negotiate with individual runners.
 - **Bounded waiting.** A queued job can remain runnable in c2j, so each cooldown can produce another submission. Launch-ID idempotency only handles retries of one submission. Start with immediate assignment or a short queue whose start deadline is no later than the end of that attempt's cooldown. The service expires unstarted requests even if Cortex disappears. This prevents an accumulating backlog; it does not eliminate the already-accepted possibility of duplicate running executors. Longer queues would need provider-owned coalescing of pending requests for the same workload, including replacement of stale requirements, before being enabled.
 
 Keep requests and results independent of cloud SDK types. Preserve the full correlation envelope on the service's launch record before assignment, and carry it to the runner/container. Provider inspection must map even an unassigned or failed launch back to its job. Runner credentials, allowed workloads, logs, assignment recovery, and record retention belong to the runner service's deployment and protocol.
@@ -422,10 +399,10 @@ Suggested layout:
 cmd/cortex/                 configuration and service entrypoint
 internal/c2j/               library/CLI listing adapters and executor commands
 internal/scheduler/         polling and in-memory cooldown
-internal/executor/          defaults, prepared allocation, container process
+internal/executor/          defaults, requested allocation, container process
 internal/metadata/          provider correlation envelope
 internal/providers/         docker, remote, cloudrun, ecs, azurejobs adapters
-pkg/compute/                provider-neutral batch preparation and submission interface
+pkg/compute/                provider-neutral batch submission interface
 api/provider.openapi.yaml   standard remote provider HTTP contract
 ```
 
@@ -433,7 +410,7 @@ Use a pinned c2j public listing library by default, with explicit tenant/reposit
 
 ### Delivery gates
 
-1. Build the polling loop, image/default selection, batch preparation/submission contract, and allocation injection against a fake provider and recorded list fixtures. Preserve the existing per-job cooldown and cell configuration.
+1. Build the polling loop, image/default selection, batch submission contract, and allocation injection against a fake provider and recorded list fixtures. Preserve the existing per-job cooldown and cell configuration.
 2. Pin matching versions implementing the updated guide and verify the enriched list view, allocation inputs, and preflight/handoff path. Default/bootstrap executors receive the same allocation contract as requirement-selected executors. Unknown flags or missing schema support must fail visibly, not trigger a silent fallback.
 3. Verify that published demand from a c2j handoff produces a suitable replacement through the ordinary polling path. Requirement recording and recovery remain c2j responsibilities.
 4. Ensure every worker that can claim constrained jobs supports this contract. An old worker can obtain a lease because JobDB does not resource-match; adding a new Cortex launcher alone is insufficient to make a mixed fleet safe.
@@ -442,7 +419,7 @@ Use a pinned c2j public listing library by default, with explicit tenant/reposit
 ### Required checks
 
 - Explicit images are launched unchanged in meaning; absent images use the configured default. Selected platform and task/template configuration match the image.
-- Provider rounding, overhead, and memory-backed scratch produce accurate simultaneous usable allocations. Injected `C2J_EXECUTION_*` values describe that allocation rather than requested minima.
+- Provider rounding, overhead, and memory-backed scratch produce accurate simultaneous usable allocations. Injected `C2J_EXECUTION_*` values describe the requested guaranteed allocation and remain unchanged when a provider rounds upward.
 - Image reference, manifest digest, and runtime image ID remain distinct; missing digest evidence cannot pass a digest constraint.
 - Use `execution.demand.effective` from the c2j projection. Unresolved/bootstrap, unspecified, malformed, unsupported, and incompatible response contracts follow their defined paths. Historical handoff allocations never become new allocation facts.
 - Typed route identifiers retain exact field values; ready human-input or unsupported task routes do not trigger ordinary recipe executors. Client-payload revisions and task ordinals do not create new launch identities.
@@ -454,9 +431,9 @@ Use a pinned c2j public listing library by default, with explicit tenant/reposit
 - Provider inspection recovers the exact job identity after an image-pull failure or Cortex restart.
 - A future queued provider can accept a launch without immediate startup, enforce its start deadline, and retain correlation metadata before assignment. A fake provider can verify this without implementing a runner registry.
 - Lower numeric priorities are tried first. Equal-priority services rotate first choice across batches; remaining items visit every peer before a lower-priority tier. Concurrent batches advance cursors safely, and cursor loss on restart requires no recovery.
-- A service accepts part of a batch; only its explicit capacity/compatibility/availability declines reach the next service, with fresh allocation inputs. Accepted, rejected, and uncertain items do not fall through.
+- A service accepts part of a batch; only its explicit capacity/compatibility/availability declines reach the next service, with identical resource and process inputs. Accepted, rejected, and uncertain items do not fall through.
 - Partial responses, missing IDs, and timeouts preserve known results and treat uncertain submissions conservatively. One cooldown covers all services tried for a job; all-full batches retry after that cooldown. Batch size one uses the same API.
-- Remote request/response fixtures conform to the OpenAPI schema; provider conformance checks cover idempotent replays, immutable plans, expiry, and exact metadata inspection.
+- Remote request/response fixtures conform to the OpenAPI schema; provider conformance checks cover idempotent replays, immutable requests, deadlines, retention, and exact metadata inspection.
 - Local Docker never admits more than its committed CPU/memory/slot budgets across concurrent batches or controller restart. Resource limits include scratch memory, and uncertain starts retain their charges.
 
 These are implementation acceptance criteria. Availability statements come from the updated guide; this document update does not independently test the c2j implementation or implement any cloud adapter.

@@ -28,7 +28,7 @@ Cortex fills omitted resource requirements from deployment defaults, then builds
 
 This reports a conservative guaranteed allocation to c2j: extra capacity from provider rounding is not advertised. A later requirement exceeding the reported allocation can therefore cause a handoff even if it would fit the provider's larger native allocation.
 
-Providers execute the supplied process without interpreting c2j options, expanding environment placeholders, or adding shell interpretation. Supplied values override image/provider defaults; defaults may fill absent keys. Preserve image and platform constraints. If an option cannot be honored, return `unsupported` before accepting work. Optional resolved image identities may appear in inspection; they do not feed back into the submitted environment.
+Providers execute the supplied process without interpreting c2j options, expanding environment placeholders, or adding shell interpretation. Supplied values override image/provider defaults; defaults may fill absent keys. Preserve image and platform constraints. If an option cannot be honored, return `unsupported` before accepting work. For a digest-pinned image, Cortex also sets `C2J_EXECUTION_IMAGE_DIGEST` to the requested digest because c2j requires it for compatibility; the provider must enforce that pin before startup. Tag requests omit this field. Other resolved image identities may appear in inspection; they do not feed back into the submitted environment.
 
 ### Example: submit two launches
 
