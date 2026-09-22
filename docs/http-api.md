@@ -57,7 +57,7 @@ Example response:
 
 ### Configuration
 
-`GET /config` uses the YAML configuration field names in a JSON object. It includes selected defaults, targets, provider settings, and HTTP address. Every value under an `env` map is replaced with `[REDACTED]`; variable names remain visible. URLs lose user information and fragments, and any nonempty query is replaced with `redacted`. Token environment-variable names and credential-file paths are configuration and remain visible; credential contents and the controller's process environment are never returned.
+`GET /config` reports the selected configuration, whether loaded from a file or `CORTEX_CONFIG`, using the YAML field names in a JSON object. The raw `CORTEX_CONFIG` value is not returned. It includes selected defaults, targets, provider settings, and HTTP address. Every value under an `env` map is replaced with `[REDACTED]`; variable names remain visible. URLs lose user information and fragments, and any nonempty query is replaced with `redacted`. Token environment-variable names and credential-file paths are configuration and remain visible; credential contents and the controller's process environment are never returned.
 
 ### Active instances from one provider
 

@@ -71,6 +71,8 @@ With all five present, Quill v0.7.1 signs and notarizes Darwin binaries before t
 
 ## Container composition
 
+Simple deployments pass the full YAML document as `CORTEX_CONFIG`. The image runs Cortex without default command arguments so that this environment source is selected automatically. For a mounted file, pass `-config /etc/cortex/cortex.yaml` explicitly; this overrides inline configuration. See [configuration and deployment](configuration.md).
+
 [Dockerfile](../Dockerfile) cross-compiles Cortex and its supervisor with CGO disabled. The default final stage is `gcr.io/distroless/static-debian12:nonroot`, containing those two executables and the embedded listing dependency’s license/version records. It contains no standalone c2j executable, Go compiler, Python, Node.js/npm, shell, Git, or cloud CLI executables. Native cloud SDKs are compiled into Cortex.
 
 The c2j Go module is pinned in `go.mod`; release builds do not resolve a newer version implicitly. The initial public API integration uses `v0.0.53-0.20260922032206-ef65f0001972`, because the API was available upstream before a containing tag was published. This is a remotely resolvable Go pseudo-version, with no development-only `replace`. Both architectures use that same dependency. The selected version is recorded at `/usr/share/cortex/c2j-version.txt` and in release `versions.txt`.
@@ -108,4 +110,4 @@ docker buildx build --load --platform linux/arm64 \
 scripts/smoke-container.sh cortex:test-arm64 0.0.0 linux/arm64
 ```
 
-Repeat for `linux/amd64`; execution on a different host architecture requires QEMU/binfmt support. CI configures this automatically. The smoke check runs Cortex, validates embedded listing configuration on a read-only filesystem, exercises the supervisor, checks the non-root image user, confirms the default image has no c2j executable, and runs the cloud authentication/API tests in the test-only distroless target. The CLI integration tests exercise embedded discovery through the JobDB HTTP protocol with an empty `PATH`; optional subprocess discovery is tested separately.
+Repeat for `linux/amd64`; execution on a different host architecture requires QEMU/binfmt support. CI configures this automatically. The smoke check runs Cortex, validates inline YAML without a mounted file and explicit-file precedence on a read-only filesystem, exercises the supervisor, checks the non-root image user, confirms the default image has no c2j executable, and runs the cloud authentication/API tests in the test-only distroless target. The CLI integration tests exercise embedded discovery through the JobDB HTTP protocol with an empty `PATH`; optional subprocess discovery is tested separately.

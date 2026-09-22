@@ -74,17 +74,29 @@ The image uses **distroless static Debian**, runs as UID/GID `65532:65532`, and 
 - `/usr/local/bin/cortex-exec`
 - CA certificates and bundled version/license records under `/usr/share/cortex`
 
-Copy [examples/container.yaml](examples/container.yaml) to `cortex.yaml`, fill in the deployment values, and run:
+**For simple container deployments, pass the complete YAML in `CORTEX_CONFIG`.** Copy [examples/container.yaml](examples/container.yaml) to `cortex.yaml`, fill in the deployment values, and load it into the host environment:
+
+```sh
+export CORTEX_CONFIG="$(cat cortex.yaml)"
+docker run --rm --init \
+  --read-only --tmpfs /tmp -p 8080:8080 \
+  -e CORTEX_CONFIG -e CORTEX_PROVIDER_TOKEN \
+  ghcr.io/colony-2/cortex:latest
+```
+
+The file is read on the host; no configuration mount or shell inside the container is needed. In a deployment console, set `CORTEX_CONFIG` to the YAML contents directly. Keep credentials in separate environment variables, secret injections, or cloud identities. See [configuration sources and Cloud Run deployment](docs/configuration.md).
+
+Mounted YAML remains supported by passing an explicit file argument:
 
 ```sh
 docker run --rm --init \
   --read-only --tmpfs /tmp -p 8080:8080 \
   --mount "type=bind,source=$PWD/cortex.yaml,target=/etc/cortex/cortex.yaml,readonly" \
   -e CORTEX_PROVIDER_TOKEN \
-  ghcr.io/colony-2/cortex:latest
+  ghcr.io/colony-2/cortex:latest -config /etc/cortex/cortex.yaml
 ```
 
-The mounted configuration must be readable by UID 65532. For repeatable deployments, select a release tag such as `:vX.Y.Z` or a manifest digest. `latest` advances after a successful release; both architectures embed the c2j module version pinned in `go.mod`, recorded in `/usr/share/cortex/c2j-version.txt` and the GitHub release's `versions.txt`. The default image contains no c2j executable, Node.js, npm, shell, or Git.
+The mounted file must be readable by UID 65532. The image now starts without a hard-coded file argument; existing mounted-file deployments should supply `-config /etc/cortex/cortex.yaml`. For repeatable deployments, select a release tag such as `:vX.Y.Z` or a manifest digest. `latest` advances after a successful release; both architectures embed the c2j module version pinned in `go.mod`, recorded in `/usr/share/cortex/c2j-version.txt` and the GitHub release's `versions.txt`. The default image contains no c2j executable, Node.js, npm, shell, or Git.
 
 Inspect the executables without a shell:
 
@@ -126,6 +138,14 @@ See [provider configuration and limitations](docs/providers.md) for authenticati
 
 ## Configuration
 
+Cortex selects one complete YAML document, in this order:
+
+1. An explicit `-config PATH` file.
+2. The `CORTEX_CONFIG` environment variable, containing the YAML itself.
+3. `./cortex.yaml` when neither is supplied.
+
+Sources are not merged. An empty or invalid `CORTEX_CONFIG` fails startup unless an explicit file was selected. Values are literal: Cortex does not expand environment placeholders. Configuration is read at startup; restart or redeploy to apply changes. [Configuration examples](docs/configuration.md) cover inline values and mounted files.
+
 Each target selects a JobDB instance/tenant and a list of repository cells. Launch services have positive numeric priorities: **1 is preferred over 2**. Services at the same priority rotate first choice per batch.
 
 ```yaml
@@ -139,7 +159,7 @@ targets:
       - {name: cloud_overflow, priority: 2}
 ```
 
-Define those service names under `providers` in the same file. Full examples include [remote](examples/remote.yaml), [Docker](examples/docker.yaml), [cloud](examples/clouds.yaml), and [container](examples/container.yaml) configurations.
+Define those service names under `providers` in the same configuration document. Full examples include [remote](examples/remote.yaml), [Docker](examples/docker.yaml), [cloud](examples/clouds.yaml), and [container](examples/container.yaml) configurations.
 
 Defaults include a 5-second poll interval, a 60-second per-job cooldown, and batches of at most 100 jobs. A confirmed `no_capacity`, `unsupported`, or `unavailable` response permits fallback. An uncertain submission retains its cooldown without immediate fallback, since compute may already have started.
 
@@ -229,6 +249,7 @@ Cloud adapter tests use HTTP doubles for native API and credential requests. Rea
 - [Architecture and scheduling](DESIGN.md)
 - [Provider operations](docs/providers.md)
 - [Public HTTP API](docs/http-api.md)
+- [Configuration sources and container deployment](docs/configuration.md)
 - [Implementing a remote provider](docs/implementing-a-remote-provider.md)
 - [Remote protocol](REMOTE_PROVIDER_PROTOCOL.md) and [OpenAPI schema](api/provider.openapi.yaml)
 - [Docker capacity design](LOCAL_DOCKER_PROVIDER.md)

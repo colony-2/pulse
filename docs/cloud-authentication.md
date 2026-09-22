@@ -4,6 +4,14 @@ The standard `ghcr.io/colony-2/cortex` image supports Cloud Run Jobs, ECS Fargat
 
 Configure the provider's project/account, region, network, and other launch settings in [clouds.yaml](../examples/clouds.yaml). Supply credentials to the **Cortex controller**, either through its hosting environment or environment variables/mounted files. Native SDK credential caches refresh expiring credentials automatically during polling; no login command runs inside the container.
 
+For simple containers, supply the complete YAML through `CORTEX_CONFIG`; this is the default deployment guidance. For the commands below, prepare the configuration once on the host:
+
+```sh
+export CORTEX_CONFIG="$(cat cortex.yaml)"
+```
+
+In a deployment console, set the variable directly to the YAML contents. Credential files remain separate from this configuration. See [configuration sources](configuration.md) for mounted-file alternatives and Cloud Run setup.
+
 ## Credential sources
 
 | Provider | Running in the cloud | Running elsewhere |
@@ -22,7 +30,7 @@ For an off-cloud controller, mount the JSON file and set its **container path**:
 
 ```sh
 docker run --rm --read-only --tmpfs /tmp \
-  --mount "type=bind,source=$PWD/cortex.yaml,target=/etc/cortex/cortex.yaml,readonly" \
+  -e CORTEX_CONFIG \
   --mount "type=bind,source=$PWD/google-credentials.json,target=/credentials/google.json,readonly" \
   -e GOOGLE_APPLICATION_CREDENTIALS=/credentials/google.json \
   ghcr.io/colony-2/cortex:latest
@@ -40,7 +48,7 @@ For environment credentials already exported in the host shell:
 
 ```sh
 docker run --rm --read-only --tmpfs /tmp \
-  --mount "type=bind,source=$PWD/cortex.yaml,target=/etc/cortex/cortex.yaml,readonly" \
+  -e CORTEX_CONFIG \
   -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
   ghcr.io/colony-2/cortex:latest
 ```
@@ -65,7 +73,7 @@ For service-principal variables exported in the host shell:
 
 ```sh
 docker run --rm --read-only --tmpfs /tmp \
-  --mount "type=bind,source=$PWD/cortex.yaml,target=/etc/cortex/cortex.yaml,readonly" \
+  -e CORTEX_CONFIG \
   -e AZURE_TENANT_ID -e AZURE_CLIENT_ID -e AZURE_CLIENT_SECRET \
   ghcr.io/colony-2/cortex:latest
 ```

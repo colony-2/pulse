@@ -1,5 +1,6 @@
-http:
-  listen: ":8080"
+# For simple containers, pass this complete YAML as CORTEX_CONFIG.
+# Alternatively mount it and pass -config /etc/cortex/cortex.yaml.
+# HTTP listens on PORT when supplied by the platform, otherwise port 8080.
 
 c2j:
   mode: embedded

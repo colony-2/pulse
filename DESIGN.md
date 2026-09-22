@@ -219,6 +219,8 @@ Each job belongs to one repository, recorded in its metadata. Cortex selects run
 
 Poll configured cells with bounded concurrency and rotate their processing order. Bound launches per cell per pass so a busy repository cannot monopolize submission capacity. Log a cell's discovery error and continue with the others. Merge results by `(instance, tenant, job ID)` and share the cooldown across all cell selectors; repository aliases must not create separate cooldown entries for the same job. Instance IDs must consistently identify the same jobdb deployment across configured targets.
 
+Configuration is one YAML document selected from an explicit `-config` file, then `CORTEX_CONFIG` containing inline YAML, then `./cortex.yaml`. Sources are not merged; a selected invalid source fails startup. Simple container deployments use `CORTEX_CONFIG` by default in deployment guidance. Cortex reads configuration once at startup, preserves literal values, and reports only the redacted parsed configuration through HTTP.
+
 Configuration includes a polling interval, cooldown `X`, default executor, named launch services with numeric priorities, a maximum batch size, and a small limit on simultaneous batch calls. Each launch-service name selects a configured provider instance; multiple services can use the same adapter with different accounts, regions, or runner pools. For illustration, polling every 5 seconds with a 60-second cooldown is a starting configuration; tune `X` to cover observed time from submission through c2j startup and lease acquisition.
 
 Use an in-memory key:
