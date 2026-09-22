@@ -201,11 +201,10 @@ func Process(jobdb, job, launch string, a compute.Allocation, extra map[string]s
 	env["C2J_EXECUTION_EPHEMERAL_STORAGE"] = quantity.Bytes(a.ScratchBytes)
 	env["C2J_EXECUTION_PLATFORM"] = a.Platform
 	env["C2J_EXECUTION_IMAGE"] = a.Image
-	if a.ImageDigest != "" {
-		env["C2J_EXECUTION_IMAGE_DIGEST"] = a.ImageDigest
-	}
-	if a.ImageID != "" {
-		env["C2J_EXECUTION_IMAGE_ID"] = a.ImageID
+	// The provider must enforce this image constraint before starting the process,
+	// just as it must guarantee the requested resources advertised above.
+	if _, pinnedDigest, pinned := strings.Cut(a.Image, "@"); pinned {
+		env["C2J_EXECUTION_IMAGE_DIGEST"] = pinnedDigest
 	}
 	for k, v := range metadata {
 		env[strings.ToUpper(k)] = v

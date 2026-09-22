@@ -3,6 +3,7 @@ package c2j
 import (
 	"context"
 	"encoding/json"
+	"github.com/colony-2/c2j/pkg/execution"
 	"github.com/colony-2/cortex/pkg/compute"
 	"os"
 	"reflect"
@@ -101,6 +102,31 @@ func TestLiveC2JExecutable(t *testing.T) {
 	for _, j := range page.Jobs {
 		if j.Execution == nil || j.Execution.Demand == nil || j.Execution.Demand.SchemaVersion != 1 {
 			t.Fatal("missing execution projection")
+		}
+	}
+}
+
+func TestRequestedPinnedImagePassesC2JCompatibility(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	image := "registry.example/runner@" + digest
+	for _, ref := range []string{image, "registry.example/runner:1"} {
+		a := compute.Allocation{CPUMillis: 1500, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Image: ref, Platform: "linux/amd64", ImageDigest: "sha256:" + strings.Repeat("b", 64), ImageID: "diagnostic"}
+		p, err := Process("https://db/t", "job", "launch", a, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := p.Env["C2J_EXECUTION_IMAGE_ID"]; ok {
+			t.Fatal("provider image ID leaked into request", p.Env)
+		}
+		if ref == image && p.Env["C2J_EXECUTION_IMAGE_DIGEST"] != digest {
+			t.Fatal(p.Env)
+		}
+		if ref != image && p.Env["C2J_EXECUTION_IMAGE_DIGEST"] != "" {
+			t.Fatal("unrequested digest", p.Env)
+		}
+		mismatches, err := execution.Compare(execution.Requirements{Image: &ref}, execution.Allocation{SchemaVersion: execution.SchemaVersion, Image: execution.Image{Reference: p.Env["C2J_EXECUTION_IMAGE"], ManifestDigest: p.Env["C2J_EXECUTION_IMAGE_DIGEST"]}})
+		if err != nil || len(mismatches) != 0 {
+			t.Fatal(mismatches, err)
 		}
 	}
 }
