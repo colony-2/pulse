@@ -47,23 +47,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-      - id: c2j
-        run: |
-          set -euo pipefail
-          c2j_version="$(python3 scripts/fetch_c2j.py)"
-          echo "version=$c2j_version" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - name: Test both image architectures
-        env:
-          C2J_VERSION: ${{ steps.c2j.outputs.version }}
         run: |
           set -euo pipefail
           for arch in amd64 arm64; do
             docker buildx build --platform "linux/$arch" --load \
-              --build-arg VERSION=0.0.0 --build-arg "C2J_VERSION=$C2J_VERSION" --tag "cortex:test-$arch" .
-            scripts/smoke-container.sh "cortex:test-$arch" 0.0.0 "linux/$arch" "$C2J_VERSION"
+              --build-arg VERSION=0.0.0 --tag "cortex:test-$arch" .
+            scripts/smoke-container.sh "cortex:test-$arch" 0.0.0 "linux/$arch"
           done
+      - name: Test optional external-c2j image
+        run: |
+          set -euo pipefail
+          c2j_version="$(python3 scripts/fetch_c2j.py)"
+          docker buildx build --platform linux/amd64 --target external-c2j --load \
+            --build-arg "C2J_VERSION=$c2j_version" --tag cortex:test-external .
+          docker run --rm --read-only --tmpfs /tmp \
+            --mount "type=bind,source=$PWD/examples/external-c2j.yaml,target=/etc/cortex/cortex.yaml,readonly" \
+            -e CORTEX_PROVIDER_TOKEN=smoke-test cortex:test-external -config /etc/cortex/cortex.yaml -check
