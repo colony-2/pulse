@@ -1,6 +1,5 @@
 c2j:
-  executable: c2j
-  expected_version: c2j version 0.0.52
+  mode: embedded
 call_timeout: 2m
 batch_timeout: 10m
 defaults:

@@ -85,7 +85,7 @@ func TestLiveC2JExecutable(t *testing.T) {
 	if binary == "" || endpoint == "" || cell == "" {
 		t.Skip("set CORTEX_TEST_C2J, CORTEX_TEST_JOBDB, CORTEX_TEST_CELL for live CLI contract test")
 	}
-	c := Client{Executable: binary, ExpectedVersion: "c2j version v0.0.52"}
+	c := Client{Executable: binary, ExpectedVersion: os.Getenv("CORTEX_TEST_C2J_VERSION")}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if e := c.Check(ctx); e != nil {

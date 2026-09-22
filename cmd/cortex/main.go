@@ -27,7 +27,7 @@ func main() {
 func run() error {
 	path := flag.String("config", "cortex.yaml", "configuration file")
 	once := flag.Bool("once", false, "run one discovery/submission pass")
-	check := flag.Bool("check", false, "validate configuration and c2j executable without submitting")
+	check := flag.Bool("check", false, "validate configuration, listing backend and providers without submitting")
 	ver := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *ver {
@@ -43,12 +43,25 @@ func run() error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	cli := &c2j.Client{Executable: cfg.C2J.Executable, WorkingDir: cfg.C2J.WorkingDir, ExpectedVersion: cfg.C2J.ExpectedVersion, Env: cfg.C2J.Env}
-	checkCtx, stop := context.WithTimeout(ctx, cfg.Call)
-	e = cli.Check(checkCtx)
-	stop()
-	if e != nil {
-		return e
+	var lister controller.Lister
+	if cfg.C2J.Mode == "external" {
+		cli := &c2j.Client{Executable: cfg.C2J.Executable, WorkingDir: cfg.C2J.WorkingDir, ExpectedVersion: cfg.C2J.ExpectedVersion, Env: cfg.C2J.Env}
+		checkCtx, stop := context.WithTimeout(ctx, cfg.Call)
+		e = cli.Check(checkCtx)
+		stop()
+		if e != nil {
+			return e
+		}
+		lister = cli
+	} else {
+		connections := make([]c2j.Connection, 0, len(cfg.Targets))
+		for _, target := range cfg.Targets {
+			connections = append(connections, c2j.Connection{URI: target.JobDB, TokenEnv: target.JobDBTokenEnv})
+		}
+		lister, e = c2j.NewEmbedded(connections)
+		if e != nil {
+			return e
+		}
 	}
 	providerCtx, providerCancel := context.WithTimeout(ctx, cfg.Call)
 	instances, closeProviders, e := providers.Build(providerCtx, cfg)
@@ -58,10 +71,10 @@ func run() error {
 	}
 	defer closeProviders()
 	if *check {
-		fmt.Println("configuration, c2j executable, and providers are valid")
+		fmt.Println("configuration, listing backend, and providers are valid")
 		return nil
 	}
-	c := &controller.Controller{Config: cfg, Lister: cli, Scheduler: scheduler.New(cfg.Cool, cfg.Call), Providers: instances, Log: slog.New(slog.NewJSONHandler(os.Stderr, nil))}
+	c := &controller.Controller{Config: cfg, Lister: lister, Scheduler: scheduler.New(cfg.Cool, cfg.Call), Providers: instances, Log: slog.New(slog.NewJSONHandler(os.Stderr, nil))}
 	if *once {
 		return c.Once(ctx)
 	}

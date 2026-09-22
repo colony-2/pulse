@@ -49,3 +49,19 @@ func TestExampleConfigurations(t *testing.T) {
 		})
 	}
 }
+
+func TestListingModes(t *testing.T) {
+	c, err := Parse([]byte(valid))
+	if err != nil || c.C2J.Mode != "embedded" || c.C2J.Executable != "" {
+		t.Fatal(c, err)
+	}
+	for _, addition := range []string{"c2j:\n  mode: invalid\n", "c2j:\n  executable: c2j\n", "c2j:\n  env: {C2J_JOBDB: db}\n"} {
+		if _, err := Parse([]byte(valid + addition)); err == nil {
+			t.Fatal("invalid mode configuration accepted", addition)
+		}
+	}
+	c, err = Parse([]byte(valid + "c2j:\n  mode: external\n"))
+	if err != nil || c.C2J.Executable != "c2j" {
+		t.Fatal(c, err)
+	}
+}

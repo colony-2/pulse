@@ -1,4 +1,4 @@
-// Package c2j integrates exclusively through the c2j executable's JSON output.
+// Package c2j provides embedded and external c2j listing and executor commands.
 package c2j
 
 import (
@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/colony-2/c2j/pkg/execution"
 	"github.com/colony-2/cortex/internal/quantity"
 	"github.com/colony-2/cortex/pkg/compute"
 	"github.com/distribution/reference"
@@ -20,28 +21,11 @@ type Route struct {
 	JobType  string `json:"jobType" yaml:"job_type"`
 	TaskType string `json:"taskType,omitempty" yaml:"task_type,omitempty"`
 }
-type Requirements struct {
-	Image     *string `json:"image"`
-	Platform  *string `json:"platform"`
-	Resources struct {
-		CPU     *string `json:"cpu"`
-		Memory  *string `json:"memory"`
-		Scratch *string `json:"ephemeral-storage"`
-	} `json:"resources"`
-}
-type Demand struct {
-	SchemaVersion int          `json:"schema_version"`
-	Effective     Requirements `json:"effective"`
-}
-type View struct {
-	Status     string  `json:"status"`
-	Source     string  `json:"source"`
-	Demand     *Demand `json:"demand"`
-	Diagnostic string  `json:"diagnostic"`
-}
+type View = execution.View
 type Job struct {
 	Tenant          string    `json:"tenant_id"`
 	ID              string    `json:"job_id"`
+	Repository      string    `json:"repo,omitempty"`
 	Status          string    `json:"status"`
 	Next            *Route    `json:"next_route"`
 	Execution       *View     `json:"execution"`
@@ -179,7 +163,7 @@ func (j Job) Allocation(defaults compute.Allocation) (compute.Allocation, error)
 		v    *string
 		dest *int64
 		cpu  bool
-	}{{r.Resources.CPU, &a.CPUMillis, true}, {r.Resources.Memory, &a.MemoryBytes, false}, {r.Resources.Scratch, &a.ScratchBytes, false}} {
+	}{{r.Resources.CPU, &a.CPUMillis, true}, {r.Resources.Memory, &a.MemoryBytes, false}, {r.Resources.EphemeralStorage, &a.ScratchBytes, false}} {
 		if field.v != nil {
 			n, e := quantity.Parse(*field.v, field.cpu)
 			if e != nil {

@@ -1,8 +1,5 @@
 c2j:
-  executable: c2j
-  # Pin the exact output of `c2j version` for a build with execution support.
-  # expected_version: c2j version <your-version>
-  # working_dir: /srv/cortex  # Optional; must exist on the controller.
+  mode: embedded
 poll_interval: 5s
 cooldown: 60s
 call_timeout: 30s
