@@ -30,7 +30,7 @@ The workflow is [.github/workflows/release.yaml](../.github/workflows/release.ya
 2. Use the same `anothrNick/github-tag-action` version and patch-bump default as c2j. Main-branch releases use `vMAJOR.MINOR.PATCH` tags.
 3. Build static Go executables and optionally sign/notarize both Darwin binaries before packaging.
 4. Pack the npm tarball and smoke-test its installer against the local, checksum-verified release archives.
-5. Build and smoke-test both non-root distroless images with the c2j listing library pinned in `go.mod`. Record its module version in the release metadata. The default images contain no separate c2j executable.
+5. Build and smoke-test the non-root distroless image for both architectures with the c2j listing library pinned in `go.mod`. Record its module version in the release metadata. The default images contain no separate c2j executable.
 6. Publish the versioned images and multi-architecture manifest to GHCR; attach all artifacts to GitHub Releases.
 7. Test npm installation using the real published GitHub download URLs, then publish the **same tarball** attached to GitHub. This order ensures the npm installer can already fetch its binary.
 8. Promote the successful image release to `latest` after npm publishing succeeds.
@@ -77,8 +77,6 @@ Simple deployments pass the full YAML document as `CORTEX_CONFIG`. The image run
 
 The c2j Go module is pinned in `go.mod`; release builds do not resolve a newer version implicitly. The initial public API integration uses `v0.0.53-0.20260922032206-ef65f0001972`, because the API was available upstream before a containing tag was published. This is a remotely resolvable Go pseudo-version, with no development-only `replace`. Both architectures use that same dependency. The selected version is recorded at `/usr/share/cortex/c2j-version.txt` and in release `versions.txt`.
 
-The optional Docker build target `external-c2j` adds a separately downloaded CLI for deployments using `c2j.mode: external`. Its `C2J_VERSION` build argument selects an official c2j release; [fetch_c2j.py](../scripts/fetch_c2j.py) verifies the download’s SHA-256 checksum. Resolve and pass a tag explicitly for consistent caching and metadata. This optional binary’s version is recorded in `/usr/share/cortex/c2j-executable-version.txt` and `com.colony2.c2j.executable.version`. The default published images use the minimal `final` target.
-
 Remote and all built-in cloud providers work without external command-line tools. Cloud authentication uses native SDK credential discovery and refresh, including environment/file credentials and platform roles or identities. See [cloud authentication](cloud-authentication.md). Executor job images are configured independently and must supply their recipe dependencies.
 
 The test-only `cloud-smoke` target runs static cloud-adapter tests in the same non-root distroless runtime. Container smoke checks exercise it for both architectures, with a read-only root filesystem and local fake credential/metadata/API endpoints. It is not published and adds no test executable to the default image. These checks exercise credential discovery, refresh, signed requests, and failure handling without real cloud accounts.
@@ -110,4 +108,4 @@ docker buildx build --load --platform linux/arm64 \
 scripts/smoke-container.sh cortex:test-arm64 0.0.0 linux/arm64
 ```
 
-Repeat for `linux/amd64`; execution on a different host architecture requires QEMU/binfmt support. CI configures this automatically. The smoke check runs Cortex, validates inline YAML without a mounted file and explicit-file precedence on a read-only filesystem, exercises the supervisor, checks the non-root image user, confirms the default image has no c2j executable, and runs the cloud authentication/API tests in the test-only distroless target. The CLI integration tests exercise embedded discovery through the JobDB HTTP protocol with an empty `PATH`; optional subprocess discovery is tested separately.
+Repeat for `linux/amd64`; execution on a different host architecture requires QEMU/binfmt support. CI configures this automatically. The smoke check runs Cortex, validates inline YAML without a mounted file and explicit-file precedence on a read-only filesystem, exercises the supervisor, checks the non-root image user, confirms the default image has no c2j executable, and runs the cloud authentication/API tests in the test-only distroless target. The CLI integration tests exercise embedded discovery through the JobDB HTTP protocol with an empty `PATH`.

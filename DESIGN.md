@@ -24,7 +24,7 @@ The design assumes executors normally start and acquire a lease within a configu
 | Compute adapter | Resolve image/platform and provider sizing, report usable allocation, launch that exact container configuration, and attach correlation metadata. |
 | Executor container | Run `c2j run` for the specific job supplied by Cortex. |
 
-Cortex uses c2j’s public `pkg/joblist` Go API for discovery. The API accepts public JobDB filter types, but c2j owns query construction, remote access, and execution projection. Optional `c2j.mode: external` invokes the CLI and consumes its JSON output. Recipe interpretation, dependency handling, lease operations, and application retries stay in c2j/jobdb.
+Cortex uses c2j’s public `pkg/joblist` Go API for discovery. The API accepts public JobDB filter types, but c2j owns query construction, remote access, and execution projection. Recipe interpretation, dependency handling, lease operations, and application retries stay in c2j/jobdb.
 
 ```mermaid
 flowchart LR
@@ -37,25 +37,19 @@ flowchart LR
 
 ## Integration contract and availability
 
-The controller defaults to `github.com/colony-2/c2j/pkg/joblist` (`c2j.mode: embedded`). See [the feature response](C2J_FEATURE_REQUESTS_RESPONSE.md) for the public API contract. It requires explicit repository identities; local-path or alias discovery is available through `c2j.mode: external`. Listing does not initialize an executor or claim work. Executor containers still run the c2j CLI.
+The controller uses `github.com/colony-2/c2j/pkg/joblist` for all discovery. See [the feature response](C2J_FEATURE_REQUESTS_RESPONSE.md) for the public API contract. It requires explicit repository identities and does not discover local checkouts or resolve aliases. Listing does not initialize an executor or claim work. Executor containers still run the c2j CLI.
 
 Use [GUIDE-Execution-Tracking.md](GUIDE-Execution-Tracking.md) for the command contract and [C2J_PORTABLE_EXECUTION_REQUIREMENTS_DESIGN.md](C2J_PORTABLE_EXECUTION_REQUIREMENTS_DESIGN.md) for design background. Requirement-change handling belongs entirely to c2j; older descriptions of unconditional yielding do not establish an outstanding integration requirement.
 
 The updated guide documents recipe requirements, submission overrides, actual allocation flags/environment variables, execution preflight, durable environment handoffs, operation directives, and the enriched list view as available. These provide the underlying contract Cortex needs; cloud provisioning remains Cortex's responsibility. Pin compatible controller, container c2j, and JobDB versions and verify their integration. The guide requires fresh format-3 JobDB storage and reports no in-place migration of old jobs/history; adopting it is a deployment prerequisite, not a Cortex migration responsibility.
 
-The public API returns typed pages from a reusable client per connection/tenant. The equivalent external CLI query is:
-
-```sh
-c2j list --jobdb https://jobdb.example/acme \
-  --cell github.com/example/project --job-type recipe \
-  --status READY --status CRASH_CONCERN --page-size 100 --json
-```
+The public API returns typed pages from a reusable client per connection/tenant. Query recipe jobs in `READY` or `CRASH_CONCERN` status for the configured repository, with page size 100.
 
 Repeat this for each configured repository, advancing the opaque continuation token within configured page limits. Recipe execution remains targeted with `c2j run --job-id`; Cortex never asks a launched container to select unrelated work.
 
 ### Discovery and typed routes
 
-The library returns typed jobs and `NextPageToken`; external `list --json` provides equivalent `jobs` and `next_page_token` fields. Retain job identity, status, next route, execution view, and availability information. Listing does not claim work, and a candidate can change before its container starts. c2j makes the authoritative lease/readiness check during targeted execution.
+The library returns typed jobs and `NextPageToken`. Retain job identity, status, next route, execution view, and availability information. Listing does not claim work, and a candidate can change before its container starts. c2j makes the authoritative lease/readiness check during targeted execution.
 
 Read `next_route` as independent `jobType` and optional `taskType` fields. `{"jobType":"recipe"}` requests recipe job work; a task route requests that specific task. Identifiers are case-sensitive opaque strings and may contain colons, commas, or spaces. Do not parse the old capability-string format. `--job-type` takes one identifier per flag; `--waiting-for` takes a complete JSON task route per flag.
 
@@ -213,7 +207,7 @@ targets:
       - github.com/example/worker
 ```
 
-Use explicit repository selectors for reproducible deployments. Short cell names may be used when their c2j configuration is supplied explicitly. c2j's current cell filter selects repository metadata, so these scopes do not distinguish branches or multiple logical cells within the same repository.
+Use explicit repository selectors for reproducible deployments. Use full repository identities; local aliases are not resolved. c2j's current cell filter selects repository metadata, so these scopes do not distinguish branches or multiple logical cells within the same repository.
 
 Each job belongs to one repository, recorded in its metadata. Cortex selects runnable jobs whose repository matches its configured list. Parent/child relationships do not affect repository selection. An empty cell list is a configuration error.
 
@@ -231,7 +225,7 @@ Use an in-memory key:
 
 For each polling pass:
 
-1. Invoke `c2j list` for each configured target/cell pair with explicit readiness filters and retrieve all pages. Decode typed routes and execution views, and deduplicate by job identity. c2j retains the authoritative lease and cancellation checks.
+1. Query the c2j listing library for each configured target/cell pair with explicit readiness filters and retrieve all pages. Decode typed routes and execution views, and deduplicate by job identity. c2j retains the authoritative lease and cancellation checks.
 2. Skip unsupported routes and malformed/unsupported demand, and report a bounded diagnostic. Do not use compatibility filtering against the default allocation.
 3. Collect a fair, bounded batch of jobs sharing the same launch-service configuration. Atomically reserve each eligible job in memory and record its attempt time, excluding keys already in flight or within cooldown. Give each job its own launch ID.
 4. Apply defaults to omitted demand fields. Visit priority tiers from lowest number to highest, rotating the first service within each tier for each batch. Build each targeted process and environment from the requested resources, then call the selected service's `Submit` once with the complete items.
@@ -412,7 +406,7 @@ pkg/compute/                provider-neutral batch submission interface
 api/provider.openapi.yaml   standard remote provider HTTP contract
 ```
 
-Use a pinned c2j public listing library by default, with explicit tenant/repository inputs and per-call deadlines. Optional external mode invokes a pinned c2j executable using argument arrays and a controlled environment/working directory; parse `list --json` stdout separately from stderr. Executor run output has its own mixed progress/event format. A failed discovery call is not an empty queue; log that target/cell error and continue with others.
+Use a pinned c2j public listing library with explicit tenant/repository inputs and per-call deadlines. Executor run output has its own mixed progress/event format. A failed discovery call is not an empty queue; log that target/cell error and continue with others.
 
 ### Delivery gates
 

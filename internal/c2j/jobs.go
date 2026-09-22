@@ -1,13 +1,8 @@
-// Package c2j provides embedded and external c2j listing and executor commands.
+// Package c2j provides c2j library listing, job projections, and executor commands.
 package c2j
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -36,91 +31,7 @@ type Page struct {
 	Jobs []Job  `json:"jobs"`
 	Next string `json:"next_page_token"`
 }
-type Client struct {
-	Executable, WorkingDir, ExpectedVersion string
-	Env                                     map[string]string
-	Run                                     func(context.Context, []string) ([]byte, error)
-}
-type cappedBuffer struct {
-	bytes.Buffer
-	max int
-}
 
-func (b *cappedBuffer) Write(p []byte) (int, error) {
-	if b.Len()+len(p) > b.max {
-		return 0, fmt.Errorf("c2j output exceeds %d bytes", b.max)
-	}
-	return b.Buffer.Write(p)
-}
-func (c *Client) command(ctx context.Context, args []string) ([]byte, error) {
-	if c.Run != nil {
-		return c.Run(ctx, args)
-	}
-	cmd := exec.CommandContext(ctx, c.Executable, args...)
-	cmd.Dir = c.WorkingDir
-	cmd.WaitDelay = time.Second
-	for _, v := range os.Environ() {
-		k, _, _ := strings.Cut(v, "=")
-		if !strings.HasPrefix(k, "C2J_") {
-			cmd.Env = append(cmd.Env, v)
-		}
-	}
-	for k, v := range c.Env {
-		if strings.HasPrefix(k, "C2J_EXECUTION_") {
-			return nil, fmt.Errorf("allocation variables cannot configure discovery")
-		}
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
-	stdout := &cappedBuffer{max: 16 << 20}
-	stderr := &cappedBuffer{max: 64 << 10}
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("c2j %s failed: %w", args[0], err)
-	}
-	return stdout.Bytes(), nil
-}
-func (c *Client) Check(ctx context.Context) error {
-	if c.ExpectedVersion != "" {
-		b, e := c.command(ctx, []string{"version"})
-		if e != nil {
-			return e
-		}
-		if strings.TrimSpace(string(b)) != c.ExpectedVersion {
-			return fmt.Errorf("c2j version differs from configured expected_version")
-		}
-	}
-	b, e := c.command(ctx, []string{"run", "--help"})
-	if e != nil {
-		return e
-	}
-	if !strings.Contains(string(b), "--execution-memory") {
-		return fmt.Errorf("c2j executable lacks execution allocation support")
-	}
-	return nil
-}
-func (c *Client) List(ctx context.Context, jobdb, cell, token string) (Page, error) {
-	args := []string{"list", "--jobdb", jobdb, "--cell", cell, "--job-type", "recipe", "--status", "READY", "--status", "CRASH_CONCERN", "--page-size", "100", "--json"}
-	if token != "" {
-		args = append(args, "--page-token", token)
-	}
-	b, err := c.command(ctx, args)
-	if err != nil {
-		return Page{}, err
-	}
-	var raw map[string]json.RawMessage
-	if err = json.Unmarshal(b, &raw); err != nil {
-		return Page{}, fmt.Errorf("invalid c2j JSON: %w", err)
-	}
-	if len(raw["jobs"]) == 0 || string(raw["jobs"]) == "null" {
-		return Page{}, fmt.Errorf("c2j JSON lacks jobs array")
-	}
-	var page Page
-	if err = json.Unmarshal(b, &page); err != nil {
-		return Page{}, err
-	}
-	return page, nil
-}
 func (j Job) Ready(routes []Route, now time.Time) bool {
 	if j.CancelRequested || (j.Status != "READY" && j.Status != "CRASH_CONCERN") || j.Next == nil || j.AvailableAt.After(now) {
 		return false

@@ -16,6 +16,10 @@ The value is raw YAML, not a filename, URL, or base64 string. Use real newlines 
 
 Configuration is read once at startup. Restart or deploy a new revision after changes. `-check` and `-once` use the same source selection; `-version` needs no configuration. `/config` shows the parsed, redacted configuration regardless of its source, never the raw environment document. See [HTTP API](http-api.md).
 
+## Repository selection
+
+Discovery always uses c2j's public Go listing API. Each target must name explicit repository identities, such as `github.com/acme/app` or `file:///absolute/repository/path`, matching job metadata. Local checkout discovery and aliases are not supported. Remove the old top-level `c2j` section, including `mode: embedded`, when upgrading; those obsolete settings are rejected by configuration validation. Use `jobdb_token_env` on each target for authenticated JobDB access. Executor images still provide the c2j command used to run jobs.
+
 ## Docker or a native executable
 
 Copy [container.yaml](../examples/container.yaml), edit the deployment settings, then load its contents on the host:

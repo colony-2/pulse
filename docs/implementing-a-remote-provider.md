@@ -162,7 +162,7 @@ cortex -config cortex.yaml -check
 cortex -config cortex.yaml -once
 ```
 
-`-check` validates configuration and initializes the listing backend; in default embedded mode it makes no JobDB/provider health request. Use `-once` with seeded test jobs to exercise submission. For development HTTP endpoints, explicitly set `allow_http: true`.
+`-check` validates configuration and initializes the listing client; it makes no JobDB/provider health request. Use `-once` with seeded test jobs to exercise submission. For development HTTP endpoints, explicitly set `allow_http: true`.
 
 Test single/maximum batches, invalid envelopes without side effects, partial acceptance, resource rounding with unchanged environment, concurrent capacity admission, duplicate/conflicting replays, response loss, crash recovery, deadlines, principal isolation, queued visibility before assignment, pagination (including empty filtered pages), terminal exclusion, and read-only listing. Verify that native resources map back to the originating job. Keep bearer tokens and environment secrets out of logs. Schema validation alone cannot prove these behaviors.
 

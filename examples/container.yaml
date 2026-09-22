@@ -2,8 +2,6 @@
 # Alternatively mount it and pass -config /etc/cortex/cortex.yaml.
 # HTTP listens on PORT when supplied by the platform, otherwise port 8080.
 
-c2j:
-  mode: embedded
 poll_interval: 5s
 cooldown: 60s
 defaults:

@@ -37,7 +37,7 @@ ENTRYPOINT ["/usr/local/bin/cortex"]
 CMD []
 
 # Exercise native cloud authentication in the same shell-free runtime in CI.
-# This test executable is not included in either published image target.
+# This test executable is not included in the published image.
 FROM cortex-build AS cloud-smoke-build
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go test -c \
       -o /out/cloud.test ./internal/providers/cloud
@@ -46,19 +46,5 @@ FROM runtime AS cloud-smoke
 COPY --from=cloud-smoke-build /out/cloud.test /usr/local/bin/cloud.test
 ENTRYPOINT ["/usr/local/bin/cloud.test"]
 CMD ["-test.v"]
-
-# Optional compatibility image; the default target below remains minimal.
-FROM --platform=$BUILDPLATFORM python:3.13-slim-bookworm AS c2j-download
-ARG TARGETARCH
-ARG C2J_VERSION=latest
-COPY scripts/fetch_c2j.py /fetch_c2j.py
-RUN python /fetch_c2j.py --version "$C2J_VERSION" --arch "$TARGETARCH" --output /out
-
-FROM runtime AS external-c2j
-ARG C2J_VERSION=latest
-LABEL com.colony2.c2j.executable.version="$C2J_VERSION"
-COPY --from=c2j-download /out/c2j /usr/local/bin/c2j
-COPY --from=c2j-download /out/C2J-LICENSE /usr/share/cortex/C2J-EXECUTABLE-LICENSE
-COPY --from=c2j-download /out/c2j-version.txt /usr/share/cortex/c2j-executable-version.txt
 
 FROM runtime AS final

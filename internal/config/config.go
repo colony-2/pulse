@@ -74,14 +74,7 @@ type Config struct {
 	BatchSize    int    `yaml:"batch_size"`
 	PerCell      int    `yaml:"max_jobs_per_cell"`
 	MaxPages     int    `yaml:"max_pages_per_cell"`
-	C2J          struct {
-		Mode            string            `yaml:"mode"`
-		Executable      string            `yaml:"executable"`
-		ExpectedVersion string            `yaml:"expected_version"`
-		WorkingDir      string            `yaml:"working_dir"`
-		Env             map[string]string `yaml:"env"`
-	} `yaml:"c2j"`
-	Defaults struct {
+	Defaults     struct {
 		Image       string            `yaml:"image"`
 		Platform    string            `yaml:"platform"`
 		CPU         string            `yaml:"cpu"`
@@ -195,21 +188,6 @@ func Parse(b []byte) (*Config, error) {
 	if c.BatchSize < 1 || c.BatchSize > 100 || c.PerCell < 1 || c.MaxPages < 1 {
 		return nil, fmt.Errorf("invalid batch/page limits")
 	}
-	if c.C2J.Mode == "" {
-		c.C2J.Mode = "embedded"
-	}
-	switch c.C2J.Mode {
-	case "embedded":
-		if c.C2J.Executable != "" || c.C2J.ExpectedVersion != "" || c.C2J.WorkingDir != "" || len(c.C2J.Env) > 0 {
-			return nil, fmt.Errorf("c2j executable, expected_version, working_dir and env require c2j.mode: external")
-		}
-	case "external":
-		if c.C2J.Executable == "" {
-			c.C2J.Executable = "c2j"
-		}
-	default:
-		return nil, fmt.Errorf("c2j.mode must be embedded or external")
-	}
 	a := compute.Allocation{Image: c.Defaults.Image, Platform: strings.ToLower(c.Defaults.Platform)}
 	for _, v := range []struct {
 		s   string
@@ -258,9 +236,6 @@ func Parse(b []byte) (*Config, error) {
 	instances := map[string]string{}
 	scopes := map[string]bool{}
 	for i, t := range c.Targets {
-		if c.C2J.Mode == "external" && t.JobDBTokenEnv != "" {
-			return nil, fmt.Errorf("jobdb_token_env requires c2j.mode: embedded")
-		}
 		u, e := url.Parse(t.JobDB)
 		if e != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return nil, fmt.Errorf("invalid jobdb URL")
@@ -286,10 +261,8 @@ func Parse(b []byte) (*Config, error) {
 			names[s.Name] = true
 		}
 		for _, cell := range t.Cells {
-			if c.C2J.Mode == "embedded" {
-				if err := c2j.ValidateRepository(path, cell); err != nil {
-					return nil, fmt.Errorf("embedded listing requires an explicit repository identity (use file:/// for a local repository or c2j.mode: external for discovery): %w", err)
-				}
+			if err := c2j.ValidateRepository(path, cell); err != nil {
+				return nil, fmt.Errorf("listing requires an explicit repository identity (use file:/// for a local repository): %w", err)
 			}
 			if strings.TrimSpace(cell) == "" {
 				return nil, fmt.Errorf("empty cell")

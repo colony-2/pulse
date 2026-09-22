@@ -12,4 +12,3 @@ vet:
 
 test-packaging:
 	node --test scripts/npm.test.js
-	python3 -m unittest discover -s scripts -p 'test_*.py'

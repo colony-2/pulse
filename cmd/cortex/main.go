@@ -56,25 +56,13 @@ func run() error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	var lister controller.Lister
-	if cfg.C2J.Mode == "external" {
-		cli := &c2j.Client{Executable: cfg.C2J.Executable, WorkingDir: cfg.C2J.WorkingDir, ExpectedVersion: cfg.C2J.ExpectedVersion, Env: cfg.C2J.Env}
-		checkCtx, stop := context.WithTimeout(ctx, cfg.Call)
-		e = cli.Check(checkCtx)
-		stop()
-		if e != nil {
-			return e
-		}
-		lister = cli
-	} else {
-		connections := make([]c2j.Connection, 0, len(cfg.Targets))
-		for _, target := range cfg.Targets {
-			connections = append(connections, c2j.Connection{URI: target.JobDB, TokenEnv: target.JobDBTokenEnv})
-		}
-		lister, e = c2j.NewEmbedded(connections)
-		if e != nil {
-			return e
-		}
+	connections := make([]c2j.Connection, 0, len(cfg.Targets))
+	for _, target := range cfg.Targets {
+		connections = append(connections, c2j.Connection{URI: target.JobDB, TokenEnv: target.JobDBTokenEnv})
+	}
+	lister, e := c2j.NewEmbedded(connections)
+	if e != nil {
+		return e
 	}
 	providerCtx, providerCancel := context.WithTimeout(ctx, cfg.Call)
 	instances, closeProviders, e := providers.Build(providerCtx, cfg)

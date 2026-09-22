@@ -1,5 +1,3 @@
-c2j:
-  mode: embedded
 poll_interval: 5s
 cooldown: 60s
 call_timeout: 2m

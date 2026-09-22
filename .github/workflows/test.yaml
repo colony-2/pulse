@@ -27,7 +27,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - run: python -m unittest discover -s scripts -p 'test_*.py'
       - run: pip install 'openapi-spec-validator==0.9.0' 'PyYAML==6.0.3'
       - run: python scripts/validate_protocol.py
   packaging:
@@ -57,12 +56,3 @@ jobs:
               --build-arg VERSION=0.0.0 --tag "cortex:test-$arch" .
             scripts/smoke-container.sh "cortex:test-$arch" 0.0.0 "linux/$arch"
           done
-      - name: Test optional external-c2j image
-        run: |
-          set -euo pipefail
-          c2j_version="$(python3 scripts/fetch_c2j.py)"
-          docker buildx build --platform linux/amd64 --target external-c2j --load \
-            --build-arg "C2J_VERSION=$c2j_version" --tag cortex:test-external .
-          docker run --rm --read-only --tmpfs /tmp \
-            --mount "type=bind,source=$PWD/examples/external-c2j.yaml,target=/etc/cortex/cortex.yaml,readonly" \
-            -e CORTEX_PROVIDER_TOKEN=smoke-test cortex:test-external -config /etc/cortex/cortex.yaml -check

@@ -37,7 +37,6 @@ func newAPI(t *testing.T, providers map[string]compute.Provider) *API {
 	t.Helper()
 	cfg := &config.Config{Call: time.Second, Cool: time.Minute}
 	cfg.Defaults.Env = map[string]string{"TOKEN": "do-not-expose"}
-	cfg.C2J.Env = map[string]string{"OTHER": "do-not-expose"}
 	cfg.Providers = map[string]config.Provider{"p": {Type: "remote", Endpoint: "https://user:do-not-expose@host/path?token=do-not-expose"}}
 	api, err := New(&controller.Controller{Config: cfg, Scheduler: scheduler.New(time.Minute, time.Second), Providers: providers, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}, "test")
 	if err != nil {

@@ -5,12 +5,12 @@ Each milestone receives its own tested commit.
 1. Design and protocol baseline.
 2. Portable compute types, allocation validation, priority-tier batch scheduler, cooldown.
 3. Remote OpenAPI provider client and conformance tests.
-4. c2j executable discovery, strict configuration, and controller.
+4. c2j library discovery, strict configuration, and controller.
 5. Local Docker admission, container lifecycle, restart reconstruction, and supervisor.
 6. Cloud Run, ECS, and Azure Container Apps Jobs adapters.
 7. CLI/provider wiring, integration checks, operational documentation, and CI.
 
-Cloud credentials and a Docker daemon are not assumed available in the development environment. Use fake HTTP/command endpoints for deterministic integration tests, and explicitly report which live checks were possible. The controller now embeds c2j’s public listing library by default, with optional external CLI listing. Executor containers continue to invoke c2j.
+Cloud credentials and a Docker daemon are not assumed available in the development environment. Use fake HTTP/command endpoints for deterministic integration tests, and explicitly report which live checks were possible. The controller now embeds c2j’s public listing library for all discovery. Executor containers continue to invoke c2j.
 
 ## Completed validation
 
@@ -20,11 +20,11 @@ Implementation commits use `colony2.com <col2bot@colony2.com>` as requested.
 
 ## Public listing API migration
 
-The controller uses `github.com/colony-2/c2j/pkg/joblist` by default. The dependency is pinned to a remotely resolvable pseudo-version containing the new API; Go 1.26 is now required. `c2j.mode: external` retains subprocess listing. Default images include Cortex and its supervisor; the optional `external-c2j` Docker target adds a CLI.
+The controller uses `github.com/colony-2/c2j/pkg/joblist` for all discovery. The dependency is pinned to a remotely resolvable pseudo-version containing the new API; Go 1.26 is now required. Images include Cortex and its supervisor. The external listing adapter, its configuration, downloader, and optional image target have been removed.
 
 ## Single-operation provider v1
 
-All adapters implement `Submit` with complete resources, process, deadlines, and metadata. Cortex builds the environment from requested/defaulted values once and preserves it during fallback. Providers size and admit internally; no preparation API or plan token remains. The v1 OpenAPI and protocol examples are updated in place and checked by the schema validator. Regression coverage includes unchanged environments under provider rounding, partial fallback, uncertain submission failures, Docker capacity/replay, and both listing modes through the remote client.
+All adapters implement `Submit` with complete resources, process, deadlines, and metadata. Cortex builds the environment from requested/defaulted values once and preserves it during fallback. Providers size and admit internally; no preparation API or plan token remains. The v1 OpenAPI and protocol examples are updated in place and checked by the schema validator. Regression coverage includes unchanged environments under provider rounding, partial fallback, uncertain submission failures, Docker capacity/replay, and library discovery through the remote client using file and inline configuration.
 
 ## Native cloud credentials
 
