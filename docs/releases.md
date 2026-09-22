@@ -71,13 +71,15 @@ With all five present, Quill v0.7.1 signs and notarizes Darwin binaries before t
 
 ## Container composition
 
-[Dockerfile](../Dockerfile) cross-compiles Cortex and its supervisor with CGO disabled. The default final stage is `gcr.io/distroless/static-debian12:nonroot`, containing those two executables and the embedded listing dependency’s license/version records. It contains no standalone c2j executable, Go compiler, Python, Node.js/npm, shell, Git, or cloud SDKs.
+[Dockerfile](../Dockerfile) cross-compiles Cortex and its supervisor with CGO disabled. The default final stage is `gcr.io/distroless/static-debian12:nonroot`, containing those two executables and the embedded listing dependency’s license/version records. It contains no standalone c2j executable, Go compiler, Python, Node.js/npm, shell, Git, or cloud CLI executables. Native cloud SDKs are compiled into Cortex.
 
 The c2j Go module is pinned in `go.mod`; release builds do not resolve a newer version implicitly. The initial public API integration uses `v0.0.53-0.20260922032206-ef65f0001972`, because the API was available upstream before a containing tag was published. This is a remotely resolvable Go pseudo-version, with no development-only `replace`. Both architectures use that same dependency. The selected version is recorded at `/usr/share/cortex/c2j-version.txt` and in release `versions.txt`.
 
 The optional Docker build target `external-c2j` adds a separately downloaded CLI for deployments using `c2j.mode: external`. Its `C2J_VERSION` build argument selects an official c2j release; [fetch_c2j.py](../scripts/fetch_c2j.py) verifies the download’s SHA-256 checksum. Resolve and pass a tag explicitly for consistent caching and metadata. This optional binary’s version is recorded in `/usr/share/cortex/c2j-executable-version.txt` and `com.colony2.c2j.executable.version`. The default published images use the minimal `final` target.
 
-Remote providers work without external command-line tools. Cloud Run and Azure can use configured access-token environment variables; tokens must remain valid over the controller's lifetime. ECS requires AWS CLI v2 in a deployment-specific image. Executor job images are configured independently and must supply their recipe dependencies.
+Remote and all built-in cloud providers work without external command-line tools. Cloud authentication uses native SDK credential discovery and refresh, including environment/file credentials and platform roles or identities. See [cloud authentication](cloud-authentication.md). Executor job images are configured independently and must supply their recipe dependencies.
+
+The test-only `cloud-smoke` target runs static cloud-adapter tests in the same non-root distroless runtime. Container smoke checks exercise it for both architectures, with a read-only root filesystem and local fake credential/metadata/API endpoints. It is not published and adds no test executable to the default image. These checks exercise credential discovery, refresh, signed requests, and failure handling without real cloud accounts.
 
 ### Docker provider from a container
 
@@ -106,4 +108,4 @@ docker buildx build --load --platform linux/arm64 \
 scripts/smoke-container.sh cortex:test-arm64 0.0.0 linux/arm64
 ```
 
-Repeat for `linux/amd64`; execution on a different host architecture requires QEMU/binfmt support. CI configures this automatically. The smoke check runs Cortex, validates embedded listing configuration on a read-only filesystem, exercises the supervisor, checks the non-root image user, and confirms the default image has no c2j executable. The CLI integration tests exercise embedded discovery through the JobDB HTTP protocol with an empty `PATH`; optional subprocess discovery is tested separately.
+Repeat for `linux/amd64`; execution on a different host architecture requires QEMU/binfmt support. CI configures this automatically. The smoke check runs Cortex, validates embedded listing configuration on a read-only filesystem, exercises the supervisor, checks the non-root image user, confirms the default image has no c2j executable, and runs the cloud authentication/API tests in the test-only distroless target. The CLI integration tests exercise embedded discovery through the JobDB HTTP protocol with an empty `PATH`; optional subprocess discovery is tested separately.

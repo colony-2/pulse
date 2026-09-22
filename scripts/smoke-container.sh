@@ -15,3 +15,11 @@ if docker run --rm --platform "$platform" --entrypoint /usr/local/bin/c2j "$imag
   echo 'Unexpected c2j executable in default image' >&2
   exit 1
 fi
+
+# The same runtime must authenticate and submit using native cloud SDKs, with
+# no cloud CLI or writable root filesystem. Fake token/metadata/API endpoints
+# run inside the test process; this does not access real cloud accounts.
+docker buildx build --platform "$platform" --target cloud-smoke --load \
+  --build-arg "VERSION=$version" --tag "$image-cloud-smoke" .
+docker run --rm --platform "$platform" --read-only --tmpfs /tmp \
+  "$image-cloud-smoke"

@@ -1,3 +1,9 @@
+# Works with the standard Cortex image: cloud SDKs are embedded.
+# In cloud environments, attach an identity/role to the controller.
+# Elsewhere, supply Google ADC, AWS, or Azure credentials through environment
+# variables/read-only file mounts. See docs/cloud-authentication.md.
+# service_account, execution_role, and task_role below belong to executors;
+# controller credentials are discovered separately and are not forwarded.
 c2j:
   mode: embedded
 call_timeout: 2m

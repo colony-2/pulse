@@ -25,3 +25,7 @@ The controller uses `github.com/colony-2/c2j/pkg/joblist` by default. The depend
 ## Single-operation provider v1
 
 All adapters implement `Submit` with complete resources, process, deadlines, and metadata. Cortex builds the environment from requested/defaulted values once and preserves it during fallback. Providers size and admit internally; no preparation API or plan token remains. The v1 OpenAPI and protocol examples are updated in place and checked by the schema validator. Regression coverage includes unchanged environments under provider rounding, partial fallback, uncertain submission failures, Docker capacity/replay, and both listing modes through the remote client.
+
+## Native cloud credentials
+
+Cloud adapters no longer invoke `aws`, `gcloud`, or `az`. Native SDKs handle Google ADC, AWS signing/credential discovery, and Azure environment/workload/managed identity authentication. Credential instances survive individual submission contexts for caching and refresh. The default distroless image supports all cloud adapters; a test-only target exercises native credentials and launch requests against fake endpoints in that runtime for AMD64 and ARM64.

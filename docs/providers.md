@@ -6,11 +6,13 @@
 | --- | --- |
 | `remote` | Authenticated HTTPS implementing [protocol v1](../REMOTE_PROVIDER_PROTOCOL.md). Uses `endpoint` and `token_env`. `allow_http` is an explicit development option. |
 | `docker` | Local Linux Docker Engine over a Unix socket, with CPU/memory/swap enforcement and an installed supervisor executable. One admission owner per daemon. |
-| `cloudrun` | Cloud Run Jobs REST v2. Requires `project`, `region`, and optionally `service_account`. Authentication uses `token_env` or `gcloud auth application-default print-access-token`. |
-| `ecs` | Standalone Fargate tasks via AWS CLI v2. Requires `region`, `cluster`, `subnets`, `execution_role`, and `supervisor_path`; optional `task_role`, `security_groups`, and `public_ip`. Uses the CLI's configured credentials. |
-| `azurejobs` | Manual Container Apps Jobs REST API `2025-07-01`. Requires `subscription`, `resource_group`, `environment_id`, and `region`. Authentication uses `token_env` or `az account get-access-token`. |
+| `cloudrun` | Cloud Run Jobs REST v2. Requires `project`, `region`, and optionally `service_account`. Uses native Google Application Default Credentials (attached service account, credential file, or federation). Optional `token_env` overrides discovery. |
+| `ecs` | Standalone Fargate tasks via the AWS SDK for Go v2. Requires `region`, `cluster`, `subnets`, `execution_role`, and `supervisor_path`; optional `task_role`, `security_groups`, and `public_ip`. Uses the AWS credential chain, including environment credentials and task/instance roles. |
+| `azurejobs` | Manual Container Apps Jobs REST API `2025-07-01`. Requires `subscription`, `resource_group`, `environment_id`, and `region`. Uses native Azure environment, workload-identity, or managed-identity credentials. Optional `token_env` overrides discovery. |
 
 These are built-in adapters; only `remote` requires a separate provider service. A future external-runner registry/dispatcher can implement that protocol without adding runner registration or long polling to Cortex.
+
+All cloud adapters work in the default distroless image. See [cloud authentication](cloud-authentication.md) for environment variables, mounted credential files, identity permissions, and refresh behavior.
 
 ### Local Docker capacity
 

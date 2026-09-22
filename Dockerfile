@@ -35,6 +35,17 @@ USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/cortex"]
 CMD ["-config", "/etc/cortex/cortex.yaml"]
 
+# Exercise native cloud authentication in the same shell-free runtime in CI.
+# This test executable is not included in either published image target.
+FROM cortex-build AS cloud-smoke-build
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go test -c \
+      -o /out/cloud.test ./internal/providers/cloud
+
+FROM runtime AS cloud-smoke
+COPY --from=cloud-smoke-build /out/cloud.test /usr/local/bin/cloud.test
+ENTRYPOINT ["/usr/local/bin/cloud.test"]
+CMD ["-test.v"]
+
 # Optional compatibility image; the default target below remains minimal.
 FROM --platform=$BUILDPLATFORM python:3.13-slim-bookworm AS c2j-download
 ARG TARGETARCH

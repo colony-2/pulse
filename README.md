@@ -92,7 +92,9 @@ Inspect the executables without a shell:
 docker run --rm ghcr.io/colony-2/cortex:latest -version
 ```
 
-**Provider dependencies inside the image:** remote services work directly. Cloud Run and Azure support access tokens through `token_env`; token renewal must be handled by the deployment. The image does not contain `gcloud`, `az`, or `aws`. The ECS adapter requires AWS CLI v2, so use a deployment image supplying that CLI. Local Docker needs socket permissions, a shared host lock directory, and a supervisor path visible at the same absolute location to the controller and daemon. See [provider operations](docs/providers.md).
+**Cloud providers work in the standard image.** Cortex embeds native Go SDK authentication and ECS calls. In cloud environments, attach a service account, task/instance role, or managed/workload identity to the controller. Elsewhere, supply credentials through environment variables or mounted files. The SDKs refresh credentials from supported sources automatically; no cloud CLI is required. See [cloud authentication and container examples](docs/cloud-authentication.md).
+
+Local Docker additionally needs socket permissions, a shared host lock directory, and a supervisor path visible at the same absolute location to the controller and daemon. See [provider operations](docs/providers.md).
 
 This is a controller image. Configure `defaults.image` for your workload's executor image, including c2j and any shell, Git, or language tools required by its recipes. The controller image itself contains no shell or Git; use explicit repository selectors in its configuration.
 

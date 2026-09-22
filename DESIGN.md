@@ -354,6 +354,10 @@ Keep requests and results independent of cloud SDK types. Preserve the full corr
 
 No runner registration API, long-poll endpoint, queue database, or completion callback is needed in Cortex. Implementing this provider later requires an adapter and the external service; the current scope is preserving this contract, not building the service now.
 
+### Controller cloud credentials
+
+The default distroless image uses native Go SDKs for authentication and ECS API calls. Google uses Application Default Credentials; AWS uses its standard credential chain; Azure uses environment, workload-identity, or managed-identity credentials. Attached cloud identities need no login subprocess. Off-cloud deployments supply credential environment variables or mounted files. Reuse SDK credential instances for refresh across polling calls while honoring the current call context. Explicit raw Google/Azure access-token overrides remain supported but cannot refresh themselves. Controller credentials are separate from executor identities and are not forwarded to launched containers. See [cloud authentication](docs/cloud-authentication.md).
+
 ## Provider metadata and reverse lookup
 
 Every submitted execution must carry enough information to identify its job without Cortex's memory and without relying on the container having started:
