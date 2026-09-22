@@ -4,7 +4,14 @@ image="${1:?usage: smoke-container.sh IMAGE VERSION PLATFORM}"
 version="${2:?expected Cortex version}"
 platform="${3:?container platform}"
 [[ "$(docker run --rm --platform "$platform" "$image" -version)" == "cortex $version" ]]
+# The default image accepts inline configuration without a mounted file.
+[[ "$(docker image inspect --format '{{len .Config.Cmd}}' "$image")" == 0 ]]
 docker run --rm --platform "$platform" --read-only --tmpfs /tmp \
+  -e CORTEX_CONFIG="$(cat examples/container.yaml)" \
+  -e CORTEX_PROVIDER_TOKEN=smoke-test "$image" -check
+# An explicit file takes precedence even when inline configuration is invalid.
+docker run --rm --platform "$platform" --read-only --tmpfs /tmp \
+  -e CORTEX_CONFIG='[invalid' \
   --mount "type=bind,source=$PWD/examples/container.yaml,target=/etc/cortex/cortex.yaml,readonly" \
   -e CORTEX_PROVIDER_TOKEN=smoke-test "$image" -config /etc/cortex/cortex.yaml -check
 docker run --rm --platform "$platform" --entrypoint /usr/local/bin/cortex-exec "$image" \

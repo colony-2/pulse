@@ -1,7 +1,9 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -94,5 +96,64 @@ func TestHTTPListenConfiguration(t *testing.T) {
 				t.Fatalf("got %q want %q", cfg.HTTP.Listen, tt.want)
 			}
 		})
+	}
+}
+
+func TestConfigurationSourceSelection(t *testing.T) {
+	t.Chdir(t.TempDir())
+	file := []byte(valid)
+	if err := os.WriteFile("cortex.yaml", file, 0600); err != nil {
+		t.Fatal(err)
+	}
+	inline := strings.Replace(valid, "alpine:3", "alpine:env", 1)
+	for _, tt := range []struct {
+		name, path, value, wantImage, wantError string
+		set                                     bool
+	}{
+		{name: "default file", wantImage: "alpine:3"},
+		{name: "inline over default", set: true, value: inline, wantImage: "alpine:env"},
+		{name: "explicit file over inline", path: "cortex.yaml", set: true, value: inline, wantImage: "alpine:3"},
+		{name: "explicit file over invalid inline", path: "cortex.yaml", set: true, value: "[invalid", wantImage: "alpine:3"},
+		{name: "missing explicit file", path: "missing.yaml", set: true, value: inline, wantError: "missing.yaml"},
+		{name: "empty inline", set: true, wantError: "CORTEX_CONFIG"},
+		{name: "blank inline", set: true, value: " \n\t", wantError: "CORTEX_CONFIG"},
+		{name: "malformed inline", set: true, value: "[invalid", wantError: "CORTEX_CONFIG"},
+		{name: "invalid inline", set: true, value: "{}", wantError: "CORTEX_CONFIG"},
+		{name: "unknown inline field", set: true, value: inline + "unknown_option: true\n", wantError: "CORTEX_CONFIG"},
+		{name: "multiple documents", set: true, value: inline + "---\n{}", wantError: "CORTEX_CONFIG"},
+		{name: "inline is contents not path", set: true, value: "cortex.yaml", wantError: "CORTEX_CONFIG"},
+		{name: "inline is not merged with file", set: true, value: "poll_interval: 1s", wantError: "CORTEX_CONFIG"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("CORTEX_CONFIG", tt.value)
+			if !tt.set {
+				if err := os.Unsetenv("CORTEX_CONFIG"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg, err := LoadSource(tt.path)
+			if tt.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+					t.Fatalf("expected %q error, got %v", tt.wantError, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Defaults.Image != tt.wantImage {
+				t.Fatalf("got %q want %q", cfg.Defaults.Image, tt.wantImage)
+			}
+		})
+	}
+	// The inline document is literal; no shell expansion is performed.
+	t.Setenv("CORTEX_CONFIG", inline+"c2j:\n  mode: external\n  env: {LITERAL: '${SHOULD_NOT_EXPAND}'}\n")
+	t.Setenv("SHOULD_NOT_EXPAND", "expanded")
+	cfg, err := LoadSource("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.C2J.Env["LITERAL"] != "${SHOULD_NOT_EXPAND}" {
+		t.Fatal("configuration was expanded")
 	}
 }

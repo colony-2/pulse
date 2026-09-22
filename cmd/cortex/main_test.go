@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -66,7 +67,7 @@ esac
 				}
 				results := []map[string]any{}
 				for _, item := range in.Items {
-					if item.CPUMillis != 1000 || item.Image == "" || item.Metadata["cortex_job_id"] == "" || item.Process.Env["C2J_EXECUTION_CPU"] != "1000m" || item.Process.Env["CORTEX_JOB_ID"] == "" {
+					if item.CPUMillis != 1000 || item.Image == "" || item.Metadata["cortex_job_id"] == "" || item.Process.Env["C2J_EXECUTION_CPU"] != "1000m" || item.Process.Env["CORTEX_JOB_ID"] == "" || item.Process.Env["CORTEX_CONFIG"] != "" {
 						t.Error(item)
 					}
 					results = append(results, map[string]any{"launch_id": item.LaunchID, "status": "accepted", "refs": []string{}})
@@ -102,7 +103,10 @@ esac
 			cmd := exec.Command(binary, "-config", configPath, "-once")
 			cmd.Env = append(os.Environ(), "CORTEX_TEST_PROVIDER_TOKEN=test-token")
 			if mode == "embedded" {
-				cmd.Env = []string{"PATH=" + t.TempDir(), "CORTEX_TEST_PROVIDER_TOKEN=test-token"}
+				// Exercise inline configuration with no file or executable dependencies.
+				cmd = exec.Command(binary, "-once")
+				cmd.Dir = t.TempDir()
+				cmd.Env = []string{"PATH=" + t.TempDir(), "CORTEX_TEST_PROVIDER_TOKEN=test-token", "CORTEX_CONFIG=" + string(data)}
 			}
 			if b, e := cmd.CombinedOutput(); e != nil {
 				t.Fatalf("CLI: %s %v", b, e)
@@ -152,14 +156,11 @@ func TestCLIHTTPAndShutdown(t *testing.T) {
 		"targets":   []any{map[string]any{"instance_id": "test", "jobdb": db.URL + "/acme", "cells": []string{"github.com/acme/app"}, "launch_services": []any{map[string]any{"name": "pool", "priority": 1}}}},
 	}
 	data, _ := yaml.Marshal(cfg)
-	path := filepath.Join(dir, "cortex.yaml")
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		t.Fatal(err)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, binary, "-config", path)
-	cmd.Env = []string{"PATH=" + t.TempDir(), "CORTEX_TEST_PROVIDER_TOKEN=test-token"}
+	cmd := exec.CommandContext(ctx, binary)
+	cmd.Dir = dir
+	cmd.Env = []string{"PATH=" + t.TempDir(), "CORTEX_TEST_PROVIDER_TOKEN=test-token", "CORTEX_CONFIG=" + string(data)}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -227,5 +228,47 @@ func TestCLIHTTPAndShutdown(t *testing.T) {
 	if res, err := client.Get(base + "/status"); err == nil {
 		res.Body.Close()
 		t.Fatal("HTTP listener remained open after shutdown")
+	}
+}
+
+func TestCLIConfigurationSources(t *testing.T) {
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "cortex")
+	if out, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %s %v", out, err)
+	}
+	data, err := os.ReadFile("../../examples/container.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(dir, "cortex.yaml"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name      string
+		args, env []string
+		wantError string
+	}{
+		{name: "default file", args: []string{"-check"}},
+		{name: "explicit file overrides invalid env", args: []string{"-config", "cortex.yaml", "-check"}, env: []string{"CORTEX_CONFIG=[invalid"}},
+		{name: "missing explicit file does not fall back", args: []string{"-config", "missing.yaml", "-check"}, env: []string{"CORTEX_CONFIG=" + string(data)}, wantError: "missing.yaml"},
+		{name: "invalid env does not fall back", args: []string{"-check"}, env: []string{"CORTEX_CONFIG=[invalid"}, wantError: "CORTEX_CONFIG"},
+		{name: "empty env does not fall back", args: []string{"-check"}, env: []string{"CORTEX_CONFIG="}, wantError: "CORTEX_CONFIG"},
+		{name: "empty explicit path", args: []string{"-config=", "-check"}, env: []string{"CORTEX_CONFIG=" + string(data)}, wantError: "nonempty file path"},
+		{name: "version ignores config", args: []string{"-version"}, env: []string{"CORTEX_CONFIG=[invalid"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := exec.Command(binary, tt.args...)
+			cmd.Dir = dir
+			cmd.Env = append([]string{"PATH=" + t.TempDir(), "CORTEX_PROVIDER_TOKEN=test-token"}, tt.env...)
+			out, err := cmd.CombinedOutput()
+			if tt.wantError != "" {
+				if err == nil || !strings.Contains(string(out), tt.wantError) {
+					t.Fatalf("expected %q failure, got %s %v", tt.wantError, out, err)
+				}
+			} else if err != nil {
+				t.Fatalf("CLI: %s %v", out, err)
+			}
+		})
 	}
 }

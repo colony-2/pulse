@@ -34,7 +34,7 @@ WORKDIR /home/nonroot
 USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/cortex"]
-CMD ["-config", "/etc/cortex/cortex.yaml"]
+CMD []
 
 # Exercise native cloud authentication in the same shell-free runtime in CI.
 # This test executable is not included in either published image target.

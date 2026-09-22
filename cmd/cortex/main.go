@@ -29,7 +29,7 @@ func main() {
 	}
 }
 func run() error {
-	path := flag.String("config", "cortex.yaml", "configuration file")
+	path := flag.String("config", "", "configuration file (overrides CORTEX_CONFIG; default: CORTEX_CONFIG or ./cortex.yaml)")
 	once := flag.Bool("once", false, "run one discovery/submission pass")
 	check := flag.Bool("check", false, "validate configuration, listing backend and providers without submitting")
 	ver := flag.Bool("version", false, "print version")
@@ -41,7 +41,16 @@ func run() error {
 	if flag.NArg() != 0 {
 		return fmt.Errorf("unexpected positional arguments")
 	}
-	cfg, e := config.Load(*path)
+	var explicitConfig bool
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "config" {
+			explicitConfig = true
+		}
+	})
+	if explicitConfig && *path == "" {
+		return fmt.Errorf("-config requires a nonempty file path")
+	}
+	cfg, e := config.LoadSource(*path)
 	if e != nil {
 		return e
 	}

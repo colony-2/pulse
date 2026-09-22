@@ -105,6 +105,26 @@ func Load(path string) (*Config, error) {
 	}
 	return Parse(b)
 }
+
+// LoadSource chooses an explicit file, inline YAML, or the default local file.
+// Sources are never merged, and a selected source's failure never falls back.
+func LoadSource(path string) (*Config, error) {
+	if path != "" {
+		return Load(path)
+	}
+	if value, ok := os.LookupEnv("CORTEX_CONFIG"); ok {
+		if strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("CORTEX_CONFIG must contain a YAML configuration")
+		}
+		cfg, err := Parse([]byte(value))
+		if err != nil {
+			return nil, fmt.Errorf("CORTEX_CONFIG: %w", err)
+		}
+		return cfg, nil
+	}
+	return Load("cortex.yaml")
+}
+
 func Parse(b []byte) (*Config, error) {
 	c := &Config{}
 	d := yaml.NewDecoder(bytes.NewReader(b))
