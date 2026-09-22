@@ -1,6 +1,6 @@
 # Remote compute provider protocol v1
 
-Status: proposed protocol, specified in [OpenAPI](api/provider.openapi.yaml). Built-in adapters implement the same batch semantics in-process; a remote adapter translates them to HTTP. Provider priority and round robin remain Cortex configuration.
+Status: protocol v1, specified in [OpenAPI](api/provider.openapi.yaml) and supported by Cortex's remote HTTP client. Built-in adapters implement the same batch semantics in-process. Provider priority and round robin remain Cortex configuration. See [Implementing a remote provider](docs/implementing-a-remote-provider.md) for server implementation guidance and examples.
 
 ## Operations
 
@@ -57,7 +57,7 @@ Inspection returns the original metadata even before runner assignment. `404` me
 
 ## Evolution and conformance
 
-The URL carries the major protocol version. Use the [OpenAPI 3.1.1 specification](https://spec.openapis.org/oas/v3.1.1.html) for the machine-readable contract. The initial document describes protocol `1.0.0`; it is a design artifact, not an implemented service.
+The URL carries the major protocol version. Use the [OpenAPI 3.1.1 specification](https://spec.openapis.org/oas/v3.1.1.html) for the machine-readable contract. The document describes protocol `1.0.0`; this repository supplies the client and contract, but does not supply a remote provider server.
 
 Clients ignore new response fields but treat unknown outcome values conservatively. Providers reject unrecognized request fields/options rather than silently ignoring a requested constraint. Breaking semantic changes require a new major URL. This version has no capabilities endpoint, capacity counter endpoint, cancellation API, or completion callback requirement.
 

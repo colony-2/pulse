@@ -178,6 +178,7 @@ Cloud adapter tests use HTTP/CLI doubles. Real cloud IAM, networking, and worklo
 
 - [Architecture and scheduling](DESIGN.md)
 - [Provider operations](docs/providers.md)
+- [Implementing a remote provider](docs/implementing-a-remote-provider.md)
 - [Remote protocol](REMOTE_PROVIDER_PROTOCOL.md) and [OpenAPI schema](api/provider.openapi.yaml)
 - [Docker capacity design](LOCAL_DOCKER_PROVIDER.md)
 - [Release process and publishing setup](docs/releases.md)
