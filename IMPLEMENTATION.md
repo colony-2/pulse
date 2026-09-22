@@ -29,3 +29,9 @@ All adapters implement `Submit` with complete resources, process, deadlines, and
 ## Native cloud credentials
 
 Cloud adapters no longer invoke `aws`, `gcloud`, or `az`. Native SDKs handle Google ADC, AWS signing/credential discovery, and Azure environment/workload/managed identity authentication. Credential instances survive individual submission contexts for caching and refresh. The default distroless image supports all cloud adapters; a test-only target exercises native credentials and launch requests against fake endpoints in that runtime for AMD64 and ARM64.
+
+## Active lists and public diagnostics
+
+All five providers now implement paginated active instance listing, including queued/starting/running work and excluding terminal instances. Remote v1 uses `GET /v1/launches` with optional launch-ID filtering, replacing per-launch inspection. Terminal idempotency retention is unchanged.
+
+Continuous mode serves public read-only HTTP endpoints for status, redacted configuration, all/provider-specific instances, cooldowns, and round-robin state. Provider reads have deadlines and bounded fan-out; aggregate failures preserve partial results. Tests cover native state filtering/pagination, remote wire validation, read-only scheduler snapshots, config redaction, partial failures, and real CLI startup/HTTP/SIGTERM shutdown. No persistent Cortex state is introduced.

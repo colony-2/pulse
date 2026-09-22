@@ -12,7 +12,7 @@ Configure the provider's project/account, region, network, and other launch sett
 | AWS | The SDK discovers ECS task-role credentials, EC2 instance-profile credentials through IMDS, or a web-identity role configured by the platform. | Set `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN` for temporary credentials; or mount shared AWS configuration/credential files. |
 | Azure | Use managed identity on the hosting service, or a federated workload identity supplied by the platform. | Set `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET`; certificate and federated-token files are also supported. |
 
-Enable/attach the identity on the hosting platform and grant it permission to create and start the relevant job/task resources. Cortex does not create an identity or grant itself permissions. It needs network access to both the cloud API and the chosen token/metadata endpoints.
+Enable/attach the identity on the hosting platform and grant it permission to create/start the relevant job/task resources and list their active instances. The additional read permissions are described in [provider operations](providers.md#active-instances-and-retention). Cortex does not create an identity or grant itself permissions. It needs network access to both the cloud API and the chosen token/metadata endpoints.
 
 ### Google Cloud
 

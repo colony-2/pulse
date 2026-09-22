@@ -4,7 +4,7 @@
 
 Cortex watches explicitly configured repository cells for jobs that need an executor. It selects a launch service, supplies the job's execution requirements, and starts a container running `c2j` for that job. Every launch carries metadata linking it back to its JobDB instance, tenant, and job.
 
-[Quick start](#quick-start) · [Container image](#container-image) · [Providers](#providers) · [Configuration](#configuration) · [Releases](docs/releases.md)
+[Quick start](#quick-start) · [Container image](#container-image) · [Providers](#providers) · [Configuration](#configuration) · [HTTP API](#http-api) · [Releases](docs/releases.md)
 
 ## How it works
 
@@ -78,7 +78,7 @@ Copy [examples/container.yaml](examples/container.yaml) to `cortex.yaml`, fill i
 
 ```sh
 docker run --rm --init \
-  --read-only --tmpfs /tmp \
+  --read-only --tmpfs /tmp -p 8080:8080 \
   --mount "type=bind,source=$PWD/cortex.yaml,target=/etc/cortex/cortex.yaml,readonly" \
   -e CORTEX_PROVIDER_TOKEN \
   ghcr.io/colony-2/cortex:latest
@@ -120,7 +120,7 @@ For a multi-architecture registry build, replace `--load` with `--platform linux
 | AWS ECS Fargate | `ecs` | Standalone tasks with supported task sizes and the execution supervisor. |
 | Azure Container Apps Jobs | `azurejobs` | Manual jobs with supported CPU/memory pairs and native execution timeout. |
 
-A future service that registers external runners and dispatches work by long polling can implement the remote protocol. Cortex sends complete batches through its submit API; launch inspection is available for diagnostics.
+A future service that registers external runners and dispatches work by long polling can implement the remote protocol. Cortex sends complete batches through its submit API; paginated active instance listing is available for diagnostics.
 
 See [provider configuration and limitations](docs/providers.md) for authentication, image storage bounds, Docker admission, retention, and cloud allocation details.
 
@@ -173,6 +173,31 @@ Configure `mode: external` to use it. The default published image uses embedded 
 
 A controller restart loses its cooldown and may cause duplicate compute. JobDB leases protect job ownership; job side effects still need their normal idempotency. Provider resources are retained for inspection; configure terminal-resource cleanup for your deployment.
 
+## HTTP API
+
+Continuous mode serves an **unauthenticated, read-only** HTTP API on all interfaces at port 8080. Set `PORT` to choose another default port, or configure an explicit address:
+
+```yaml
+http:
+  listen: ":8080"
+```
+
+| GET endpoint | Returns |
+| --- | --- |
+| `/status` | Version, uptime, and latest polling status. |
+| `/config` | Configuration with environment values and URL credentials redacted. |
+| `/instances` | Active instances across all configured providers. |
+| `/providers/{provider}/instances` | A page of instances from one configured provider. |
+| `/scheduler/cooldowns` | Current per-job cooldowns and in-flight attempts. |
+| `/scheduler/round-robin` | Priority tiers and each tier's next starting service. |
+
+```sh
+curl http://localhost:8080/status
+curl 'http://localhost:8080/providers/runner_pool_a/instances?page_size=100'
+```
+
+Lists include **queued, starting, and running** instances and exclude terminal instances. Paused/stopping compute is included where supported. Listing does not change cooldowns, placement, or provider resources. `-once`, `-check`, and `-version` do not start the server. See [HTTP API documentation](docs/http-api.md) for examples, pagination, scopes, redaction, and partial failures.
+
 ## Development
 
 Go 1.26 or newer is required. Packaging tests also use Node.js 22+, Python 3, and standard Unix archive tools.
@@ -197,12 +222,13 @@ CORTEX_TEST_CELL=/path/to/test-cell \
 go test -race ./internal/c2j -run TestLiveC2JExecutable -v
 ```
 
-Cloud adapter tests use HTTP/CLI doubles. Real cloud IAM, networking, and workload execution require deployment acceptance checks.
+Cloud adapter tests use HTTP doubles for native API and credential requests. Real cloud IAM, networking, and workload execution require deployment acceptance checks.
 
 ## Design and release documentation
 
 - [Architecture and scheduling](DESIGN.md)
 - [Provider operations](docs/providers.md)
+- [Public HTTP API](docs/http-api.md)
 - [Implementing a remote provider](docs/implementing-a-remote-provider.md)
 - [Remote protocol](REMOTE_PROVIDER_PROTOCOL.md) and [OpenAPI schema](api/provider.openapi.yaml)
 - [Docker capacity design](LOCAL_DOCKER_PROVIDER.md)

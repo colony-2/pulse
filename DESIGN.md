@@ -258,6 +258,7 @@ Providers know nothing about c2j or JobDB. Submission is batch-only, including a
 ```go
 type Provider interface {
     Submit(ctx context.Context, launches []Launch) ([]Submission, error)
+    List(ctx context.Context, request ListRequest) (ListResponse, error)
 }
 
 type Launch struct {
@@ -276,7 +277,6 @@ type Submission struct {
     LaunchID      string
     Status        Status // accepted, no_capacity, unsupported, unavailable, rejected, unknown
     Refs          []string
-    InspectionURI string
     Reason        string
 }
 ```
@@ -317,9 +317,9 @@ Keep each job's launch ID across fallback within the attempt; use it for per-ite
 The remote adapter implements [the v1 protocol](REMOTE_PROVIDER_PROTOCOL.md), with a concrete [OpenAPI 3.1.1 contract](api/provider.openapi.yaml):
 
 - `POST /v1/submit`: complete batch launch requests to per-item admission results.
-- `GET /v1/launches/{launch_id}`: diagnostic inspection with exact correlation metadata, including before execution starts.
+- `GET /v1/launches`: paginated active instances with correlation metadata, optionally filtered by launch ID. Include queued/starting/running instances and exclude terminal instances.
 
-Use authenticated HTTPS, batches of 1–100 items, canonical integer resource quantities, and per-item launch IDs. Remote providers must support idempotent submission; the protocol specifies deadlines, retention, partial failures, and uncertain outcomes. Inspection is available to operators and tooling without adding a scheduling reconciliation loop. Built-in adapters use the same logical contract without HTTP. Runner registration/long polling remains an implementation detail of a remote provider.
+Use authenticated HTTPS, batches of 1–100 items, canonical integer resource quantities, and per-item launch IDs. Remote providers must support idempotent submission; the protocol specifies deadlines, retention, partial failures, and uncertain outcomes. Active instance listing is available to operators and tooling without adding a scheduling reconciliation loop. Built-in adapters use the same logical contract without HTTP. Runner registration/long polling remains an implementation detail of a remote provider.
 
 ### Built-in local Docker provider
 
@@ -350,7 +350,7 @@ Provider-contract details matter:
 - **Requested resource guarantees.** Each batch item contains resources and a complete process. The service must assign sufficient capacity and enforce the requested image/platform/resources before startup, while preserving the supplied environment exactly. Runner registration describes the pool; it does not establish an individual launch's allocation. If the service cannot honor the request, it declines before admission, or expires/fails an accepted launch without starting inadequate compute. Cortex does not negotiate with individual runners.
 - **Bounded waiting.** A queued job can remain runnable in c2j, so each cooldown can produce another submission. Launch-ID idempotency only handles retries of one submission. Start with immediate assignment or a short queue whose start deadline is no later than the end of that attempt's cooldown. The service expires unstarted requests even if Cortex disappears. This prevents an accumulating backlog; it does not eliminate the already-accepted possibility of duplicate running executors. Longer queues would need provider-owned coalescing of pending requests for the same workload, including replacement of stale requirements, before being enabled.
 
-Keep requests and results independent of cloud SDK types. Preserve the full correlation envelope on the service's launch record before assignment, and carry it to the runner/container. Provider inspection must map even an unassigned or failed launch back to its job. Runner credentials, allowed workloads, logs, assignment recovery, and record retention belong to the runner service's deployment and protocol.
+Keep requests and results independent of cloud SDK types. Preserve the full correlation envelope on the service's launch record before assignment, and carry it to the runner/container. Active lists must map unassigned launches back to their jobs. Retained native metadata must preserve reverse lookup for failed launches, which are excluded from active lists. Runner credentials, allowed workloads, logs, assignment recovery, and record retention belong to the runner service's deployment and protocol.
 
 No runner registration API, long-poll endpoint, queue database, or completion callback is needed in Cortex. Implementing this provider later requires an adapter and the external service; the current scope is preserving this contract, not building the service now.
 
@@ -386,7 +386,7 @@ Provider connection configuration maps stable instance IDs to current endpoints.
 ### Adapter mappings
 
 - **Local Docker:** attach the full correlation envelope and capacity-accounting fields as labels at container creation. Use a deterministic launch-derived name for idempotent lookup and retain stopped containers for the inspection window.
-- **Remote protocol:** attach the envelope to the provider's launch record before accepting submission. The inspection endpoint returns it even before a native container or runner is assigned.
+- **Remote protocol:** attach the envelope to the provider's launch record before accepting submission. The list endpoint returns it even before a native container or runner is assigned; terminal records are hidden while their idempotency decisions remain retained.
 - **Cloud Run Jobs:** an initial straightforward implementation creates a Job per launch, with the envelope on the Job, execution template, and container environment. This makes both the parent and its executions identifiable. A shared Job is also possible if the adapter proves the per-execution environment retains the exact envelope independently of later template changes. `run` supports environment overrides but not label overrides. See [Job templates](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.jobs) and [run overrides](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.jobs/run).
 - **ECS:** use one standalone task from a pinned task-definition revision, with tags, environment overrides, and a launch ID in `clientToken` / `startedBy`. Shared task definitions contain no per-job identity. Inspect both tasks and failures in the response. See [RunTask](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_RunTask.html).
 - **Azure Container Apps Jobs:** an initial implementation creates a manual Job per launch, with tags and the full envelope in its container configuration. Each execution maps through its dedicated parent. Reusing a Job requires verification that execution-specific configuration preserves the envelope; changing a shared parent's tags is insufficient. The start API accepts a template, not execution tags. See [Job creation](https://learn.microsoft.com/en-us/rest/api/resource-manager/containerapps/jobs/create-or-update?view=rest-resource-manager-containerapps-2025-07-01) and [Job start](https://learn.microsoft.com/en-us/rest/api/resource-manager/containerapps/jobs/start?view=rest-resource-manager-containerapps-2025-07-01).
@@ -432,12 +432,20 @@ Use a pinned c2j public listing library by default, with explicit tenant/reposit
 - An insufficient runtime request yields, and the same job resumes with its cached results/artifacts in a suitable environment. Stale incompatible executors release promptly, and cancellation remains authoritative.
 - Same-job cooldown applies across requirement revisions and yields; another job can launch independently. Failed or ambiguous launches remain throttled; restart may duplicate launches without invalid job progress.
 - Container outcomes distinguish successful handoff from failure without provider retry loops or a Cortex callback dependency.
-- Provider inspection recovers the exact job identity after an image-pull failure or Cortex restart.
+- Native metadata recovers the exact job identity after an image-pull failure or Cortex restart; active lists include queued and starting work but exclude terminal instances.
 - A future queued provider can accept a launch without immediate startup, enforce its start deadline, and retain correlation metadata before assignment. A fake provider can verify this without implementing a runner registry.
 - Lower numeric priorities are tried first. Equal-priority services rotate first choice across batches; remaining items visit every peer before a lower-priority tier. Concurrent batches advance cursors safely, and cursor loss on restart requires no recovery.
 - A service accepts part of a batch; only its explicit capacity/compatibility/availability declines reach the next service, with identical resource and process inputs. Accepted, rejected, and uncertain items do not fall through.
 - Partial responses, missing IDs, and timeouts preserve known results and treat uncertain submissions conservatively. One cooldown covers all services tried for a job; all-full batches retry after that cooldown. Batch size one uses the same API.
-- Remote request/response fixtures conform to the OpenAPI schema; provider conformance checks cover idempotent replays, immutable requests, deadlines, retention, and exact metadata inspection.
+- Remote request/response fixtures conform to the OpenAPI schema; provider conformance checks cover idempotent replays, immutable requests, deadlines, retention, and exact metadata in active instance lists.
 - Local Docker never admits more than its committed CPU/memory/slot budgets across concurrent batches or controller restart. Resource limits include scratch memory, and uncertain starts retain their charges.
 
 These are implementation acceptance criteria. Availability statements come from the updated guide; this document update does not independently test the c2j implementation or implement any cloud adapter.
+
+## Public read-only HTTP API
+
+Continuous mode serves unauthenticated HTTP on `:8080` (`$PORT` overrides the port; `http.listen` overrides both). The API exposes status, redacted configuration, all active instances, instances by configured provider, cooldown entries, and round-robin positions. See [HTTP API](docs/http-api.md) for routes, examples, pagination, and failure semantics. One-pass and validation modes do not bind an HTTP listener.
+
+Status and scheduler endpoints read copies of in-memory state. Instance endpoints read the providers on demand with bounded concurrency and timeouts. They do not drive scheduling, clear cooldowns, advance rotation, or reconcile resources. All-provider reads return partial results with an explicit error when a provider is unavailable. No database, instance cache, or historical ledger is introduced. The cloud adapters enumerate native resources; Docker lists labeled containers; remote services supply their active launch inventory. Views include queued/starting/running instances (and paused/stopping compute where supported), excluding terminal instances.
+
+Configuration exposes environment names with redacted values, removes URL credentials, and never serializes native SDK credentials or the controller's environment. Instance responses expose correlation metadata and native references, with no process environment. These endpoints are deliberately open to unauthenticated callers and support public browser reads.

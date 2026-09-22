@@ -81,3 +81,7 @@ A provider-supplied in-container supervisor enforces the execution timeout and a
 - Provider rounding leaves supplied environment values unchanged; replay identity covers the original request and process, independent of later image resolution.
 
 This is a provider implementation plan; no Docker workloads are launched by this documentation change.
+
+## Active instance listing
+
+`List` reads managed container summaries from the Docker daemon and returns queued/starting/running compute, including paused/stopping containers where present. Created and restarting containers count as starting; exited and dead containers are excluded. Sorting by container ID provides stateless pagination. This diagnostic read does not reconcile uncertain admissions, alter capacity accounting, start containers, or delete retained terminal containers. See [HTTP API](docs/http-api.md).

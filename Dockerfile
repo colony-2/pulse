@@ -32,6 +32,7 @@ COPY LICENSE /usr/share/cortex/LICENSE
 ENV PATH=/usr/local/bin:/usr/bin:/bin
 WORKDIR /home/nonroot
 USER 65532:65532
+EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/cortex"]
 CMD ["-config", "/etc/cortex/cortex.yaml"]
 

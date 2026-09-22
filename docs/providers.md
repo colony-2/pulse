@@ -34,9 +34,21 @@ ECS and Azure require a deployment-supplied `image_storage_bounds` map for each 
 
 ECS images also need `cortex-exec` at the configured `supervisor_path`, since ECS standalone tasks do not supply the execution timeout used here. Cloud Run and Azure use native job timeouts and disable provider execution retries. This initial cloud implementation does not enforce queued start deadlines or working-directory overrides outside ECS; requests for those options decline rather than silently dropping them. Configure image access and workload credentials in the target deployment; per-job Azure registry/identity customization is not currently exposed.
 
-## Inspection and retention
+## Active instances and retention
 
 Every launch carries the complete jobdb instance/tenant/job/launch correlation envelope. Docker stores it in labels; Cloud Run stores it in annotations and container environment; ECS stores tags/environment; Azure stores tags/environment; remote services retain it on their launch records. The process environment also exposes `CORTEX_*` identity values.
+
+The [public HTTP API](http-api.md) lists active instances through every configured provider. Lists include queued/starting/running work and exclude terminal instances; paused/stopping compute is included where reported. Only Cortex-managed native resources are returned, within each configured provider's scope. A service can show launches made before Cortex restarted or by another controller using the same scope. Duplicate configurations pointing at the same native scope can show the same resource under both provider names.
+
+| Provider | Listing source and scope |
+| --- | --- |
+| Remote | `GET /v1/launches`, scoped to the provider endpoint and authenticated principal. Includes accepted queue entries before native assignment. |
+| Docker | Labeled containers on the configured daemon. Created/restarting containers are `starting`; running/paused/removing map to `running`/`paused`/`stopping`. Exited/dead containers are excluded. Reads do not update admission accounting. |
+| Cloud Run | Executions across jobs in the configured project/region. Pending executions are `starting`; a positive running task count is `running`. Completion/deletion timestamps or terminal completion conditions exclude an execution. Requires `run.executions.list`. |
+| ECS | `ListTasks` for the configured cluster with desired status `RUNNING`, followed by `DescribeTasks` including tags. Provisioning/pending/activating tasks are `starting`; running tasks are `running`. Stopped tasks are excluded. Requires `ecs:ListTasks` and `ecs:DescribeTasks`. |
+| Azure Jobs | Jobs in the configured resource group, then execution pages for managed jobs. Processing executions are `starting`, running executions are `running`; terminal statuses or end times are excluded. Requires read access to jobs and their executions. |
+
+Cloud APIs can briefly lag acceptance or state changes. In particular, an accepted native start operation may not yet have an execution to list. Cloud Run and ECS pages can be empty after filtering while still carrying a continuation token. Azure walks nested job/execution pages with a stateless cursor; large inventories may need several requests. Docker sorts current container IDs and uses a last-seen-ID cursor. These are changing views, not historical or transactional snapshots. An empty list does not prove a past submission never ran or free capacity is available.
 
 Containers, per-launch cloud jobs, and ECS task-definition revisions are retained for inspection. Automated pruning is not implemented. Use provider tools to remove confirmed terminal resources after your retention period, preserving any parent records needed to identify retained executions. Abandoned Docker `created` containers remain charged until their outcome is inspected and they are safely removed. Host disk availability, image cache size, and retained logs remain operational concerns; there is no disk-capacity guarantee from Docker admission.
 
