@@ -1,5 +1,5 @@
 // Package cloud implements built-in cloud adapters with explicit native request
-// bodies. Google/Azure use REST; AWS uses its CLI credential/signing integration.
+// bodies. Authentication and ECS calls use native Go SDKs; no cloud CLI is needed.
 package cloud
 
 import (
@@ -12,14 +12,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/colony-2/cortex/pkg/compute"
 )
 
@@ -33,13 +32,14 @@ type Config struct {
 	ImageStorageBounds                                                                                                                            map[string]int64
 	MaxAzureCPU                                                                                                                                   int64
 }
-type Runner func(context.Context, string, []string, []byte) ([]byte, error)
 type Provider struct {
-	cfg     Config
-	HTTP    *http.Client
-	Run     Runner
-	BaseURL string
-	mu      sync.Mutex
+	cfg          Config
+	HTTP         *http.Client
+	accessToken  func(context.Context) (string, error)
+	quotaProject string
+	ecs          *ecs.Client
+	BaseURL      string
+	mu           sync.Mutex
 }
 type plan struct {
 	Request                        compute.Request
@@ -73,28 +73,13 @@ func New(c Config) (*Provider, error) {
 	default:
 		return nil, fmt.Errorf("unknown cloud kind")
 	}
-	p := &Provider{cfg: c, HTTP: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, Run: runCommand}
+	p := &Provider{cfg: c, HTTP: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	if c.Kind == "cloudrun" {
 		p.BaseURL = "https://run.googleapis.com"
-	} else {
+	} else if c.Kind == "azurejobs" {
 		p.BaseURL = "https://management.azure.com"
 	}
 	return p, nil
-}
-func runCommand(ctx context.Context, name string, args []string, input []byte) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Stdin = bytes.NewReader(input)
-	cmd.WaitDelay = time.Second
-	cmd.Env = append(os.Environ(), "AWS_PAGER=", "AWS_MAX_ATTEMPTS=1", "CLOUDSDK_CORE_DISABLE_PROMPTS=1")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%s command failed: %w", name, err)
-	}
-	if out.Len() > 16<<20 {
-		return nil, fmt.Errorf("cloud response too large")
-	}
-	return out.Bytes(), nil
 }
 func ceil(n, unit int64) int64 { return (n + unit - 1) / unit * unit }
 func (p *Provider) size(r compute.Request) (plan, string) {
@@ -232,30 +217,6 @@ func nameFor(id string) string {
 	h := sha256.Sum256([]byte(id))
 	return "cortex-" + hex.EncodeToString(h[:12])
 }
-func (p *Provider) token(ctx context.Context) (string, error) {
-	if p.cfg.TokenEnv != "" {
-		v := os.Getenv(p.cfg.TokenEnv)
-		if v == "" {
-			return "", fmt.Errorf("missing cloud token environment")
-		}
-		return v, nil
-	}
-	var b []byte
-	var err error
-	if p.cfg.Kind == "cloudrun" {
-		b, err = p.Run(ctx, "gcloud", []string{"auth", "application-default", "print-access-token", "--quiet"}, nil)
-	} else {
-		b, err = p.Run(ctx, "az", []string{"account", "get-access-token", "--resource", "https://management.azure.com/", "--query", "accessToken", "--output", "tsv"}, nil)
-	}
-	if err != nil {
-		return "", err
-	}
-	v := strings.TrimSpace(string(b))
-	if v == "" {
-		return "", fmt.Errorf("empty cloud token")
-	}
-	return v, nil
-}
 func (p *Provider) request(ctx context.Context, token, method, path string, body any) (map[string]json.RawMessage, int, error) {
 	var b []byte
 	var err error
@@ -271,6 +232,9 @@ func (p *Provider) request(ctx context.Context, token, method, path string, body
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
+	if p.cfg.Kind == "cloudrun" && p.quotaProject != "" {
+		req.Header.Set("X-Goog-User-Project", p.quotaProject)
+	}
 	resp, err := p.HTTP.Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -488,31 +452,6 @@ func (p *Provider) submitAzure(ctx context.Context, token string, l compute.Laun
 	r.Refs = append(r.Refs, id)
 	r.Status = compute.Accepted
 	return r, nil
-}
-func (p *Provider) aws(ctx context.Context, action string, body any) (map[string]json.RawMessage, error) {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	f, err := os.CreateTemp("", "cortex-aws-*.json")
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(f.Name())
-	if _, err = f.Write(data); err != nil {
-		f.Close()
-		return nil, err
-	}
-	if err = f.Close(); err != nil {
-		return nil, err
-	}
-	b, err := p.Run(ctx, "aws", []string{"ecs", action, "--region", p.cfg.Region, "--cli-input-json", "file://" + f.Name(), "--output", "json", "--no-cli-pager"}, nil)
-	if err != nil {
-		return nil, err
-	}
-	var out map[string]json.RawMessage
-	err = json.Unmarshal(b, &out)
-	return out, err
 }
 func (p *Provider) submitECS(ctx context.Context, l compute.Launch, pl plan) (compute.Submission, error) {
 	r := compute.Submission{LaunchID: l.LaunchID, Status: compute.Unavailable}

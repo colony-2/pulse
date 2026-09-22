@@ -6,7 +6,6 @@ import (
 	"github.com/colony-2/cortex/pkg/compute"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 )
@@ -22,7 +21,7 @@ func TestCloudRunNativeRequestAndAcceptance(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	p.Run = func(context.Context, string, []string, []byte) ([]byte, error) { return []byte("token"), nil }
+	p.accessToken = func(context.Context) (string, error) { return "token", nil }
 	created := false
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer token" {
@@ -71,7 +70,7 @@ func TestCloudRunNativeRequestAndAcceptance(t *testing.T) {
 func TestGoogleCapacityAndUnknownStart(t *testing.T) {
 	for _, code := range []int{429, 500} {
 		p, _ := New(Config{Kind: "cloudrun", Project: "p", Region: "r"})
-		p.Run = func(context.Context, string, []string, []byte) ([]byte, error) { return []byte("token"), nil }
+		p.accessToken = func(context.Context) (string, error) { return "token", nil }
 		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if strings.HasSuffix(r.URL.Path, ":run") {
 				w.WriteHeader(code)
@@ -97,37 +96,41 @@ func TestECSNativeTaskAndFailure(t *testing.T) {
 		req := request("ecs")
 		p, _ := New(Config{Kind: "ecs", Region: "r", Cluster: "cluster", Subnets: []string{"subnet"}, ExecutionRole: "role", SupervisorPath: "/usr/local/bin/cortex-exec", ImageStorageBounds: map[string]int64{req.Image: 2 * Gi}})
 		calls := 0
-		p.Run = func(_ context.Context, cmd string, args []string, _ []byte) ([]byte, error) {
-			if cmd != "aws" {
-				t.Fatal(cmd)
-			}
-			var input string
-			for i, a := range args {
-				if a == "--cli-input-json" {
-					input = strings.TrimPrefix(args[i+1], "file://")
-				}
-			}
-			b, e := os.ReadFile(input)
-			if e != nil {
-				t.Fatal(e)
+		t.Setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+		t.Setenv("AWS_SESSION_TOKEN", "test-session-token")
+		t.Setenv("PATH", t.TempDir())
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !strings.Contains(r.Header.Get("Authorization"), "Credential=test-access-key/") || r.Header.Get("X-Amz-Security-Token") != "test-session-token" {
+				t.Error("missing AWS signing", r.Header)
 			}
 			var body map[string]any
-			json.Unmarshal(b, &body)
+			if e := json.NewDecoder(r.Body).Decode(&body); e != nil {
+				t.Error(e)
+				w.WriteHeader(400)
+				return
+			}
 			calls++
-			if args[1] == "register-task-definition" {
+			w.Header().Set("Content-Type", "application/x-amz-json-1.1")
+			if strings.HasSuffix(r.Header.Get("X-Amz-Target"), "RegisterTaskDefinition") {
 				if body["cpu"] != "2048" || body["memory"] != "4096" {
-					t.Fatal(body)
+					t.Error(body)
 				}
-				return []byte(`{"taskDefinition":{"taskDefinitionArn":"arn:def"}}`), nil
+				w.Write([]byte(`{"taskDefinition":{"taskDefinitionArn":"arn:def"}}`))
+				return
 			}
 			if body["clientToken"] != "ecs" || body["count"] != float64(1) {
-				t.Fatal(body)
+				t.Error(body)
 			}
 			if full {
-				return []byte(`{"tasks":[],"failures":[{"reason":"RESOURCE:MEMORY"}]}`), nil
+				w.Write([]byte(`{"tasks":[],"failures":[{"reason":"RESOURCE:MEMORY"}]}`))
+				return
 			}
-			return []byte(`{"tasks":[{"taskArn":"arn:task"}],"failures":[]}`), nil
-		}
+			w.Write([]byte(`{"tasks":[{"taskArn":"arn:task"}],"failures":[]}`))
+		}))
+		defer s.Close()
+		p.BaseURL = s.URL
+		p.HTTP = s.Client()
 		out, e := p.Submit(context.Background(), []compute.Launch{launch(req)})
 		want := compute.Accepted
 		if full {
@@ -144,7 +147,7 @@ func TestAzureCreateBeforeStart(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	p.Run = func(context.Context, string, []string, []byte) ([]byte, error) { return []byte("token"), nil }
+	p.accessToken = func(context.Context) (string, error) { return "token", nil }
 	created := false
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
