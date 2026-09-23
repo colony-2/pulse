@@ -167,7 +167,7 @@ The service owns `launch-001`. Cortex may send only `launch-002` to the next ser
 
 | Status | Meaning |
 | --- | --- |
-| `accepted` | Provider owns the launch; it may be queued, starting, running, or already finished. |
+| `accepted` | Provider admitted the launch to its own bounded queue or handed it to the underlying runtime. This does not guarantee eventual startup or completion. |
 | `no_capacity` | No capacity now; nothing launched or queued. Eligible for fallback. |
 | `unsupported` | A required option cannot be supplied; nothing launched or queued. Eligible for fallback. |
 | `unavailable` | Provider explicitly confirms non-acceptance due to temporary unavailability. Eligible for fallback. |
@@ -176,9 +176,9 @@ The service owns `launch-001`. Cortex may send only `launch-002` to the next ser
 
 Accepted results contain only `launch_id` and `status`. Every non-accepted result also requires a nonempty `reason`. Submission results carry no native references or inspection URL; use `GET /v1/launches?launch_id=...` for active instance details and native references.
 
-All definite declines guarantee that execution cannot later start from that submission. An ID-conflict rejection leaves the original launch unchanged; it does not assert that the original never ran. A native failure after possibly initiating execution is `unknown`.
+All definite declines guarantee that execution cannot later start from that submission. A native failure after possibly initiating execution is `unknown`. Providers using optional native duplicate detection must leave an existing launch unchanged when rejecting a conflicting ID; such a rejection makes no claim about whether that earlier launch ran.
 
-Acceptance must survive loss of the caller's connection or process. Creating an inert cloud parent is insufficient. Queued launches require `start_before`, and the provider must prevent startup at or after that deadline. A queued launch missing its deadline becomes `expired`. `timeout_seconds` bounds execution after startup and must be enforced independently of Cortex. Return `no_capacity` when fallback is preferable to queueing.
+Report `accepted` after admission or handoff has occurred, not merely after validating the request or creating an inert cloud parent. An accepted asynchronous native start operation is sufficient. The provider need not guarantee delivery after a crash, recover lost queue entries, or restart failed launches. Once execution starts, resource limits and `timeout_seconds` must be enforced independently of Cortex.
 
 Batches are not transactions. Preserve valid explicit results in a complete response when another item is missing or malformed. Unaccounted-for IDs, duplicate results, unknown statuses, truncated JSON, timeouts, and transport failures imply uncertainty. Cortex never immediately falls back an uncertain item. A later per-job cooldown attempt can still launch fresh compute with a new ID.
 
@@ -196,17 +196,29 @@ HTTP `400 Bad Request` for duplicate IDs; no item was processed:
 }
 ```
 
-## Idempotency and retention
+## Submission attempts and recovery
 
-The per-item key is `(provider instance, authenticated principal, launch_id)`. Cortex preserves the ID while falling back within one attempt. A later cooldown attempt uses a new ID.
+A `launch_id` identifies one attempt, not the JobDB job's lifetime. Cortex calls each selected launch service at most once for that attempt. After a definite fallback-eligible decline it may submit the same complete item and ID to the next service. It does not retry a timed-out or failed POST, or immediately fall back after an uncertain outcome. A later attempt after the per-job cooldown uses a new launch ID if c2j still reports runnable work.
 
-Serialize concurrent submissions of the same key. During retention, a logical replay of the **entire request and process** returns the recorded decision without another execution, independent of batch membership. Ignore JSON object-key order; preserve array order and literal values. Reusing an ID with different resources, image, process, metadata, or deadlines returns a per-item `rejected` conflict without changing the original launch.
+Clients must not replay a submission to the same provider, including after a lost response. Disable automatic submission retries in HTTP clients, proxies, middleware, and native launch SDKs. A provider makes one attempt to initiate execution for each item; this can require multiple distinct native operations, such as creating a parent and then starting it. It must not retry an ambiguous start, reassign an uncertain dispatch, or run a recovery loop to resubmit failed launches. Reads used for sizing, listing, or awaiting native provisioning are not launch retries.
 
-Retain accepted decisions throughout the launch's lifetime plus at least 24 hours after termination, and declined decisions for at least 24 hours. Unknown outcomes remain fenced against duplicate execution until resolved. Longer retention is permitted. After retention expires, idempotency is no longer guaranteed: **callers must not replay old submissions**. An elapsed `start_before` prevents a new start but does not erase the decision for a retained replay.
+Providers need no durable submission journal, stored decline decisions, replay cache, or fixed retention period. Native idempotency keys or deterministic resource names may be used as an additional safeguard, but the protocol does not require duplicate detection, comparison of old inputs, or replay of previous results. Duplicate caller submissions are outside this contract.
+
+If an accepted launch is lost or fails to start, c2j/JobDB remains authoritative about outstanding work. Cortex discovers the still-runnable job and can make a fresh attempt after cooldown. If an executor claimed work and then failed, subsequent readiness depends on c2j/JobDB's lease and recovery rules. Providers do not query JobDB or repair jobs, and Cortex does not infer recovery from instance lists.
+
+This is an at-most-once **submission-attempt policy**, not an exactly-once execution guarantee. A runtime may start an earlier attempt late, or Cortex may restart and lose its cooldown. c2j checks readiness, leases, and resource compatibility when a container starts; overlapping attempts can still consume additional compute.
+
+### Handoff, queues, and deadlines
+
+Prefer prompt handoff to the underlying runtime, without a separate provider backlog. Image pulls, scheduling, and startup delays inside that runtime do not require a provider-owned recovery service or a mandatory startup deadline.
+
+A provider that deliberately holds its own queue for runners must require `start_before` and prevent container startup at or after that timestamp. Expire missed queue entries without launching them; no retained terminal record is required. Without a deadline, dispatch directly or return `unsupported` if provider-owned queueing is the only option. Queueing is optional; return `no_capacity` when fallback is preferable.
+
+`start_before`, when supplied, always constrains actual container startup, not just handoff to another system. A provider that cannot enforce it must return `unsupported`. Native cloud handoff can omit it. Cortex sets it through `defaults.start_window`, which must be positive and no longer than `cooldown`. No universal startup deadline is imposed when it is absent. `timeout_seconds` remains a separate limit measured after startup; an HTTP call timeout is neither of these deadlines.
 
 ## Active instance listing
 
-`GET /v1/launches` returns only active instances owned by the authenticated principal: `queued`, `starting`, `running`, `paused`, or `stopping`. Exclude succeeded, failed, stopped, cancelled, expired, and timed-out instances. Queued launches must be visible before runner assignment. A completed launch disappears from this view even while its idempotency record remains retained.
+`GET /v1/launches` returns only active instances owned by the authenticated principal: `queued`, `starting`, `running`, `paused`, or `stopping`. Exclude succeeded, failed, stopped, cancelled, expired, and timed-out instances. Provider-owned queue entries must be visible before runner assignment. Native inventories may briefly lag handoff. A completed launch disappears from this view; there is no requirement to retain a terminal submission record.
 
 Parameters are optional `page_size` (1–100, default 100), opaque `page_token`, and exact `launch_id`. Each item has a stable provider-local `id`, originating `launch_id`, state, original metadata, and native references. Optional timestamps describe creation/start when known. One launch may have multiple native instances; preserve their distinct IDs.
 
@@ -250,4 +262,4 @@ For an accepted launch awaiting assignment, the same response shape uses `state:
 
 The URL carries the major version. Providers reject unrecognized request fields/options rather than silently ignoring constraints. Clients ignore new response fields and treat unknown statuses conservatively. Future breaking changes require a new major URL. V1 has no capacity endpoint, cancellation API, or completion callback requirement.
 
-Conformance covers mixed results, exact process/environment/metadata preservation, resource guarantees, deadlines, duplicate IDs, concurrent and conflicting replays, ambiguous responses, retention, and active listing before assignment. The repository supplies the client and contract; it does not include a remote provider server. Documentation examples are checked against the OpenAPI schemas by `scripts/validate_protocol.py`.
+Conformance covers mixed results, exact process/environment/metadata preservation, resource guarantees, deadlines, duplicate IDs within a batch, single-attempt submission, lost responses and starts without provider retries, truthful declines, and active listing before assignment. The repository supplies the client and contract; it does not include a remote provider server. Documentation examples are checked against the OpenAPI schemas by `scripts/validate_protocol.py`.

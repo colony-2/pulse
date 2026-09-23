@@ -34,9 +34,15 @@ ECS and Azure require a deployment-supplied `image_storage_bounds` map for each 
 
 ECS images also need `cortex-exec` at the configured `supervisor_path`, since ECS standalone tasks do not supply the execution timeout used here. Cloud Run and Azure use native job timeouts and disable provider execution retries. This initial cloud implementation does not enforce queued start deadlines or working-directory overrides outside ECS; requests for those options decline rather than silently dropping them. Configure image access and workload credentials in the target deployment; per-job Azure registry/identity customization is not currently exposed.
 
+## Submission attempts
+
+Cortex calls each selected launch service once per attempt and does not retry uncertain submissions. Providers perform one native launch attempt; optional native idempotency safeguards do not imply a replay or recovery requirement. If work is lost or fails to start, c2j/JobDB readiness and Cortex's cooldown govern a fresh attempt with a new ID. `accepted` reports admission or handoff, not guaranteed execution. The protocol imposes no durable submission journal, stored decline decisions, or fixed terminal retention. Built-in safeguards such as Docker's deterministic names and capacity reconstruction remain implementation choices.
+
+Prefer prompt handoff to native compute. Deliberate provider-owned runner queues require a startup deadline; native scheduling and image-pull delays alone do not. When `start_before` is explicitly supplied, its actual-start constraint must still be enforced or declined as unsupported. See [submission and recovery semantics](../REMOTE_PROVIDER_PROTOCOL.md#submission-attempts-and-recovery).
+
 ## Active instances and retention
 
-Every launch carries the complete jobdb instance/tenant/job/launch correlation envelope. Docker stores it in labels; Cloud Run stores it in annotations and container environment; ECS stores tags/environment; Azure stores tags/environment; remote services retain it on their launch records. The process environment also exposes `CORTEX_*` identity values.
+Every launch carries the complete jobdb instance/tenant/job/launch correlation envelope. Docker stores it in labels; Cloud Run stores it in annotations and container environment; ECS stores tags/environment; Azure stores tags/environment; remote services attach it to native resources or provider-owned queue entries. The process environment also exposes `CORTEX_*` identity values.
 
 The [public HTTP API](http-api.md) lists active instances through every configured provider. Lists include queued/starting/running work and exclude terminal instances; paused/stopping compute is included where reported. Only Cortex-managed native resources are returned, within each configured provider's scope. A service can show launches made before Cortex restarted or by another controller using the same scope. Duplicate configurations pointing at the same native scope can show the same resource under both provider names.
 

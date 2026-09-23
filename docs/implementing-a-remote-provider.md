@@ -10,8 +10,8 @@ The [v1 OpenAPI contract](../api/provider.openapi.yaml) defines the wire format.
 | --- | --- | --- |
 | Finding runnable jobs and selecting one to launch | Matching the requested image, platform, and resources to compute | Claiming the selected job and managing its lease |
 | Priority tiers, batch placement, and fallback | Capacity admission, optional queueing, and starting the supplied process | Execution, replay, and runtime requirement changes |
-| Building the process and environment from requested/defaulted resources | Resource enforcement, execution deadlines, idempotency, and active instance listing | JobDB state transitions |
-| In-memory per-job cooldown | Recovering accepted or uncertain launches | Determining whether its reported allocation remains sufficient |
+| Building the process and environment from requested/defaulted resources | Resource enforcement, execution deadlines, and active instance listing | JobDB state transitions |
+| In-memory per-job cooldown | Prompt native handoff or optional bounded runner queues | Determining whether its reported allocation remains sufficient |
 
 Treat the process and correlation metadata as opaque inputs. Your service does not query JobDB, resolve recipes, or construct c2j arguments. Runner registration, heartbeats, authentication, and long polling are internal to the service.
 
@@ -19,7 +19,7 @@ Start with immediate admission: commit compatible capacity or return `no_capacit
 
 ## HTTP contract
 
-Use HTTPS, bearer authentication, and JSON bodies. One configured endpoint identifies one provider instance/admission domain. Scope launch records to the authenticated principal. Replicas behind that endpoint must share capacity and idempotency decisions.
+Use HTTPS, bearer authentication, and JSON bodies. One configured endpoint identifies one provider instance/admission domain. Scope admission and active listings to the authenticated principal. Replicas behind that endpoint must respect the same admission limits, either through the underlying runtime or coordinated capacity accounting. A shared submission history is not required.
 
 For submission:
 
@@ -49,47 +49,49 @@ All quantities are positive JSON integers up to `9007199254740991`; timeouts are
 
 | Status | Use when |
 | --- | --- |
-| `accepted` | You own a durable launch commitment, whether queued, starting, running, or terminal. |
+| `accepted` | You admitted the item to your bounded queue or handed it to the underlying runtime. Eventual startup and completion are not guaranteed. |
 | `no_capacity` | Nothing was launched or queued, and the pool is full now. |
 | `unsupported` | Nothing was launched or queued, and a required option cannot be honored. |
 | `unavailable` | You can confirm non-acceptance caused by temporary unavailability. |
-| `rejected` | Invalid request/configuration or conflicting reuse of an existing ID. |
+| `rejected` | Invalid request/configuration, or an ID conflict detected by optional native safeguards. |
 | `unknown` | The operation might have initiated execution, but its outcome is uncertain. |
 
 Accepted results contain only `launch_id` and `status`. Every other status also requires a nonempty diagnostic `reason`. Native references belong in active instance lists, not submission responses.
 
-Definite declines guarantee no delayed execution from that submission. Creating an inert parent resource alone is insufficient for acceptance; an accepted asynchronous start operation can be sufficient. Track and clean up native parent resources internally.
+Definite declines guarantee no delayed execution from that submission. Creating an inert parent resource alone is insufficient for acceptance; an accepted asynchronous start operation can be sufficient. Native parent cleanup is a deployment concern, separate from job recovery.
 
 A lost response after calling a native launch API is usually `unknown`. Do not map generic HTTP `429`, `5xx`, or transport failures to safe fallback. If you know the pool is full, return HTTP `200` with per-item `no_capacity`. Cortex stops uncertain items for this attempt; it can retry the job with a fresh ID after cooldown.
 
-## Make idempotency survive crashes
+## Make one submission attempt
 
-The key is `(provider instance, authenticated principal, launch_id)`. It identifies one attempt, not the JobDB job: that job can legitimately need later executions.
+Cortex submits each launch once to a selected service. It can try a different service after a definite fallback-eligible decline, preserving the launch ID. It does not replay a submission after a timeout or lost response. If work remains runnable after cooldown, Cortex creates a new attempt with a new ID. This limits submissions per attempt, not the number of attempts over a job's lifetime.
 
-A practical submission sequence:
+A simple provider flow is:
 
-1. Validate the whole batch before side effects.
-2. Serialize each item's key and look for an existing decision.
-3. Return the recorded decision for a logical replay. Compare all resources, image, process, metadata, and deadlines. Ignore JSON object-key order and batch membership; argument order and literal values matter.
-4. Reject conflicting reuse without altering the original launch. Check retained records before treating an elapsed start deadline as a new-submission failure.
-5. For a new item, validate provider support and atomically admit capacity. Record declines as well as admissions.
-6. Retain immutable inputs, metadata, and admission commitment before execution can start. Use native idempotency keys or deterministic resource identity where available.
-7. Arrange execution and retain the decision/references. Fence uncertain operations against another start until you resolve their outcome.
+1. Validate the whole batch before side effects, including duplicate IDs within that batch.
+2. Check each item's compatibility and capacity. Admit atomically where you own a capacity budget.
+3. Attach the immutable process, requirements, and correlation metadata to the native resource or bounded queue entry.
+4. Attempt handoff once. Return `accepted` after handoff or queue admission; otherwise report a definite decline only when nothing can subsequently start. Report `unknown` when the outcome is uncertain.
+5. Let c2j and Cortex recover outstanding work if this attempt is lost or fails to start. Keep active resources discoverable through native inventory or your runner queue.
 
-Your record and the native API call usually cannot share a transaction. Recover from a crash between them by inspecting native operations before retrying. A lock held only while handling HTTP is insufficient; use storage or native resources that reconstruct decisions. A separate database is an implementation choice.
+Disable automatic POST retries in clients/proxies and launch retries in SDKs. Creating a cloud parent and then starting it are distinct operations within one attempt; polling the parent while it provisions is also allowed. Do not retry an ambiguous start or recreate lost launches after a process restart. Native idempotency tokens or deterministic names are optional safeguards, not a reason to add retries.
 
-Retain accepted records throughout execution plus at least 24 hours after termination, declined decisions for at least 24 hours, and unknown records until resolved. Within retention, replaying `no_capacity` returns that same decision even if capacity is now available. After retention expires, replay protection is no longer guaranteed and callers must not replay old submissions. Longer retention is allowed.
+There is no requirement to persist submission decisions, record declines, compare replayed inputs, retain terminal records for a fixed period, or reconcile unknown outcomes into a retry. A provider backed by a reliable runtime can submit to it and derive active lists from its resources. Native metadata must remain available while those resources are exposed, but an additional database is unnecessary. Caller replays are outside the contract.
 
-## Enforce deadlines independently
+`accepted` reports an admission or handoff that occurred; it is not a promise of eventual execution. A crash that loses an accepted queue entry requires no provider recovery. Work that was never claimed remains visible through c2j; claimed work follows c2j/JobDB lease recovery before another attempt becomes eligible. Resource enforcement and safe accounting for compute that might still be running remain provider responsibilities.
+
+## Handoff and optional bounded queues
+
+Prefer immediate handoff to the underlying runtime. Native image pulls and scheduling delays do not create a requirement for your service to store a durable queue or enforce a universal startup deadline. A late native start still goes through c2j's readiness, lease, and resource checks; overlapping attempts can waste compute.
+
+If your service deliberately queues work for external runners, require `start_before`. Without it, dispatch directly or return `unsupported` if only provider-owned queueing is available. Enforce the deadline at actual startup, including on the runner; admission-time checking alone is insufficient. Expire an entry that misses its deadline without starting it. No durable expiry history is required.
 
 | Clock | Rule |
 | --- | --- |
-| `start_before` | Prevent startup at or after this timestamp. Mark an accepted launch `expired` if it misses the deadline. |
-| `timeout_seconds` | Terminate execution when its duration after startup reaches the limit. |
+| `start_before`, when supplied | Prevent actual container startup at or after this timestamp. Return `unsupported` if this cannot be enforced, even when handoff itself would be timely. |
+| `timeout_seconds` | Terminate execution when its duration after startup reaches the limit, independently of Cortex. |
 
-A provider that queues work must require `start_before`. Without it, admit directly or return `unsupported` if only queueing is available. Check again at actual startup, including on the runner; admission-time checking alone is insufficient. Enforcement must continue after Cortex disconnects or restarts.
-
-Cortex supplies startup deadlines when `defaults.start_window` is configured. It must be positive and no longer than `cooldown`. An HTTP request timeout is not an execution deadline.
+Cortex supplies startup deadlines when `defaults.start_window` is configured. It must be positive and no longer than `cooldown`; cloud handoff may leave it unset. An HTTP request timeout is not an execution or startup deadline.
 
 ## Preserve reverse lookup and list active instances
 
@@ -108,11 +110,11 @@ The instance/tenant/job combination identifies the originating entity. Metadata 
 
 Implement `GET /v1/launches` with optional `page_size` (1–100, default 100), opaque `page_token`, and exact `launch_id` filter. Return `{"items": [...]}` with an optional `next_page_token`. Each item contains a stable provider-local `id`, `launch_id`, state, original metadata, and `refs`; include `created_at` and `started_at` when known. Multiple native instances for one launch have distinct IDs.
 
-Include queued launches immediately after acceptance, before runner assignment. Use a stable instance ID and `refs: []` until native references exist. Keep the ID unchanged after assignment. List `queued`, `starting`, `running`, `paused`, and `stopping`; exclude terminal instances such as succeeded, failed, stopped, cancelled, expired, or timed out. Do not substitute an unknown state for a failed lookup: return an error.
+Include entries in your own queue immediately after acceptance, before runner assignment. Lists derived from native runtime inventory may briefly lag handoff. Use a stable instance ID and `refs: []` until native references exist. Keep the ID unchanged after assignment. List `queued`, `starting`, `running`, `paused`, and `stopping`; exclude terminal instances such as succeeded, failed, stopped, cancelled, expired, or timed out. Do not substitute an unknown state for a failed lookup: return an error.
 
 Scope every page and cursor to the authenticated principal. Preserve filters between pages. Return `items: []` for an empty page; callers continue if `next_page_token` is present. Cursors must advance, and IDs must be unique within a page. Listing may reflect changes between pages; it need not hold a durable snapshot. An absent launch returns an empty list, including when its retained record is terminal. Absence is not proof that the launch never ran.
 
-Keep terminal idempotency records for the retention period above even though they are hidden from listing. Preserve native metadata for reverse lookup after a failed launch. The list operation is read-only: it must not submit, cancel, restart, or reconcile work. Cortex exposes lists through its public [HTTP API](http-api.md), without using them to change scheduling or cooldowns. Process environments and credentials do not belong in list responses.
+Terminal record retention is a deployment choice. Preserve correlation on any native resources you keep, including failed launches, so they remain identifiable while available. The list operation is read-only: it must not submit, cancel, restart, or reconcile work. Cortex exposes lists through its public [HTTP API](http-api.md), without using them to change scheduling or cooldowns. Process environments and credentials do not belong in list responses.
 
 ## Adapt this to external runners
 
@@ -122,9 +124,9 @@ Keep terminal idempotency records for the retention period above even though the
 4. Before startup, verify that assignment is still valid, its deadline has not passed, and the requested resources can be guaranteed. Preserve the supplied environment even if the runner allocates more capacity.
 5. Track state, enforce timeout, and retain correlation. Release capacity only when execution has stopped or cannot start.
 
-A missed heartbeat does not prove execution stopped. Prevent a revoked assignment from starting before reassigning uncertain work. Runner dispatch leases and c2j job leases have separate responsibilities.
+A missed heartbeat does not prove execution stopped or make its capacity safe to reuse. Do not reassign an uncertain dispatch as a retry; let c2j and Cortex determine when a fresh attempt is needed. Runner dispatch leases and c2j job leases have separate responsibilities.
 
-Prefer immediate assignment or a short queue bounded by `start_before`. Accepted queued work can remain runnable in c2j, producing fresh launch IDs after cooldown; per-launch idempotency does not deduplicate these. Longer queues require provider-owned handling of repeated/stale pending work before enabling them. Cortex needs no registry, long-poll API, or persistent state.
+Prefer immediate assignment or a short queue bounded by `start_before`. Accepted queued work can remain runnable in c2j, producing fresh launch IDs after cooldown; these are separate attempts, so optional native deduplication by launch ID does not combine them. Longer queues require provider-owned handling of repeated/stale pending work before enabling them. Cortex needs no registry, long-poll API, or persistent state.
 
 ## Connect and verify
 
@@ -164,7 +166,7 @@ cortex -config cortex.yaml -once
 
 `-check` validates configuration and initializes the listing client; it makes no JobDB/provider health request. Use `-once` with seeded test jobs to exercise submission. For development HTTP endpoints, explicitly set `allow_http: true`.
 
-Test single/maximum batches, invalid envelopes without side effects, partial acceptance, resource rounding with unchanged environment, concurrent capacity admission, duplicate/conflicting replays, response loss, crash recovery, deadlines, principal isolation, queued visibility before assignment, pagination (including empty filtered pages), terminal exclusion, and read-only listing. Verify that native resources map back to the originating job. Keep bearer tokens and environment secrets out of logs. Schema validation alone cannot prove these behaviors.
+Test single/maximum batches, invalid envelopes without side effects, partial acceptance, resource rounding with unchanged environment, concurrent capacity admission, duplicate IDs within a batch, response loss without launch retries, lost queue entries without provider recovery, deadlines, principal isolation, queued visibility before assignment, pagination (including empty filtered pages), terminal exclusion, and read-only listing. Verify that native resources map back to the originating job. Keep bearer tokens and environment secrets out of logs. Schema validation alone cannot prove these behaviors.
 
 Useful references:
 

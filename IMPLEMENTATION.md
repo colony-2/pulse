@@ -32,10 +32,14 @@ Cloud adapters no longer invoke `aws`, `gcloud`, or `az`. Native SDKs handle Goo
 
 ## Active lists and public diagnostics
 
-All five providers now implement paginated active instance listing, including queued/starting/running work and excluding terminal instances. Remote v1 uses `GET /v1/launches` with optional launch-ID filtering, replacing per-launch inspection. Terminal idempotency retention is unchanged.
+All five providers now implement paginated active instance listing, including queued/starting/running work and excluding terminal instances. Remote v1 uses `GET /v1/launches` with optional launch-ID filtering, replacing per-launch inspection. Terminal instances are hidden from listing; the protocol imposes no fixed terminal-record retention.
 
 Continuous mode serves public read-only HTTP endpoints for status, redacted configuration, all/provider-specific instances, cooldowns, and round-robin state. Provider reads have deadlines and bounded fan-out; aggregate failures preserve partial results. Tests cover native state filtering/pagination, remote wire validation, read-only scheduler snapshots, config redaction, partial failures, and real CLI startup/HTTP/SIGTERM shutdown. No persistent Cortex state is introduced.
 
 ## Inline container configuration
 
 `CORTEX_CONFIG` accepts the complete YAML configuration using the same parser and validation as files. Explicit `-config` takes precedence, then inline configuration, then `./cortex.yaml`; sources never merge or silently fall back on errors. Simple-container documentation now uses this environment option. The image has no default file arguments, and mounted-file deployments pass their path explicitly. Tests cover precedence, invalid/empty documents, literal values, fileless CLI discovery/submission and continuous HTTP operation. Container smoke checks cover both sources on each release architecture.
+
+## Single-attempt submission contract
+
+Provider documentation now specifies one submission per selected service per attempt, with no replay after an uncertain response and no provider retries of ambiguous starts. Acceptance reports admission or handoff, not guaranteed execution. Required durable journals, replay handling, stored declines, terminal retention periods, and lost-launch recovery have been removed from the contract. c2j/JobDB readiness and Cortex's cooldown drive new attempts. Native duplicate safeguards and existing Docker capacity reconstruction remain valid implementation choices. Queueing is optional; deliberate provider-owned queues require `start_before`, while prompt native handoff may omit it. Supplied startup deadlines and execution timeouts retain their existing meanings. This is a documentation update; wire fields and runtime behavior are unchanged.

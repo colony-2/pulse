@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: Batch-only compute provider contract. Each submission contains resources, process, deadlines, and
     metadata. Providers preserve supplied environment values, including when rounding resource capacity upward.
-    See REMOTE_PROVIDER_PROTOCOL.md for admission, idempotency, retention, and fallback semantics. Providers do
+    See REMOTE_PROVIDER_PROTOCOL.md for single-attempt submission, recovery, and fallback semantics. Providers do
     not interpret c2j or JobDB. Numeric priorities are controller configuration.
 servers:
 - url: https://provider.example.com
@@ -16,12 +16,14 @@ paths:
       operationId: submitBatch
       summary: Submit complete launches in one batch
       description: Validate the envelope before processing any items. Size resources and admit each launch in this
-        operation. Idempotency is scoped to provider instance, authenticated principal, and launch ID, independent
-        of batch membership. During retention, logical retries return the recorded decision; changed request or
-        process for an existing ID is rejected without changing its original launch. Retain accepted launches throughout
-        their lifetime plus at least 24 hours after termination, and declines for at least 24 hours. After retention,
-        callers must not replay old submissions. Definite declines authorize fallback; missing or unknown outcomes
-        do not.
+        operation. Callers submit each attempt once to a selected service and must not replay a POST after an
+        uncertain response. Providers attempt native handoff once without retrying ambiguous starts; distinct
+        create/start operations and provisioning reads are allowed. Disable automatic submission retries in clients,
+        proxies, and launch SDKs. Accepted means admission to a bounded provider queue or handoff to the underlying
+        runtime, not guaranteed startup or completion. Providers need no durable submission journal, replay support,
+        stored decline decisions, fixed terminal retention, or recovery loop for lost launches. Native idempotency
+        safeguards are optional. Definite declines authorize fallback; missing or unknown outcomes do not.
+        Outstanding work is rediscovered through c2j; a later Cortex attempt after cooldown has a new launch ID.
       requestBody:
         required: true
         content:
@@ -257,7 +259,7 @@ components:
       minProperties: 1
       additionalProperties:
         type: string
-      description: Opaque exact correlation envelope. Preserve it on the launch record before execution can start.
+      description: Opaque exact correlation envelope. Attach it to native resources or queue entries before execution can start.
         Do not place credentials here.
     DeclinedResult:
       type: object
@@ -311,6 +313,8 @@ components:
       additionalProperties: false
     AcceptedResult:
       type: object
+      description: Admission or native handoff occurred. Startup and completion are not guaranteed; the provider
+        is not required to recover a lost or failed launch.
       properties:
         launch_id:
           $ref: '#/components/schemas/LaunchId'
@@ -421,8 +425,10 @@ components:
         start_before:
           type: string
           format: date-time
-          description: Optional latest container startup time. Required if the provider queues the launch; not the
-            execution deadline.
+          description: Optional latest actual container startup time. Required for a provider-owned runner queue;
+            prompt handoff followed by native scheduling or image-pull delays does not require this field.
+            If supplied it must be enforced at startup, not just handoff; return unsupported if that is impossible.
+            This is separate from the execution deadline.
         metadata:
           $ref: '#/components/schemas/Metadata'
         process:
