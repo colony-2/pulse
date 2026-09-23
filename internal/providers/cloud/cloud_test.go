@@ -63,7 +63,7 @@ func TestCloudRunNativeRequestAndAcceptance(t *testing.T) {
 	p.BaseURL = s.URL
 	p.HTTP = s.Client()
 	r, e := p.Submit(context.Background(), []compute.Launch{launch(request("a"))})
-	if e != nil || r[0].Status != compute.Accepted || len(r[0].Refs) != 2 {
+	if e != nil || r[0].Status != compute.Accepted {
 		t.Fatal(r, e)
 	}
 }

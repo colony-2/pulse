@@ -361,7 +361,6 @@ func (p *Provider) submitGoogle(ctx context.Context, token string, l compute.Lau
 		}
 		return r, err
 	}
-	r.Refs = []string{resource}
 	if err = p.waitGoogle(ctx, token, op); err != nil {
 		return r, err
 	}
@@ -382,7 +381,6 @@ func (p *Provider) submitGoogle(ctx context.Context, token string, l compute.Lau
 	if operation == "" {
 		return r, fmt.Errorf("Google run returned no operation reference")
 	}
-	r.Refs = append(r.Refs, operation)
 	r.Status = compute.Accepted
 	return r, nil
 }
@@ -393,7 +391,6 @@ func (p *Provider) submitAzure(ctx context.Context, token string, l compute.Laun
 	_, code, err := p.request(ctx, token, "GET", path, nil)
 	if err == nil {
 		r.Status = compute.Unknown
-		r.Refs = []string{resource}
 		return r, fmt.Errorf("launch parent already exists; refusing duplicate start")
 	}
 	if code != 404 {
@@ -411,7 +408,6 @@ func (p *Provider) submitAzure(ctx context.Context, token string, l compute.Laun
 		}
 		return r, err
 	}
-	r.Refs = []string{resource}
 	for {
 		state, _, e := p.request(ctx, token, "GET", path, nil)
 		if e != nil {
@@ -450,7 +446,6 @@ func (p *Provider) submitAzure(ctx context.Context, token string, l compute.Laun
 	if id == "" {
 		return r, fmt.Errorf("Azure start returned no execution reference")
 	}
-	r.Refs = append(r.Refs, id)
 	r.Status = compute.Accepted
 	return r, nil
 }
@@ -494,7 +489,6 @@ func (p *Provider) submitECS(ctx context.Context, l compute.Launch, pl plan) (co
 	if def.ARN == "" {
 		return r, fmt.Errorf("ECS registration returned no definition")
 	}
-	r.Refs = []string{def.ARN}
 	public := "DISABLED"
 	if p.cfg.PublicIP {
 		public = "ENABLED"
@@ -517,7 +511,6 @@ func (p *Provider) submitECS(ctx context.Context, l compute.Launch, pl plan) (co
 			if task.ARN == "" {
 				return r, fmt.Errorf("ECS task lacks ARN")
 			}
-			r.Refs = append(r.Refs, task.ARN)
 		}
 		r.Status = compute.Accepted
 		return r, nil

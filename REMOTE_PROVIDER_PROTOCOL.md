@@ -150,8 +150,7 @@ HTTP `200 OK`:
   "results": [
     {
       "launch_id": "launch-001",
-      "status": "accepted",
-      "refs": []
+      "status": "accepted"
     },
     {
       "launch_id": "launch-002",
@@ -162,7 +161,7 @@ HTTP `200 OK`:
 }
 ```
 
-The service owns `launch-001`, even though no native reference exists yet. Cortex may send only `launch-002` to the next service, using the same complete item and launch ID.
+The service owns `launch-001`. Cortex may send only `launch-002` to the next service, using the same complete item and launch ID.
 
 ## Submission results and fallback
 
@@ -175,7 +174,7 @@ The service owns `launch-001`, even though no native reference exists yet. Corte
 | `rejected` | Invalid request or configuration problem. Stop this item's attempt and report the reason. |
 | `unknown` | Acceptance is uncertain. Stop this item's attempt without immediate fallback. |
 
-Every non-accepted result requires a nonempty `reason`. Each accepted result requires `refs`, which may be an empty array before native assignment. Native references are diagnostic strings, not scheduling inputs. There is no inspection URI; callers can filter the list by `launch_id`.
+Accepted results contain only `launch_id` and `status`. Every non-accepted result also requires a nonempty `reason`. Submission results carry no native references or inspection URL; use `GET /v1/launches?launch_id=...` for active instance details and native references.
 
 All definite declines guarantee that execution cannot later start from that submission. An ID-conflict rejection leaves the original launch unchanged; it does not assert that the original never ran. A native failure after possibly initiating execution is `unknown`.
 
@@ -201,7 +200,7 @@ HTTP `400 Bad Request` for duplicate IDs; no item was processed:
 
 The per-item key is `(provider instance, authenticated principal, launch_id)`. Cortex preserves the ID while falling back within one attempt. A later cooldown attempt uses a new ID.
 
-Serialize concurrent submissions of the same key. During retention, a logical replay of the **entire request and process** returns the recorded decision/references without another execution, independent of batch membership. Ignore JSON object-key order; preserve array order and literal values. Reusing an ID with different resources, image, process, metadata, or deadlines returns a per-item `rejected` conflict without changing the original launch.
+Serialize concurrent submissions of the same key. During retention, a logical replay of the **entire request and process** returns the recorded decision without another execution, independent of batch membership. Ignore JSON object-key order; preserve array order and literal values. Reusing an ID with different resources, image, process, metadata, or deadlines returns a per-item `rejected` conflict without changing the original launch.
 
 Retain accepted decisions throughout the launch's lifetime plus at least 24 hours after termination, and declined decisions for at least 24 hours. Unknown outcomes remain fenced against duplicate execution until resolved. Longer retention is permitted. After retention expires, idempotency is no longer guaranteed: **callers must not replay old submissions**. An elapsed `start_before` prevents a new start but does not erase the decision for a retained replay.
 

@@ -49,8 +49,12 @@ for field in ("process", "metadata", "image", "cpu_millis"):
 bad = copy.deepcopy(request)
 bad["items"][0]["plan_token"] = "obsolete"
 check("SubmitRequest", bad, False)
-check("SubmissionResult", {"launch_id": "test", "status": "accepted", "refs": []})
-check("SubmissionResult", {"launch_id": "test", "status": "accepted"}, False)
+check("SubmissionResult", {"launch_id": "test", "status": "accepted"})
+check("SubmissionResult", {"status": "accepted"}, False)
+for status in ("no_capacity", "unsupported", "unavailable", "rejected", "unknown"):
+    check("SubmissionResult", {"launch_id": "test", "status": status}, False)
+for name in ("AcceptedResult", "UnknownResult", "DeclinedResult"):
+    assert "refs" not in spec["components"]["schemas"][name]["properties"]
 check("ListResponse", {"items": []})
 check("ListResponse", {"items": [{"id":"native", "launch_id":"test", "state":"succeeded", "metadata":{"key":"value"}, "refs":[]}]}, False)
 check("SubmissionResult", {"launch_id": "test", "status": "unknown", "reason": "Connection lost."})

@@ -56,7 +56,7 @@ All quantities are positive JSON integers up to `9007199254740991`; timeouts are
 | `rejected` | Invalid request/configuration or conflicting reuse of an existing ID. |
 | `unknown` | The operation might have initiated execution, but its outcome is uncertain. |
 
-Accepted results require `refs`. Use `"refs": []` before native assignment; omission and `null` are invalid. Every other status requires a nonempty diagnostic `reason`.
+Accepted results contain only `launch_id` and `status`. Every other status also requires a nonempty diagnostic `reason`. Native references belong in active instance lists, not submission responses.
 
 Definite declines guarantee no delayed execution from that submission. Creating an inert parent resource alone is insufficient for acceptance; an accepted asynchronous start operation can be sufficient. Track and clean up native parent resources internally.
 
@@ -70,7 +70,7 @@ A practical submission sequence:
 
 1. Validate the whole batch before side effects.
 2. Serialize each item's key and look for an existing decision.
-3. Return the recorded decision/references for a logical replay. Compare all resources, image, process, metadata, and deadlines. Ignore JSON object-key order and batch membership; argument order and literal values matter.
+3. Return the recorded decision for a logical replay. Compare all resources, image, process, metadata, and deadlines. Ignore JSON object-key order and batch membership; argument order and literal values matter.
 4. Reject conflicting reuse without altering the original launch. Check retained records before treating an elapsed start deadline as a new-submission failure.
 5. For a new item, validate provider support and atomically admit capacity. Record declines as well as admissions.
 6. Retain immutable inputs, metadata, and admission commitment before execution can start. Use native idempotency keys or deterministic resource identity where available.
@@ -172,4 +172,4 @@ Useful references:
 - [Compute types](../pkg/compute/compute.go) and [scheduler](../internal/scheduler/scheduler.go).
 - [CLI integration test](../cmd/cortex/main_test.go) and [schema/example validator](../scripts/validate_protocol.py).
 
-For a Go server, define HTTP DTOs that honor the schema. `compute.Submission.Refs` uses `omitempty` for in-process use; directly serializing it with an empty slice omits the required HTTP `refs` field. Complete `compute.Launch` inputs contain request/process data, but the HTTP schema remains authoritative: emit empty arguments/environment as `[]`/`{}`, and reject unknown fields.
+For a Go server, define HTTP DTOs that honor the schema. Complete `compute.Launch` inputs contain request/process data, but the HTTP schema remains authoritative: emit empty arguments/environment as `[]`/`{}`, and reject unknown fields.

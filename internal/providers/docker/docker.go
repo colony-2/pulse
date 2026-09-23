@@ -324,7 +324,6 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 				r.Reason = "previous launch was created but start is unconfirmed"
 			} else {
 				r.Status = compute.Accepted
-				r.Refs = []string{c.ID}
 			}
 			out = append(out, r)
 			continue
@@ -403,7 +402,6 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 			out = append(out, r)
 			continue
 		}
-		r.Refs = []string{created.ID}
 		delete(p.uncertain, l.LaunchID)
 		if created.ID == "" {
 			p.uncertain[l.LaunchID] = cost

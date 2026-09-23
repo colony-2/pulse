@@ -145,11 +145,6 @@ func (c *Client) Submit(ctx context.Context, ls []compute.Launch) ([]compute.Sub
 			return nil, fmt.Errorf("unexpected launch ID in provider response")
 		}
 		valid := r.Status.Valid()
-		if r.Status == compute.Accepted {
-			var keys map[string]json.RawMessage
-			_ = json.Unmarshal(raw, &keys)
-			valid = valid && len(keys["refs"]) > 0 && string(keys["refs"]) != "null"
-		}
 		if r.Status != compute.Accepted && r.Reason == "" {
 			valid = false
 		}

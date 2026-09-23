@@ -147,7 +147,7 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 				errs = append(errs, e)
 			}
 			for _, r := range results {
-				c.Log.Info("launch result", "instance", r.Key.Instance, "tenant", r.Key.Tenant, "job", r.Key.Job, "launch_id", r.Submission.LaunchID, "service", r.Service, "status", r.Submission.Status, "reason", r.Submission.Reason, "refs", r.Submission.Refs)
+				c.Log.Info("launch result", "instance", r.Key.Instance, "tenant", r.Key.Tenant, "job", r.Key.Job, "launch_id", r.Submission.LaunchID, "service", r.Service, "status", r.Submission.Status, "reason", r.Submission.Reason)
 			}
 		}
 	}

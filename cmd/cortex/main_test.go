@@ -67,7 +67,7 @@ func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
 					if item.CPUMillis != 1000 || item.Image == "" || item.Metadata["cortex_job_id"] == "" || item.Process.Env["C2J_EXECUTION_CPU"] != "1000m" || item.Process.Env["CORTEX_JOB_ID"] == "" || item.Process.Env["CORTEX_CONFIG"] != "" {
 						t.Error(item)
 					}
-					results = append(results, map[string]any{"launch_id": item.LaunchID, "status": "accepted", "refs": []string{}})
+					results = append(results, map[string]any{"launch_id": item.LaunchID, "status": "accepted"})
 				}
 				mu.Lock()
 				submitted += len(in.Items)

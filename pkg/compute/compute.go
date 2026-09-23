@@ -167,10 +167,9 @@ func ValidateLaunches(ls []Launch) error {
 }
 
 type Submission struct {
-	LaunchID string   `json:"launch_id"`
-	Status   Status   `json:"status"`
-	Refs     []string `json:"refs,omitempty"`
-	Reason   string   `json:"reason,omitempty"`
+	LaunchID string `json:"launch_id"`
+	Status   Status `json:"status"`
+	Reason   string `json:"reason,omitempty"`
 }
 type Provider interface {
 	Submit(context.Context, []Launch) ([]Submission, error)

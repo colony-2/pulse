@@ -230,7 +230,7 @@ For each polling pass:
 3. Collect a fair, bounded batch of jobs sharing the same launch-service configuration. Atomically reserve each eligible job in memory and record its attempt time, excluding keys already in flight or within cooldown. Give each job its own launch ID.
 4. Apply defaults to omitted demand fields. Visit priority tiers from lowest number to highest, rotating the first service within each tier for each batch. Build each targeted process and environment from the requested resources, then call the selected service's `Submit` once with the complete items.
 5. Remove accepted, rejected, and uncertain items from further consideration. Pass only explicitly declined, fallback-eligible items to the next service in the same tier, preserving the same complete request and process environment. Try each service at most once per batch. Move remaining items to the next tier only after exhausting the current tier.
-6. Clear each job's in-flight marker after its batch attempt finishes. Keep its cooldown whether accepted, declined by every service, failed, or uncertain. Log per-item results and any native references.
+6. Clear each job's in-flight marker after its batch attempt finishes. Keep its cooldown whether accepted, declined by every service, failed, or uncertain. Log per-item decisions with their launch IDs; native references are available through active instance listing.
 7. Expire entries after `X` when no longer in flight. Bound provider calls and the overall batch attempt so jobs cannot stay stuck indefinitely.
 
 One attempt includes traversal of all eligible priority tiers. Falling back within that attempt does not wait for another cooldown or reset its start time. Each later attempt starts again in the highest-priority tier, using its next round-robin starting service. The cursors are held only in memory; resetting them on restart is harmless. Cortex keeps no persisted capacity counts or provider history.
@@ -272,7 +272,6 @@ type Process struct {
 type Submission struct {
     LaunchID      string
     Status        Status // accepted, no_capacity, unsupported, unavailable, rejected, unknown
-    Refs          []string
     Reason        string
 }
 ```

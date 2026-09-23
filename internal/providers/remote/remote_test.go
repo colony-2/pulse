@@ -42,7 +42,7 @@ func TestWireAndPartialAcceptance(t *testing.T) {
 			t.Errorf("wire request changed: %+v", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"results":[{"launch_id":"a","status":"accepted","refs":[]},{"launch_id":"b","status":"no_capacity","reason":"full"}]}`))
+		w.Write([]byte(`{"results":[{"launch_id":"a","status":"accepted"},{"launch_id":"b","status":"no_capacity","reason":"full"}]}`))
 	}))
 	defer server.Close()
 	c, e := New(server.URL, nil, func() (string, error) { return "secret", nil }, true)
@@ -62,7 +62,9 @@ func TestFailureClassification(t *testing.T) {
 		want compute.Status
 	}{
 		{503, "", compute.Unknown}, {429, "", compute.Unknown}, {422, "", compute.Rejected},
-		{200, `{"results":[{"launch_id":"a","status":"accepted"}]}`, compute.Unknown},
+		{200, `{"results":[{"launch_id":"a","status":"accepted"}]}`, compute.Accepted},
+		{200, `{"results":[{"launch_id":"a","status":"no_capacity"}]}`, compute.Unknown},
+		{200, `{"results":[{"launch_id":"a","status":"unknown"}]}`, compute.Unknown},
 		{200, `{"results":[{"launch_id":"a","status":"prepared","reason":"legacy"}]}`, compute.Unknown},
 		{200, `{`, compute.Unknown},
 	} {

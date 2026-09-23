@@ -125,7 +125,6 @@ paths:
                 results:
                 - launch_id: launch-001
                   status: accepted
-                  refs: []
                 - launch_id: launch-002
                   status: no_capacity
                   reason: No compatible runner slot available.
@@ -319,16 +318,9 @@ components:
           type: string
           enum:
           - accepted
-        refs:
-          type: array
-          items:
-            type: string
-            minLength: 1
-          description: Known native resource/operation references; may be empty before assignment.
       required:
       - launch_id
       - status
-      - refs
       additionalProperties: true
     UnknownResult:
       type: object
@@ -342,11 +334,6 @@ components:
         reason:
           type: string
           minLength: 1
-        refs:
-          type: array
-          items:
-            type: string
-            minLength: 1
       required:
       - launch_id
       - status
