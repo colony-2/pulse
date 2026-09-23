@@ -1,4 +1,4 @@
-// Package compute defines Cortex's provider-neutral, batch-only launch contract.
+// Package compute defines Pulse's provider-neutral, batch-only launch contract.
 package compute
 
 import (

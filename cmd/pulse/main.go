@@ -5,12 +5,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/colony-2/cortex/internal/c2j"
-	"github.com/colony-2/cortex/internal/config"
-	"github.com/colony-2/cortex/internal/controller"
-	"github.com/colony-2/cortex/internal/httpapi"
-	"github.com/colony-2/cortex/internal/providers"
-	"github.com/colony-2/cortex/internal/scheduler"
+	"github.com/colony-2/pulse/internal/c2j"
+	"github.com/colony-2/pulse/internal/config"
+	"github.com/colony-2/pulse/internal/controller"
+	"github.com/colony-2/pulse/internal/httpapi"
+	"github.com/colony-2/pulse/internal/providers"
+	"github.com/colony-2/pulse/internal/scheduler"
 	"log/slog"
 	"net"
 	"net/http"
@@ -29,13 +29,13 @@ func main() {
 	}
 }
 func run() error {
-	path := flag.String("config", "", "configuration file (overrides CORTEX_CONFIG; default: CORTEX_CONFIG or ./cortex.yaml)")
+	path := flag.String("config", "", "configuration file (overrides PULSE_CONFIG; default: PULSE_CONFIG or ./pulse.yaml)")
 	once := flag.Bool("once", false, "run one discovery/submission pass")
 	check := flag.Bool("check", false, "validate configuration, listing backend and providers without submitting")
 	ver := flag.Bool("version", false, "print version")
 	flag.Parse()
 	if *ver {
-		fmt.Println("cortex " + version)
+		fmt.Println("pulse " + version)
 		return nil
 	}
 	if flag.NArg() != 0 {

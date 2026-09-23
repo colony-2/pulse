@@ -63,7 +63,7 @@ type ListResponse struct {
 
 func Correlation(metadata map[string]string) map[string]string {
 	out := map[string]string{}
-	for _, key := range []string{"cortex_metadata_version", "cortex_managed_by", "cortex_jobdb_instance_id", "cortex_tenant_id", "cortex_job_id", "cortex_launch_id"} {
+	for _, key := range []string{"pulse_metadata_version", "pulse_managed_by", "pulse_jobdb_instance_id", "pulse_tenant_id", "pulse_job_id", "pulse_launch_id"} {
 		if value, ok := metadata[key]; ok {
 			out[key] = value
 		}

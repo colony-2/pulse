@@ -440,5 +440,5 @@ inspection and targeted `run` or an input-handling service for human input.
   this release does not translate old routes or migrate stored jobs.
 
 For embedding these inspection features in another application, see the
-[recipe-job API guide](GUIDE-Cortex-RecipeJob-API.md). For the exact upstream
+[recipe-job API guide](GUIDE-Pulse-RecipeJob-API.md). For the exact upstream
 route contract, see [the typed-route migration guide](MIGRATION-TYPED-ROUTES.md).

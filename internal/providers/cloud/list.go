@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/ecs/types"
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/pkg/compute"
 )
 
 func (p *Provider) List(ctx context.Context, q compute.ListRequest) (compute.ListResponse, error) {
@@ -44,7 +44,7 @@ func envMetadata(containers []executionContainer) map[string]string {
 	metadata := map[string]string{}
 	for _, container := range containers {
 		for _, env := range container.Env {
-			if strings.HasPrefix(env.Name, "CORTEX_") {
+			if strings.HasPrefix(env.Name, "PULSE_") {
 				metadata[strings.ToLower(env.Name)] = env.Value
 			}
 		}
@@ -85,17 +85,17 @@ func (p *Provider) listGoogle(ctx context.Context, token string, q compute.ListR
 			continue
 		}
 		metadata := envMetadata(row.Template.Containers)
-		if annotation := row.Annotations["cortex.colony2.dev/metadata"]; annotation != "" {
+		if annotation := row.Annotations["pulse.colony2.dev/metadata"]; annotation != "" {
 			var values map[string]string
 			if err = json.Unmarshal([]byte(annotation), &values); err != nil {
 				return compute.ListResponse{}, fmt.Errorf("invalid execution correlation metadata")
 			}
 			metadata = compute.Correlation(values)
 		}
-		if metadata["cortex_managed_by"] != "cortex" || metadata["cortex_launch_id"] == "" {
+		if metadata["pulse_managed_by"] != "pulse" || metadata["pulse_launch_id"] == "" {
 			continue
 		}
-		id := metadata["cortex_launch_id"]
+		id := metadata["pulse_launch_id"]
 		if q.LaunchID != "" && id != q.LaunchID {
 			continue
 		}
@@ -149,8 +149,8 @@ func (p *Provider) listECS(ctx context.Context, q compute.ListRequest) (compute.
 			metadata[aws.ToString(tag.Key)] = aws.ToString(tag.Value)
 		}
 		metadata = compute.Correlation(metadata)
-		id := metadata["cortex_launch_id"]
-		if metadata["cortex_managed_by"] != "cortex" || id == "" || (q.LaunchID != "" && id != q.LaunchID) {
+		id := metadata["pulse_launch_id"]
+		if metadata["pulse_managed_by"] != "pulse" || id == "" || (q.LaunchID != "" && id != q.LaunchID) {
 			continue
 		}
 		ref := aws.ToString(task.TaskArn)
@@ -216,8 +216,8 @@ func (p *Provider) listAzure(ctx context.Context, token string, q compute.ListRe
 		for cursor.JobOffset < len(parents) {
 			job := parents[cursor.JobOffset]
 			metadata := compute.Correlation(job.Tags)
-			id := metadata["cortex_launch_id"]
-			if metadata["cortex_managed_by"] != "cortex" || id == "" || (q.LaunchID != "" && id != q.LaunchID) {
+			id := metadata["pulse_launch_id"]
+			if metadata["pulse_managed_by"] != "pulse" || id == "" || (q.LaunchID != "" && id != q.LaunchID) {
 				cursor.JobOffset++
 				cursor.ExecutionPage = ""
 				cursor.ExecutionOffset = 0

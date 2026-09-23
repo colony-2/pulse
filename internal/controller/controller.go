@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/colony-2/cortex/internal/c2j"
-	"github.com/colony-2/cortex/internal/config"
-	"github.com/colony-2/cortex/internal/scheduler"
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/internal/c2j"
+	"github.com/colony-2/pulse/internal/config"
+	"github.com/colony-2/pulse/internal/scheduler"
+	"github.com/colony-2/pulse/pkg/compute"
 	"log/slog"
 	"sort"
 	"sync"
@@ -107,7 +107,7 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 					continue
 				}
 				id := compute.NewID()
-				metadata := map[string]string{"cortex_metadata_version": "1", "cortex_managed_by": "cortex", "cortex_jobdb_instance_id": t.Instance, "cortex_tenant_id": j.Tenant, "cortex_job_id": j.ID, "cortex_launch_id": id}
+				metadata := map[string]string{"pulse_metadata_version": "1", "pulse_managed_by": "pulse", "pulse_jobdb_instance_id": t.Instance, "pulse_tenant_id": j.Tenant, "pulse_job_id": j.ID, "pulse_launch_id": id}
 				req := compute.Request{LaunchID: id, Allocation: a, TimeoutSeconds: int64(c.Config.ExecutionTimeout / time.Second), Metadata: metadata}
 				if c.Config.StartWindow > 0 {
 					deadline := time.Now().Add(c.Config.StartWindow)

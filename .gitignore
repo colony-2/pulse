@@ -1,8 +1,8 @@
 .shai/
 /bin/
 /coverage.out
-/cortex.yaml
+/pulse.yaml
 *.test
 /dist/
-/npm/cortex/vendor/
+/npm/pulse/vendor/
 __pycache__/

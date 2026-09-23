@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/pkg/compute"
 )
 
 type fake struct {

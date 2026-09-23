@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/pkg/compute"
 )
 
 // List reads Docker directly; it does not reconcile or alter capacity charges.
@@ -14,9 +14,9 @@ func (p *Provider) List(ctx context.Context, q compute.ListRequest) (compute.Lis
 	if _, err := q.Normalize(); err != nil {
 		return compute.ListResponse{}, err
 	}
-	labels := []string{"cortex_managed_by=cortex"}
+	labels := []string{"pulse_managed_by=pulse"}
 	if q.LaunchID != "" {
-		labels = append(labels, "cortex_launch_id="+q.LaunchID)
+		labels = append(labels, "pulse_launch_id="+q.LaunchID)
 	}
 	filter, _ := json.Marshal(map[string][]string{"label": labels})
 	values := url.Values{"all": {"1"}, "filters": {string(filter)}}
@@ -47,10 +47,10 @@ func (p *Provider) List(ctx context.Context, q compute.ListRequest) (compute.Lis
 			continue
 		}
 		metadata := compute.Correlation(row.Labels)
-		if metadata["cortex_managed_by"] != "cortex" || metadata["cortex_launch_id"] == "" {
+		if metadata["pulse_managed_by"] != "pulse" || metadata["pulse_launch_id"] == "" {
 			continue
 		}
-		item := compute.Instance{ID: row.ID, LaunchID: metadata["cortex_launch_id"], State: state, Metadata: metadata, Refs: []string{row.ID}}
+		item := compute.Instance{ID: row.ID, LaunchID: metadata["pulse_launch_id"], State: state, Metadata: metadata, Refs: []string{row.ID}}
 		if row.Created > 0 {
 			t := time.Unix(row.Created, 0).UTC()
 			item.CreatedAt = &t

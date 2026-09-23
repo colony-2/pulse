@@ -3,7 +3,7 @@ package c2j
 import (
 	"encoding/json"
 	"github.com/colony-2/c2j/pkg/execution"
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/pkg/compute"
 	"os"
 	"strings"
 	"testing"
@@ -36,8 +36,8 @@ func TestDemandAndRoute(t *testing.T) {
 	}
 }
 func TestAllocationProcess(t *testing.T) {
-	p, e := Process("https://db/t", "job", "launch", compute.Allocation{CPUMillis: 1500, MemoryBytes: 1025, ScratchBytes: 2048, Image: "runner:1", Platform: "linux/amd64"}, nil, map[string]string{"cortex_job_id": "job"})
-	if e != nil || p.Env["C2J_EXECUTION_CPU"] != "1500m" || p.Env["CORTEX_JOB_ID"] != "job" {
+	p, e := Process("https://db/t", "job", "launch", compute.Allocation{CPUMillis: 1500, MemoryBytes: 1025, ScratchBytes: 2048, Image: "runner:1", Platform: "linux/amd64"}, nil, map[string]string{"pulse_job_id": "job"})
+	if e != nil || p.Env["C2J_EXECUTION_CPU"] != "1500m" || p.Env["PULSE_JOB_ID"] != "job" {
 		t.Fatal(p, e)
 	}
 	_, e = Process("", "", "", compute.Allocation{}, map[string]string{"C2J_EXECUTION_MEMORY": "1Gi"}, nil)

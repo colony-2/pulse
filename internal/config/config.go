@@ -3,9 +3,9 @@ package config
 import (
 	"bytes"
 	"fmt"
-	"github.com/colony-2/cortex/internal/c2j"
-	"github.com/colony-2/cortex/internal/quantity"
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/internal/c2j"
+	"github.com/colony-2/pulse/internal/quantity"
+	"github.com/colony-2/pulse/pkg/compute"
 	"github.com/distribution/reference"
 	"gopkg.in/yaml.v3"
 	"io"
@@ -105,17 +105,17 @@ func LoadSource(path string) (*Config, error) {
 	if path != "" {
 		return Load(path)
 	}
-	if value, ok := os.LookupEnv("CORTEX_CONFIG"); ok {
+	if value, ok := os.LookupEnv("PULSE_CONFIG"); ok {
 		if strings.TrimSpace(value) == "" {
-			return nil, fmt.Errorf("CORTEX_CONFIG must contain a YAML configuration")
+			return nil, fmt.Errorf("PULSE_CONFIG must contain a YAML configuration")
 		}
 		cfg, err := Parse([]byte(value))
 		if err != nil {
-			return nil, fmt.Errorf("CORTEX_CONFIG: %w", err)
+			return nil, fmt.Errorf("PULSE_CONFIG: %w", err)
 		}
 		return cfg, nil
 	}
-	return Load("cortex.yaml")
+	return Load("pulse.yaml")
 }
 
 func Parse(b []byte) (*Config, error) {

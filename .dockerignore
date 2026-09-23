@@ -1,7 +1,7 @@
 .git
 .shai
 bin
-cortex.yaml
+pulse.yaml
 coverage.out
 dist
 node_modules

@@ -3,7 +3,7 @@ package quantity
 
 import (
 	"fmt"
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/pkg/compute"
 	"math/big"
 	"regexp"
 	"strings"

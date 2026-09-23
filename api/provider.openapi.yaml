@@ -1,6 +1,6 @@
 openapi: 3.1.1
 info:
-  title: Cortex Remote Compute Provider Protocol
+  title: Pulse Remote Compute Provider Protocol
   version: 1.0.0
   description: Batch-only compute provider contract. Each submission contains resources, process, deadlines, and
     metadata. Providers preserve supplied environment values, including when rounding resource capacity upward.
@@ -23,7 +23,7 @@ paths:
         runtime, not guaranteed startup or completion. Providers need no durable submission journal, replay support,
         stored decline decisions, fixed terminal retention, or recovery loop for lost launches. Native idempotency
         safeguards are optional. Definite declines authorize fallback; missing or unknown outcomes do not.
-        Outstanding work is rediscovered through c2j; a later Cortex attempt after cooldown has a new launch ID.
+        Outstanding work is rediscovered through c2j; a later Pulse attempt after cooldown has a new launch ID.
       requestBody:
         required: true
         content:
@@ -41,12 +41,12 @@ paths:
                 timeout_seconds: 3600
                 start_before: '2026-10-01T12:01:00Z'
                 metadata:
-                  cortex_metadata_version: '1'
-                  cortex_managed_by: cortex
-                  cortex_jobdb_instance_id: production
-                  cortex_tenant_id: acme
-                  cortex_job_id: job-123
-                  cortex_launch_id: launch-001
+                  pulse_metadata_version: '1'
+                  pulse_managed_by: pulse
+                  pulse_jobdb_instance_id: production
+                  pulse_tenant_id: acme
+                  pulse_job_id: job-123
+                  pulse_launch_id: launch-001
                 process:
                   command:
                   - c2j
@@ -68,12 +68,12 @@ paths:
                     C2J_EXECUTION_EPHEMERAL_STORAGE: 1048576Ki
                     C2J_EXECUTION_PLATFORM: linux/amd64
                     C2J_EXECUTION_IMAGE: registry.example/runner:1.2
-                    CORTEX_METADATA_VERSION: '1'
-                    CORTEX_MANAGED_BY: cortex
-                    CORTEX_JOBDB_INSTANCE_ID: production
-                    CORTEX_TENANT_ID: acme
-                    CORTEX_JOB_ID: job-123
-                    CORTEX_LAUNCH_ID: launch-001
+                    PULSE_METADATA_VERSION: '1'
+                    PULSE_MANAGED_BY: pulse
+                    PULSE_JOBDB_INSTANCE_ID: production
+                    PULSE_TENANT_ID: acme
+                    PULSE_JOB_ID: job-123
+                    PULSE_LAUNCH_ID: launch-001
               - launch_id: launch-002
                 image: registry.example/runner:1.2
                 platform: linux/amd64
@@ -83,12 +83,12 @@ paths:
                 timeout_seconds: 3600
                 start_before: '2026-10-01T12:01:00Z'
                 metadata:
-                  cortex_metadata_version: '1'
-                  cortex_managed_by: cortex
-                  cortex_jobdb_instance_id: production
-                  cortex_tenant_id: acme
-                  cortex_job_id: job-124
-                  cortex_launch_id: launch-002
+                  pulse_metadata_version: '1'
+                  pulse_managed_by: pulse
+                  pulse_jobdb_instance_id: production
+                  pulse_tenant_id: acme
+                  pulse_job_id: job-124
+                  pulse_launch_id: launch-002
                 process:
                   command:
                   - c2j
@@ -110,12 +110,12 @@ paths:
                     C2J_EXECUTION_EPHEMERAL_STORAGE: 1048576Ki
                     C2J_EXECUTION_PLATFORM: linux/amd64
                     C2J_EXECUTION_IMAGE: registry.example/runner:1.2
-                    CORTEX_METADATA_VERSION: '1'
-                    CORTEX_MANAGED_BY: cortex
-                    CORTEX_JOBDB_INSTANCE_ID: production
-                    CORTEX_TENANT_ID: acme
-                    CORTEX_JOB_ID: job-124
-                    CORTEX_LAUNCH_ID: launch-002
+                    PULSE_METADATA_VERSION: '1'
+                    PULSE_MANAGED_BY: pulse
+                    PULSE_JOBDB_INSTANCE_ID: production
+                    PULSE_TENANT_ID: acme
+                    PULSE_JOB_ID: job-124
+                    PULSE_LAUNCH_ID: launch-002
       responses:
         '200':
           description: Complete per-item results. Mixed outcomes are normal.
@@ -209,12 +209,12 @@ paths:
                   launch_id: launch-001
                   state: running
                   metadata:
-                    cortex_metadata_version: '1'
-                    cortex_managed_by: cortex
-                    cortex_jobdb_instance_id: production
-                    cortex_tenant_id: acme
-                    cortex_job_id: job-123
-                    cortex_launch_id: launch-001
+                    pulse_metadata_version: '1'
+                    pulse_managed_by: pulse
+                    pulse_jobdb_instance_id: production
+                    pulse_tenant_id: acme
+                    pulse_job_id: job-123
+                    pulse_launch_id: launch-001
                   refs:
                   - runner-pool/runner-17/containers/container-456
                   created_at: '2026-10-01T12:00:00Z'

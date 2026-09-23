@@ -99,7 +99,7 @@ func TestHTTPListenConfiguration(t *testing.T) {
 func TestConfigurationSourceSelection(t *testing.T) {
 	t.Chdir(t.TempDir())
 	file := []byte(valid)
-	if err := os.WriteFile("cortex.yaml", file, 0600); err != nil {
+	if err := os.WriteFile("pulse.yaml", file, 0600); err != nil {
 		t.Fatal(err)
 	}
 	inline := strings.Replace(valid, "alpine:3", "alpine:env", 1)
@@ -109,22 +109,22 @@ func TestConfigurationSourceSelection(t *testing.T) {
 	}{
 		{name: "default file", wantImage: "alpine:3"},
 		{name: "inline over default", set: true, value: inline, wantImage: "alpine:env"},
-		{name: "explicit file over inline", path: "cortex.yaml", set: true, value: inline, wantImage: "alpine:3"},
-		{name: "explicit file over invalid inline", path: "cortex.yaml", set: true, value: "[invalid", wantImage: "alpine:3"},
+		{name: "explicit file over inline", path: "pulse.yaml", set: true, value: inline, wantImage: "alpine:3"},
+		{name: "explicit file over invalid inline", path: "pulse.yaml", set: true, value: "[invalid", wantImage: "alpine:3"},
 		{name: "missing explicit file", path: "missing.yaml", set: true, value: inline, wantError: "missing.yaml"},
-		{name: "empty inline", set: true, wantError: "CORTEX_CONFIG"},
-		{name: "blank inline", set: true, value: " \n\t", wantError: "CORTEX_CONFIG"},
-		{name: "malformed inline", set: true, value: "[invalid", wantError: "CORTEX_CONFIG"},
-		{name: "invalid inline", set: true, value: "{}", wantError: "CORTEX_CONFIG"},
-		{name: "unknown inline field", set: true, value: inline + "unknown_option: true\n", wantError: "CORTEX_CONFIG"},
-		{name: "multiple documents", set: true, value: inline + "---\n{}", wantError: "CORTEX_CONFIG"},
-		{name: "inline is contents not path", set: true, value: "cortex.yaml", wantError: "CORTEX_CONFIG"},
-		{name: "inline is not merged with file", set: true, value: "poll_interval: 1s", wantError: "CORTEX_CONFIG"},
+		{name: "empty inline", set: true, wantError: "PULSE_CONFIG"},
+		{name: "blank inline", set: true, value: " \n\t", wantError: "PULSE_CONFIG"},
+		{name: "malformed inline", set: true, value: "[invalid", wantError: "PULSE_CONFIG"},
+		{name: "invalid inline", set: true, value: "{}", wantError: "PULSE_CONFIG"},
+		{name: "unknown inline field", set: true, value: inline + "unknown_option: true\n", wantError: "PULSE_CONFIG"},
+		{name: "multiple documents", set: true, value: inline + "---\n{}", wantError: "PULSE_CONFIG"},
+		{name: "inline is contents not path", set: true, value: "pulse.yaml", wantError: "PULSE_CONFIG"},
+		{name: "inline is not merged with file", set: true, value: "poll_interval: 1s", wantError: "PULSE_CONFIG"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("CORTEX_CONFIG", tt.value)
+			t.Setenv("PULSE_CONFIG", tt.value)
 			if !tt.set {
-				if err := os.Unsetenv("CORTEX_CONFIG"); err != nil {
+				if err := os.Unsetenv("PULSE_CONFIG"); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -144,7 +144,7 @@ func TestConfigurationSourceSelection(t *testing.T) {
 		})
 	}
 	// The inline document is literal; no shell expansion is performed.
-	t.Setenv("CORTEX_CONFIG", strings.Replace(inline, "defaults:\n", "defaults:\n  env: {LITERAL: '${SHOULD_NOT_EXPAND}'}\n", 1))
+	t.Setenv("PULSE_CONFIG", strings.Replace(inline, "defaults:\n", "defaults:\n  env: {LITERAL: '${SHOULD_NOT_EXPAND}'}\n", 1))
 	t.Setenv("SHOULD_NOT_EXPAND", "expanded")
 	cfg, err := LoadSource("")
 	if err != nil {

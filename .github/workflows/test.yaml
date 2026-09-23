@@ -53,6 +53,6 @@ jobs:
           set -euo pipefail
           for arch in amd64 arm64; do
             docker buildx build --platform "linux/$arch" --load \
-              --build-arg VERSION=0.0.0 --tag "cortex:test-$arch" .
-            scripts/smoke-container.sh "cortex:test-$arch" 0.0.0 "linux/$arch"
+              --build-arg VERSION=0.0.0 --tag "pulse:test-$arch" .
+            scripts/smoke-container.sh "pulse:test-$arch" 0.0.0 "linux/$arch"
           done

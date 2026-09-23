@@ -1,4 +1,4 @@
-# Works with the standard Cortex image: cloud SDKs are embedded.
+# Works with the standard Pulse image: cloud SDKs are embedded.
 # In cloud environments, attach an identity/role to the controller.
 # Elsewhere, supply Google ADC, AWS, or Azure credentials through environment
 # variables/read-only file mounts. See docs/cloud-authentication.md.
@@ -29,7 +29,7 @@ providers:
     subnets: [subnet-example]
     security_groups: [sg-example]
     public_ip: false
-    supervisor_path: /usr/local/bin/cortex-exec
+    supervisor_path: /usr/local/bin/pulse-exec
     image_storage_bounds:
       registry.example/runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: 2Gi
   azure:

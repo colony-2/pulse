@@ -13,9 +13,9 @@ import (
 
 	"github.com/colony-2/c2j/pkg/execution"
 	"github.com/colony-2/c2j/pkg/joblist"
-	"github.com/colony-2/cortex/pkg/compute"
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
+	"github.com/colony-2/pulse/pkg/compute"
 )
 
 type readOnly struct {
@@ -56,7 +56,7 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 			ClientPayload: payload, Metadata: json.RawMessage(`{"repo":"https://github.com/acme/app.git"}`),
 		}, {JobKey: jobdb.JobKey{TenantId: req.TenantIds[0], JobId: "bad"}, Status: jobdb.JobStatusReady, Metadata: json.RawMessage(`{"execution":{"schema_version":99}}`)}}}, nil
 	}})
-	t.Setenv("CORTEX_TEST_DB_TOKEN", "db-token")
+	t.Setenv("PULSE_TEST_DB_TOKEN", "db-token")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer db-token" {
 			t.Error("missing JobDB authorization")
@@ -64,7 +64,7 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 		handler.ServeHTTP(w, r)
 	}))
 	defer server.Close()
-	c, err := NewEmbedded([]Connection{{server.URL + "/one", "CORTEX_TEST_DB_TOKEN"}, {server.URL + "/two", "CORTEX_TEST_DB_TOKEN"}})
+	c, err := NewEmbedded([]Connection{{server.URL + "/one", "PULSE_TEST_DB_TOKEN"}, {server.URL + "/two", "PULSE_TEST_DB_TOKEN"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,12 +118,12 @@ func TestEmbeddedCancellationAndRedirect(t *testing.T) {
 	}
 	close(release)
 	server.Close()
-	t.Setenv("CORTEX_TEST_DB_TOKEN", "secret")
+	t.Setenv("PULSE_TEST_DB_TOKEN", "secret")
 	destination := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("followed redirect") }))
 	defer destination.Close()
 	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, destination.URL, 307) }))
 	defer redirect.Close()
-	c, err = NewEmbedded([]Connection{{redirect.URL + "/tenant", "CORTEX_TEST_DB_TOKEN"}})
+	c, err = NewEmbedded([]Connection{{redirect.URL + "/tenant", "PULSE_TEST_DB_TOKEN"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,8 +144,8 @@ func TestEmbeddedInputValidation(t *testing.T) {
 	if err := ValidateRepository("tenant", "file:///tmp/app"); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CORTEX_TEST_EMPTY_TOKEN", "")
-	if _, err := NewEmbedded([]Connection{{"https://example.com/t", "CORTEX_TEST_EMPTY_TOKEN"}}); err == nil {
+	t.Setenv("PULSE_TEST_EMPTY_TOKEN", "")
+	if _, err := NewEmbedded([]Connection{{"https://example.com/t", "PULSE_TEST_EMPTY_TOKEN"}}); err == nil {
 		t.Fatal("missing token ignored")
 	}
 	if _, err := NewEmbedded([]Connection{{URI: "https://example.com/t"}, {"https://example.com/t", "OTHER"}}); err == nil {

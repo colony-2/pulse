@@ -1,6 +1,6 @@
 # Feature request: a supported public Go API for job listing
 
-Status: fulfilled by c2j’s public `pkg/joblist` API, reviewed in [the response](C2J_FEATURE_REQUESTS_RESPONSE.md) and integrated as Cortex’s default listing backend. The original request is retained below for context. No further c2j enhancement is needed for this integration.
+Status: fulfilled by c2j’s public `pkg/joblist` API, reviewed in [the response](C2J_FEATURE_REQUESTS_RESPONSE.md) and integrated as Pulse’s default listing backend. The original request is retained below for context. No further c2j enhancement is needed for this integration.
 
 ## Summary
 

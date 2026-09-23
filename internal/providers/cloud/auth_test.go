@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/pkg/compute"
 )
 
 func isolateCredentials(t *testing.T) {
@@ -55,7 +55,7 @@ func TestGoogleServiceAccountRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
-	data, _ := json.Marshal(map[string]string{"type": "service_account", "client_email": "cortex@example.iam.gserviceaccount.com", "private_key": string(encoded), "private_key_id": "test-key", "token_uri": s.URL, "quota_project_id": "billing-project"})
+	data, _ := json.Marshal(map[string]string{"type": "service_account", "client_email": "pulse@example.iam.gserviceaccount.com", "private_key": string(encoded), "private_key_id": "test-key", "token_uri": s.URL, "quota_project_id": "billing-project"})
 	file := filepath.Join(t.TempDir(), "credentials.json")
 	if err = os.WriteFile(file, data, 0600); err != nil {
 		t.Fatal(err)
@@ -199,12 +199,12 @@ func TestExplicitCredentialFailureDoesNotFallBack(t *testing.T) {
 		t.Fatal("invalid environment silently ignored")
 	}
 	for _, kind := range []string{"cloudrun", "azurejobs"} {
-		p := &Provider{cfg: Config{Kind: kind, TokenEnv: "CORTEX_TEST_TOKEN"}, accessToken: func(context.Context) (string, error) { t.Fatal("override ignored"); return "", nil }}
-		t.Setenv("CORTEX_TEST_TOKEN", "")
+		p := &Provider{cfg: Config{Kind: kind, TokenEnv: "PULSE_TEST_TOKEN"}, accessToken: func(context.Context) (string, error) { t.Fatal("override ignored"); return "", nil }}
+		t.Setenv("PULSE_TEST_TOKEN", "")
 		if _, err := p.token(context.Background()); err == nil {
 			t.Fatal("empty explicit token accepted")
 		}
-		t.Setenv("CORTEX_TEST_TOKEN", "explicit")
+		t.Setenv("PULSE_TEST_TOKEN", "explicit")
 		if token, err := p.token(context.Background()); err != nil || token != "explicit" {
 			t.Fatal(token, err)
 		}

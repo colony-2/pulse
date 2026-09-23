@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/pkg/compute"
 )
 
 func TestListActiveContainersWithoutChangingAccounting(t *testing.T) {
@@ -18,7 +18,7 @@ func TestListActiveContainersWithoutChangingAccounting(t *testing.T) {
 		}
 		rows := []any{}
 		for _, state := range []string{"created", "running", "paused", "exited", "dead"} {
-			rows = append(rows, map[string]any{"Id": state, "State": state, "Labels": map[string]string{"cortex_managed_by": "cortex", "cortex_launch_id": state, "secret": "hidden"}})
+			rows = append(rows, map[string]any{"Id": state, "State": state, "Labels": map[string]string{"pulse_managed_by": "pulse", "pulse_launch_id": state, "secret": "hidden"}})
 		}
 		json.NewEncoder(w).Encode(rows)
 	}))

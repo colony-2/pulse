@@ -12,7 +12,7 @@ on:
 
 # Serialize releases to avoid concurrent publication and image promotion.
 concurrency:
-  group: cortex-release
+  group: pulse-release
   cancel-in-progress: false
 
 permissions:
@@ -114,7 +114,7 @@ jobs:
         run: |
           set -euo pipefail
           go install github.com/anchore/quill/cmd/quill@v0.7.1
-          for binary in dist/build/darwin-*/cortex; do
+          for binary in dist/build/darwin-*/pulse; do
             "$(go env GOPATH)/bin/quill" sign-and-notarize "$binary"
           done
       - name: Pack executable archives and npm artifact
@@ -138,7 +138,7 @@ jobs:
               --build-arg "VERSION=$VERSION" --build-arg "REVISION=$(git rev-parse HEAD)" \
               --tag "$image:$TAG-$arch" .
             scripts/smoke-container.sh "$image:$TAG-$arch" "$VERSION" "linux/$arch"
-            docker save "$image:$TAG-$arch" | gzip > "dist/release/cortex_${VERSION}_container_Linux_${arch}.tar.gz"
+            docker save "$image:$TAG-$arch" | gzip > "dist/release/pulse_${VERSION}_container_Linux_${arch}.tar.gz"
           done
       - uses: docker/login-action@v3
         with:
@@ -152,7 +152,7 @@ jobs:
           docker buildx imagetools create --tag "$IMAGE:$TAG" "$IMAGE:$TAG-amd64" "$IMAGE:$TAG-arm64"
           docker buildx imagetools inspect "$IMAGE:$TAG" > dist/release/container-image.txt
           {
-            echo "Cortex: $TAG"
+            echo "Pulse: $TAG"
             echo "c2j Go library: $C2J_VERSION"
             echo "Image: $IMAGE:$TAG"
             echo "Source: $(git rev-parse HEAD)"
@@ -186,7 +186,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.create-tag.outputs.tag }}
-          name: Cortex ${{ needs.create-tag.outputs.tag }}
+          name: Pulse ${{ needs.create-tag.outputs.tag }}
           generate_release_notes: true
           body_path: dist/release/release-notes.md
           fail_on_unmatched_files: true
@@ -221,16 +221,16 @@ jobs:
         run: |
           set -euo pipefail
           install_dir="$(mktemp -d)"
-          npm install --prefix "$install_dir" "$PWD/dist/release/colony2-cortex-$VERSION.tgz"
-          [[ "$("$install_dir/node_modules/.bin/cortex" -version)" == "cortex $VERSION" ]]
+          npm install --prefix "$install_dir" "$PWD/dist/release/colony2-pulse-$VERSION.tgz"
+          [[ "$("$install_dir/node_modules/.bin/pulse" -version)" == "pulse $VERSION" ]]
       - name: Publish exact GitHub npm artifact with token
         if: env.NPM_TOKEN != ''
         env:
           NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
-        run: npm publish "dist/release/colony2-cortex-$VERSION.tgz" --access public --provenance
+        run: npm publish "dist/release/colony2-pulse-$VERSION.tgz" --access public --provenance
       - name: Publish exact GitHub npm artifact with trusted publishing
         if: env.NPM_TOKEN == ''
-        run: npm publish "dist/release/colony2-cortex-$VERSION.tgz" --access public --provenance
+        run: npm publish "dist/release/colony2-pulse-$VERSION.tgz" --access public --provenance
 
   latest-image:
     needs: [create-tag, npm]

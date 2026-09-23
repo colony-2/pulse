@@ -11,7 +11,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/pkg/compute"
 )
 
 const maxResponse = 16 << 20

@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"flag"
-	"github.com/colony-2/cortex/internal/supervisor"
+	"github.com/colony-2/pulse/internal/supervisor"
 	"os"
 	"os/signal"
 	"syscall"

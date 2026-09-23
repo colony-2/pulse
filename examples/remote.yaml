@@ -15,7 +15,7 @@ providers:
   runners:
     type: remote
     endpoint: https://runners.example.com
-    token_env: CORTEX_PROVIDER_TOKEN
+    token_env: PULSE_PROVIDER_TOKEN
 targets:
   - instance_id: production
     jobdb: https://jobdb.example.com/acme

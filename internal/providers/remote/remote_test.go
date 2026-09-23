@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/pkg/compute"
 )
 
 func launch(id string) compute.Launch {
 	deadline := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
-	return compute.Launch{Request: compute.Request{LaunchID: id, Allocation: compute.Allocation{CPUMillis: 1500, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Image: "alpine:3", Platform: "linux/amd64"}, TimeoutSeconds: 60, StartBefore: &deadline, Metadata: map[string]string{"cortex_job_id": "job-" + id}}, Process: compute.Process{Command: []string{"c2j"}, Args: []string{"run", "--job", "job-" + id}, Env: map[string]string{"C2J_EXECUTION_CPU": "1500m", "LITERAL": "${allocation.cpu} $HOME"}}}
+	return compute.Launch{Request: compute.Request{LaunchID: id, Allocation: compute.Allocation{CPUMillis: 1500, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Image: "alpine:3", Platform: "linux/amd64"}, TimeoutSeconds: 60, StartBefore: &deadline, Metadata: map[string]string{"pulse_job_id": "job-" + id}}, Process: compute.Process{Command: []string{"c2j"}, Args: []string{"run", "--job", "job-" + id}, Env: map[string]string{"C2J_EXECUTION_CPU": "1500m", "LITERAL": "${allocation.cpu} $HOME"}}}
 }
 
 func TestWireAndPartialAcceptance(t *testing.T) {
@@ -118,7 +118,7 @@ func TestListWireAndValidation(t *testing.T) {
 			if invalid {
 				state = "succeeded"
 			}
-			json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"id": "instance", "launch_id": "launch", "state": state, "metadata": map[string]string{"cortex_launch_id": "launch"}, "refs": []string{}}}, "next_page_token": "next"})
+			json.NewEncoder(w).Encode(map[string]any{"items": []any{map[string]any{"id": "instance", "launch_id": "launch", "state": state, "metadata": map[string]string{"pulse_launch_id": "launch"}, "refs": []string{}}}, "next_page_token": "next"})
 		}))
 		c, _ := New(server.URL+"/prefix", nil, nil, true)
 		page, err := c.List(context.Background(), compute.ListRequest{LaunchID: "launch", PageToken: "opaque+/=?"})

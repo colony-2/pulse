@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/pkg/compute"
 )
 
 const Gi int64 = 1 << 30
@@ -198,8 +198,8 @@ func envList(process compute.Process, metadata map[string]string) []map[string]s
 	if _, ok := env["TMPDIR"]; !ok {
 		env["TMPDIR"] = "/scratch"
 	}
-	if _, supplied := env["CORTEX_SCRATCH_DIR"]; !supplied {
-		env["CORTEX_SCRATCH_DIR"] = "/scratch"
+	if _, supplied := env["PULSE_SCRATCH_DIR"]; !supplied {
+		env["PULSE_SCRATCH_DIR"] = "/scratch"
 	}
 	keys := []string{}
 	for k := range env {
@@ -214,7 +214,7 @@ func envList(process compute.Process, metadata map[string]string) []map[string]s
 }
 func nameFor(id string) string {
 	h := sha256.Sum256([]byte(id))
-	return "cortex-" + hex.EncodeToString(h[:12])
+	return "pulse-" + hex.EncodeToString(h[:12])
 }
 func (p *Provider) request(ctx context.Context, token, method, path string, body any) (map[string]json.RawMessage, int, error) {
 	var b []byte
@@ -349,7 +349,7 @@ func (p *Provider) submitGoogle(ctx context.Context, token string, l compute.Lau
 	}
 	// Exact metadata stays in an annotation and process env; labels are searchable.
 	metadata, _ := json.Marshal(pl.Request.Metadata)
-	body := map[string]any{"labels": map[string]string{"cortex_managed_by": "cortex", "cortex_launch_id": name}, "annotations": map[string]string{"cortex.colony2.dev/metadata": string(metadata)}, "template": map[string]any{"taskCount": 1, "parallelism": 1, "template": task}}
+	body := map[string]any{"labels": map[string]string{"pulse_managed_by": "pulse", "pulse_launch_id": name}, "annotations": map[string]string{"pulse.colony2.dev/metadata": string(metadata)}, "template": map[string]any{"taskCount": 1, "parallelism": 1, "template": task}}
 	op, code, err := p.request(ctx, token, "POST", "/v2/"+parent+"/jobs?jobId="+name, body)
 	if err != nil {
 		if code == 409 {

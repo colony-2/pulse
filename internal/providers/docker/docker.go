@@ -19,10 +19,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/pkg/compute"
 )
 
-const accountingLabel = "cortex_docker_accounting"
+const accountingLabel = "pulse_docker_accounting"
 
 type Config struct {
 	Socket, Helper, LockDir, ScratchPath, RegistryAuth string
@@ -136,7 +136,7 @@ func open(ctx context.Context, cfg Config, e *engine, locking bool) (*Provider, 
 	p := &Provider{cfg: cfg, e: e, platform: info.OSType + "/" + arch, gate: make(chan struct{}, 1), uncertain: map[string]charge{}}
 	if locking {
 		if cfg.LockDir == "" {
-			cfg.LockDir = filepath.Join(os.TempDir(), "cortex-docker-locks")
+			cfg.LockDir = filepath.Join(os.TempDir(), "pulse-docker-locks")
 		}
 		if err := os.MkdirAll(cfg.LockDir, 0700); err != nil {
 			return nil, err
@@ -182,7 +182,7 @@ func (p *Provider) cost(a compute.Allocation) charge {
 	return charge{a.CPUMillis, a.MemoryBytes + a.ScratchBytes + p.cfg.Overhead, 1}
 }
 func (p *Provider) usage(ctx context.Context) (charge, map[string]container, error) {
-	filter, _ := json.Marshal(map[string][]string{"label": {"cortex_managed_by=cortex"}})
+	filter, _ := json.Marshal(map[string][]string{"label": {"pulse_managed_by=pulse"}})
 	q := url.Values{"all": {"1"}, "filters": {string(filter)}}
 	var list []struct {
 		ID string `json:"Id"`
@@ -197,7 +197,7 @@ func (p *Provider) usage(ctx context.Context) (charge, map[string]container, err
 		if err := p.e.call(ctx, "GET", "/containers/"+url.PathEscape(item.ID)+"/json", nil, &c); err != nil {
 			return charge{}, nil, err
 		}
-		id := c.Config.Labels["cortex_launch_id"]
+		id := c.Config.Labels["pulse_launch_id"]
 		if id == "" {
 			return charge{}, nil, fmt.Errorf("managed container lacks launch ID")
 		}
@@ -316,7 +316,7 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		r := compute.Submission{LaunchID: l.LaunchID}
 		hash := fingerprint(l)
 		if c, exists := found[l.LaunchID]; exists {
-			if c.Config.Labels["cortex_process_fingerprint"] != hash {
+			if c.Config.Labels["pulse_process_fingerprint"] != hash {
 				r.Status = compute.Rejected
 				r.Reason = "launch ID conflict"
 			} else if c.State.Status == "created" {
@@ -355,11 +355,11 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		for k, v := range plan.Request.Metadata {
 			labels[k] = v
 		}
-		labels["cortex_managed_by"] = "cortex"
-		labels["cortex_launch_id"] = l.LaunchID
+		labels["pulse_managed_by"] = "pulse"
+		labels["pulse_launch_id"] = l.LaunchID
 		accounting, _ := json.Marshal(cost)
 		labels[accountingLabel] = string(accounting)
-		labels["cortex_process_fingerprint"] = hash
+		labels["pulse_process_fingerprint"] = hash
 		env := []string{}
 		for k, v := range l.Process.Env {
 			env = append(env, k+"="+v)
@@ -367,8 +367,8 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		if _, ok := l.Process.Env["TMPDIR"]; !ok {
 			env = append(env, "TMPDIR="+p.cfg.ScratchPath)
 		}
-		if _, supplied := l.Process.Env["CORTEX_SCRATCH_DIR"]; !supplied {
-			env = append(env, "CORTEX_SCRATCH_DIR="+p.cfg.ScratchPath)
+		if _, supplied := l.Process.Env["PULSE_SCRATCH_DIR"]; !supplied {
+			env = append(env, "PULSE_SCRATCH_DIR="+p.cfg.ScratchPath)
 		}
 		args := []string{"--timeout", strconv.FormatInt(plan.Request.TimeoutSeconds, 10) + "s"}
 		if plan.Request.StartBefore != nil {
@@ -378,9 +378,9 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		args = append(args, l.Process.Command...)
 		args = append(args, l.Process.Args...)
 		a := plan.Allocation
-		body := map[string]any{"Image": plan.ImageID, "Entrypoint": []string{"/__cortex/exec"}, "Cmd": args, "Env": env, "Labels": labels, "WorkingDir": l.Process.WorkingDir, "HostConfig": map[string]any{"NanoCpus": a.CPUMillis * 1000000, "Memory": a.MemoryBytes + a.ScratchBytes, "MemorySwap": a.MemoryBytes + a.ScratchBytes, "RestartPolicy": map[string]any{"Name": "no"}, "AutoRemove": false, "Binds": []string{p.cfg.Helper + ":/__cortex/exec:ro"}, "Tmpfs": map[string]string{p.cfg.ScratchPath: fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes)}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "3"}}}}
+		body := map[string]any{"Image": plan.ImageID, "Entrypoint": []string{"/__pulse/exec"}, "Cmd": args, "Env": env, "Labels": labels, "WorkingDir": l.Process.WorkingDir, "HostConfig": map[string]any{"NanoCpus": a.CPUMillis * 1000000, "Memory": a.MemoryBytes + a.ScratchBytes, "MemorySwap": a.MemoryBytes + a.ScratchBytes, "RestartPolicy": map[string]any{"Name": "no"}, "AutoRemove": false, "Binds": []string{p.cfg.Helper + ":/__pulse/exec:ro"}, "Tmpfs": map[string]string{p.cfg.ScratchPath: fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes)}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "3"}}}}
 		sum := sha256.Sum256([]byte(l.LaunchID))
-		name := "cortex-" + hex.EncodeToString(sum[:16])
+		name := "pulse-" + hex.EncodeToString(sum[:16])
 		var created struct {
 			ID       string   `json:"Id"`
 			Warnings []string `json:"Warnings"`

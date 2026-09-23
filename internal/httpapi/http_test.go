@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/colony-2/cortex/internal/config"
-	"github.com/colony-2/cortex/internal/controller"
-	"github.com/colony-2/cortex/internal/scheduler"
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/internal/config"
+	"github.com/colony-2/pulse/internal/controller"
+	"github.com/colony-2/pulse/internal/scheduler"
+	"github.com/colony-2/pulse/pkg/compute"
 )
 
 type provider struct {
@@ -31,7 +31,7 @@ func (p provider) List(ctx context.Context, q compute.ListRequest) (compute.List
 	return p.list(ctx, q)
 }
 func row(id string) compute.Instance {
-	return compute.Instance{ID: id, LaunchID: id, State: "running", Metadata: map[string]string{"cortex_job_id": "job", "secret": "do-not-expose"}, Refs: []string{id}}
+	return compute.Instance{ID: id, LaunchID: id, State: "running", Metadata: map[string]string{"pulse_job_id": "job", "secret": "do-not-expose"}, Refs: []string{id}}
 }
 func newAPI(t *testing.T, providers map[string]compute.Provider) *API {
 	t.Helper()

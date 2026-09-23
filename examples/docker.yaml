@@ -3,7 +3,7 @@ cooldown: 60s
 call_timeout: 2m
 batch_timeout: 5m
 defaults:
-  image: cortex-runner:local
+  image: pulse-runner:local
   platform: linux/amd64  # Use linux/arm64 on an arm64 Docker daemon.
   cpu: "1"
   memory: 1Gi
@@ -13,8 +13,8 @@ providers:
   local:
     type: docker
     socket: unix:///var/run/docker.sock
-    helper: /usr/local/lib/cortex/cortex-exec
-    lock_dir: /tmp/cortex-docker-locks
+    helper: /usr/local/lib/pulse/pulse-exec
+    lock_dir: /tmp/pulse-docker-locks
     capacity:
       cpu: "4"
       memory: 8Gi

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/colony-2/c2j/pkg/execution"
-	"github.com/colony-2/cortex/internal/quantity"
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/internal/quantity"
+	"github.com/colony-2/pulse/pkg/compute"
 	"github.com/distribution/reference"
 )
 
@@ -102,7 +102,7 @@ func (j Job) Allocation(defaults compute.Allocation) (compute.Allocation, error)
 func Process(jobdb, job, launch string, a compute.Allocation, extra map[string]string, metadata map[string]string) (compute.Process, error) {
 	env := map[string]string{}
 	for k, v := range extra {
-		if strings.HasPrefix(k, "C2J_EXECUTION_") || k == "C2J_JOBDB" || strings.HasPrefix(k, "CORTEX_") {
+		if strings.HasPrefix(k, "C2J_EXECUTION_") || k == "C2J_JOBDB" || strings.HasPrefix(k, "PULSE_") {
 			return compute.Process{}, fmt.Errorf("reserved executor environment key %s", k)
 		}
 		env[k] = v

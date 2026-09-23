@@ -1,6 +1,6 @@
-# Cortex HTTP API
+# Pulse HTTP API
 
-Cortex's continuous controller serves public, read-only diagnostics. It does not require authentication. All endpoints accept `GET` and `HEAD`; other methods return `405`. Responses are JSON with `Cache-Control: no-store`. `Access-Control-Allow-Origin: *` allows browser reads without credentials.
+Pulse's continuous controller serves public, read-only diagnostics. It does not require authentication. All endpoints accept `GET` and `HEAD`; other methods return `405`. Responses are JSON with `Cache-Control: no-store`. `Access-Control-Allow-Origin: *` allows browser reads without credentials.
 
 ## Listen address
 
@@ -57,7 +57,7 @@ Example response:
 
 ### Configuration
 
-`GET /config` reports the selected configuration, whether loaded from a file or `CORTEX_CONFIG`, using the YAML field names in a JSON object. The raw `CORTEX_CONFIG` value is not returned. It includes selected defaults, targets, provider settings, and HTTP address. Every value under an `env` map is replaced with `[REDACTED]`; variable names remain visible. URLs lose user information and fragments, and any nonempty query is replaced with `redacted`. Token environment-variable names and credential-file paths are configuration and remain visible; credential contents and the controller's process environment are never returned.
+`GET /config` reports the selected configuration, whether loaded from a file or `PULSE_CONFIG`, using the YAML field names in a JSON object. The raw `PULSE_CONFIG` value is not returned. It includes selected defaults, targets, provider settings, and HTTP address. Every value under an `env` map is replaced with `[REDACTED]`; variable names remain visible. URLs lose user information and fragments, and any nonempty query is replaced with `redacted`. Token environment-variable names and credential-file paths are configuration and remain visible; credential contents and the controller's process environment are never returned.
 
 ### Active instances from one provider
 
@@ -84,12 +84,12 @@ Example response (a remote launch awaiting a runner):
       "launch_id": "launch-001",
       "state": "queued",
       "metadata": {
-        "cortex_metadata_version": "1",
-        "cortex_managed_by": "cortex",
-        "cortex_jobdb_instance_id": "production",
-        "cortex_tenant_id": "acme",
-        "cortex_job_id": "job-123",
-        "cortex_launch_id": "launch-001"
+        "pulse_metadata_version": "1",
+        "pulse_managed_by": "pulse",
+        "pulse_jobdb_instance_id": "production",
+        "pulse_tenant_id": "acme",
+        "pulse_job_id": "job-123",
+        "pulse_launch_id": "launch-001"
       },
       "refs": [],
       "created_at": "2026-10-01T12:00:00Z"
@@ -105,7 +105,7 @@ An instance has a provider-local `id`, originating `launch_id`, state, correlati
 
 Always follow `next_page_token`, including after an empty `items` page: native pages may contain only terminal or unrelated resources. Omission ends pagination. Lists reflect current provider observations and can change between requests. They are not a snapshot or history. Native cloud APIs may briefly lag submission/state changes; absence does not prove non-acceptance, completion, or free capacity.
 
-Scope comes from each configured service: remote endpoint/principal, Docker daemon, Cloud Run project/region, ECS cluster, or Azure resource group. Lists include managed resources from previous Cortex processes and other controllers in the same scope. They are not limited to current target cells. See [provider listing details and read permissions](providers.md#active-instances-and-retention).
+Scope comes from each configured service: remote endpoint/principal, Docker daemon, Cloud Run project/region, ECS cluster, or Azure resource group. Lists include managed resources from previous Pulse processes and other controllers in the same scope. They are not limited to current target cells. See [provider listing details and read permissions](providers.md#active-instances-and-retention).
 
 ### All providers
 
@@ -120,10 +120,10 @@ Scope comes from each configured service: remote endpoint/principal, Docker daem
       "launch_id": "launch-001",
       "state": "starting",
       "metadata": {
-        "cortex_jobdb_instance_id": "production",
-        "cortex_tenant_id": "acme",
-        "cortex_job_id": "job-123",
-        "cortex_launch_id": "launch-001"
+        "pulse_jobdb_instance_id": "production",
+        "pulse_tenant_id": "acme",
+        "pulse_job_id": "job-123",
+        "pulse_launch_id": "launch-001"
       },
       "refs": ["pool/runner-17/container-456"]
     }
@@ -150,7 +150,7 @@ An unavailable provider, timeout, malformed response, or scan limit returns **HT
 
 Inspect `complete` and `errors`; a failing provider is never silently treated as empty. Successfully read pages remain in `items` even if a later page fails. Duplicate configurations sharing a native scope can list the same instance under different provider names.
 
-Each HTTP listing request has a total deadline of `call_timeout`. Cortex permits eight concurrent listing requests, scans up to eight providers per aggregate request, and caps each provider scan at 1,000 pages or 10,000 unique instances. Large inventories should use the per-provider paginated route. Repeating continuation tokens are errors. Provider-specific scanning limits also apply (Azure bounds native calls while traversing nested jobs/executions).
+Each HTTP listing request has a total deadline of `call_timeout`. Pulse permits eight concurrent listing requests, scans up to eight providers per aggregate request, and caps each provider scan at 1,000 pages or 10,000 unique instances. Large inventories should use the per-provider paginated route. Repeating continuation tokens are errors. Provider-specific scanning limits also apply (Azure bounds native calls while traversing nested jobs/executions).
 
 ### Cooldowns
 
@@ -197,4 +197,4 @@ Expired entries are hidden unless an attempt is still in flight. `eligible_at` i
 
 Malformed listing parameters return `400`, unknown providers/routes return `404`, non-read methods return `405`, and excess concurrent listing requests return `429`. Per-provider listing failures return `502` with a generic error and provider name. Native errors are logged internally rather than exposing credential-bearing diagnostics publicly.
 
-These routes do not submit, cancel, restart, or delete compute; update configuration; reset cooldowns; or change rotation. Listing does not reconcile uncertain starts or modify Docker admission accounting. Credential refresh and native reads are the only provider activity required by diagnostics. Cortex retains no persistent instance inventory and does not use this API to drive job scheduling.
+These routes do not submit, cancel, restart, or delete compute; update configuration; reset cooldowns; or change rotation. Listing does not reconcile uncertain starts or modify Docker admission accounting. Credential refresh and native reads are the only provider activity required by diagnostics. Pulse retains no persistent instance inventory and does not use this API to drive job scheduling.

@@ -1,6 +1,6 @@
 # Remote compute provider protocol v1
 
-Cortex uses **one batch submission operation** to send complete container launches. The [OpenAPI contract](api/provider.openapi.yaml) specifies v1 (`1.0.0`) in place; no earlier protocol has been deployed. Built-in adapters use the same submission model in-process. See [Implementing a remote provider](docs/implementing-a-remote-provider.md) for server guidance.
+Pulse uses **one batch submission operation** to send complete container launches. The [OpenAPI contract](api/provider.openapi.yaml) specifies v1 (`1.0.0`) in place; no earlier protocol has been deployed. Built-in adapters use the same submission model in-process. See [Implementing a remote provider](docs/implementing-a-remote-provider.md) for server guidance.
 
 ## Operations
 
@@ -9,7 +9,7 @@ Cortex uses **one batch submission operation** to send complete container launch
 | `POST /v1/submit` | Submit resources, process, deadlines, and metadata together; return an admission result for every item. |
 | `GET /v1/launches` | List active instances and their correlation metadata, optionally filtered by launch ID. Read-only; not part of scheduling. |
 
-There is no preparation operation, plan token, or environment binding language. Provider priority and round robin remain Cortex configuration. Runner registration and long polling belong inside the provider service.
+There is no preparation operation, plan token, or environment binding language. Provider priority and round robin remain Pulse configuration. Runner registration and long polling belong inside the provider service.
 
 Use HTTPS, bearer authentication, and JSON bodies. A configured endpoint identifies one provider instance/admission domain; the authenticated principal scopes launch IDs and listing. Batch size is 1–100, including single-item requests. IDs must be unique within a batch; duplicate IDs invalidate the whole request before any processing. Correlate results by `launch_id`, never array position. HTTP `200` allows mixed outcomes.
 
@@ -24,11 +24,11 @@ Each item contains:
 - Opaque string-valued `metadata` for reverse lookup.
 - `process`: explicit `command`, `args`, literal `env`, and optional absolute `working_dir`. Empty arguments/environment use `[]` and `{}`, not `null`.
 
-Cortex fills omitted resource requirements from deployment defaults, then builds the process environment from those requested values. The provider must guarantee at least the requested usable CPU, memory, and scratch simultaneously. It may round capacities upward or account for overhead internally. That sizing **must not change any supplied environment value**. For a 1500m request provisioned with 2 CPUs, `C2J_EXECUTION_CPU` remains `1500m`. The same complete launch is sent unchanged on fallback.
+Pulse fills omitted resource requirements from deployment defaults, then builds the process environment from those requested values. The provider must guarantee at least the requested usable CPU, memory, and scratch simultaneously. It may round capacities upward or account for overhead internally. That sizing **must not change any supplied environment value**. For a 1500m request provisioned with 2 CPUs, `C2J_EXECUTION_CPU` remains `1500m`. The same complete launch is sent unchanged on fallback.
 
 This reports a conservative guaranteed allocation to c2j: extra capacity from provider rounding is not advertised. A later requirement exceeding the reported allocation can therefore cause a handoff even if it would fit the provider's larger native allocation.
 
-Providers execute the supplied process without interpreting c2j options, expanding environment placeholders, or adding shell interpretation. Supplied values override image/provider defaults; defaults may fill absent keys. Preserve image and platform constraints. If an option cannot be honored, return `unsupported` before accepting work. For a digest-pinned image, Cortex also sets `C2J_EXECUTION_IMAGE_DIGEST` to the requested digest because c2j requires it for compatibility; the provider must enforce that pin before startup. Tag requests omit this field. Listing does not negotiate allocation or feed values back into the submitted environment.
+Providers execute the supplied process without interpreting c2j options, expanding environment placeholders, or adding shell interpretation. Supplied values override image/provider defaults; defaults may fill absent keys. Preserve image and platform constraints. If an option cannot be honored, return `unsupported` before accepting work. For a digest-pinned image, Pulse also sets `C2J_EXECUTION_IMAGE_DIGEST` to the requested digest because c2j requires it for compatibility; the provider must enforce that pin before startup. Tag requests omit this field. Listing does not negotiate allocation or feed values back into the submitted environment.
 
 ### Example: submit two launches
 
@@ -48,12 +48,12 @@ Send `POST /v1/submit` with `Authorization: Bearer <token>` and `Content-Type: a
       "timeout_seconds": 3600,
       "start_before": "2026-10-01T12:01:00Z",
       "metadata": {
-        "cortex_metadata_version": "1",
-        "cortex_managed_by": "cortex",
-        "cortex_jobdb_instance_id": "production",
-        "cortex_tenant_id": "acme",
-        "cortex_job_id": "job-123",
-        "cortex_launch_id": "launch-001"
+        "pulse_metadata_version": "1",
+        "pulse_managed_by": "pulse",
+        "pulse_jobdb_instance_id": "production",
+        "pulse_tenant_id": "acme",
+        "pulse_job_id": "job-123",
+        "pulse_launch_id": "launch-001"
       },
       "process": {
         "command": [
@@ -78,12 +78,12 @@ Send `POST /v1/submit` with `Authorization: Bearer <token>` and `Content-Type: a
           "C2J_EXECUTION_EPHEMERAL_STORAGE": "1048576Ki",
           "C2J_EXECUTION_PLATFORM": "linux/amd64",
           "C2J_EXECUTION_IMAGE": "registry.example/runner:1.2",
-          "CORTEX_METADATA_VERSION": "1",
-          "CORTEX_MANAGED_BY": "cortex",
-          "CORTEX_JOBDB_INSTANCE_ID": "production",
-          "CORTEX_TENANT_ID": "acme",
-          "CORTEX_JOB_ID": "job-123",
-          "CORTEX_LAUNCH_ID": "launch-001"
+          "PULSE_METADATA_VERSION": "1",
+          "PULSE_MANAGED_BY": "pulse",
+          "PULSE_JOBDB_INSTANCE_ID": "production",
+          "PULSE_TENANT_ID": "acme",
+          "PULSE_JOB_ID": "job-123",
+          "PULSE_LAUNCH_ID": "launch-001"
         }
       }
     },
@@ -97,12 +97,12 @@ Send `POST /v1/submit` with `Authorization: Bearer <token>` and `Content-Type: a
       "timeout_seconds": 3600,
       "start_before": "2026-10-01T12:01:00Z",
       "metadata": {
-        "cortex_metadata_version": "1",
-        "cortex_managed_by": "cortex",
-        "cortex_jobdb_instance_id": "production",
-        "cortex_tenant_id": "acme",
-        "cortex_job_id": "job-124",
-        "cortex_launch_id": "launch-002"
+        "pulse_metadata_version": "1",
+        "pulse_managed_by": "pulse",
+        "pulse_jobdb_instance_id": "production",
+        "pulse_tenant_id": "acme",
+        "pulse_job_id": "job-124",
+        "pulse_launch_id": "launch-002"
       },
       "process": {
         "command": [
@@ -127,12 +127,12 @@ Send `POST /v1/submit` with `Authorization: Bearer <token>` and `Content-Type: a
           "C2J_EXECUTION_EPHEMERAL_STORAGE": "1048576Ki",
           "C2J_EXECUTION_PLATFORM": "linux/amd64",
           "C2J_EXECUTION_IMAGE": "registry.example/runner:1.2",
-          "CORTEX_METADATA_VERSION": "1",
-          "CORTEX_MANAGED_BY": "cortex",
-          "CORTEX_JOBDB_INSTANCE_ID": "production",
-          "CORTEX_TENANT_ID": "acme",
-          "CORTEX_JOB_ID": "job-124",
-          "CORTEX_LAUNCH_ID": "launch-002"
+          "PULSE_METADATA_VERSION": "1",
+          "PULSE_MANAGED_BY": "pulse",
+          "PULSE_JOBDB_INSTANCE_ID": "production",
+          "PULSE_TENANT_ID": "acme",
+          "PULSE_JOB_ID": "job-124",
+          "PULSE_LAUNCH_ID": "launch-002"
         }
       }
     }
@@ -161,7 +161,7 @@ HTTP `200 OK`:
 }
 ```
 
-The service owns `launch-001`. Cortex may send only `launch-002` to the next service, using the same complete item and launch ID.
+The service owns `launch-001`. Pulse may send only `launch-002` to the next service, using the same complete item and launch ID.
 
 ## Submission results and fallback
 
@@ -178,9 +178,9 @@ Accepted results contain only `launch_id` and `status`. Every non-accepted resul
 
 All definite declines guarantee that execution cannot later start from that submission. A native failure after possibly initiating execution is `unknown`. Providers using optional native duplicate detection must leave an existing launch unchanged when rejecting a conflicting ID; such a rejection makes no claim about whether that earlier launch ran.
 
-Report `accepted` after admission or handoff has occurred, not merely after validating the request or creating an inert cloud parent. An accepted asynchronous native start operation is sufficient. The provider need not guarantee delivery after a crash, recover lost queue entries, or restart failed launches. Once execution starts, resource limits and `timeout_seconds` must be enforced independently of Cortex.
+Report `accepted` after admission or handoff has occurred, not merely after validating the request or creating an inert cloud parent. An accepted asynchronous native start operation is sufficient. The provider need not guarantee delivery after a crash, recover lost queue entries, or restart failed launches. Once execution starts, resource limits and `timeout_seconds` must be enforced independently of Pulse.
 
-Batches are not transactions. Preserve valid explicit results in a complete response when another item is missing or malformed. Unaccounted-for IDs, duplicate results, unknown statuses, truncated JSON, timeouts, and transport failures imply uncertainty. Cortex never immediately falls back an uncertain item. A later per-job cooldown attempt can still launch fresh compute with a new ID.
+Batches are not transactions. Preserve valid explicit results in a complete response when another item is missing or malformed. Unaccounted-for IDs, duplicate results, unknown statuses, truncated JSON, timeouts, and transport failures imply uncertainty. Pulse never immediately falls back an uncertain item. A later per-job cooldown attempt can still launch fresh compute with a new ID.
 
 HTTP `400`, `401`, `403`, `413`, and `422` are whole-request rejections **before processing any items**. They stop the attempt. A generic `429`, gateway failure, or `5xx` is not proof of non-acceptance; use HTTP `200` with explicit per-item `no_capacity` or `unavailable` when fallback is safe. Do not blindly retry submission POSTs in middleware.
 
@@ -198,15 +198,15 @@ HTTP `400 Bad Request` for duplicate IDs; no item was processed:
 
 ## Submission attempts and recovery
 
-A `launch_id` identifies one attempt, not the JobDB job's lifetime. Cortex calls each selected launch service at most once for that attempt. After a definite fallback-eligible decline it may submit the same complete item and ID to the next service. It does not retry a timed-out or failed POST, or immediately fall back after an uncertain outcome. A later attempt after the per-job cooldown uses a new launch ID if c2j still reports runnable work.
+A `launch_id` identifies one attempt, not the JobDB job's lifetime. Pulse calls each selected launch service at most once for that attempt. After a definite fallback-eligible decline it may submit the same complete item and ID to the next service. It does not retry a timed-out or failed POST, or immediately fall back after an uncertain outcome. A later attempt after the per-job cooldown uses a new launch ID if c2j still reports runnable work.
 
 Clients must not replay a submission to the same provider, including after a lost response. Disable automatic submission retries in HTTP clients, proxies, middleware, and native launch SDKs. A provider makes one attempt to initiate execution for each item; this can require multiple distinct native operations, such as creating a parent and then starting it. It must not retry an ambiguous start, reassign an uncertain dispatch, or run a recovery loop to resubmit failed launches. Reads used for sizing, listing, or awaiting native provisioning are not launch retries.
 
 Providers need no durable submission journal, stored decline decisions, replay cache, or fixed retention period. Native idempotency keys or deterministic resource names may be used as an additional safeguard, but the protocol does not require duplicate detection, comparison of old inputs, or replay of previous results. Duplicate caller submissions are outside this contract.
 
-If an accepted launch is lost or fails to start, c2j/JobDB remains authoritative about outstanding work. Cortex discovers the still-runnable job and can make a fresh attempt after cooldown. If an executor claimed work and then failed, subsequent readiness depends on c2j/JobDB's lease and recovery rules. Providers do not query JobDB or repair jobs, and Cortex does not infer recovery from instance lists.
+If an accepted launch is lost or fails to start, c2j/JobDB remains authoritative about outstanding work. Pulse discovers the still-runnable job and can make a fresh attempt after cooldown. If an executor claimed work and then failed, subsequent readiness depends on c2j/JobDB's lease and recovery rules. Providers do not query JobDB or repair jobs, and Pulse does not infer recovery from instance lists.
 
-This is an at-most-once **submission-attempt policy**, not an exactly-once execution guarantee. A runtime may start an earlier attempt late, or Cortex may restart and lose its cooldown. c2j checks readiness, leases, and resource compatibility when a container starts; overlapping attempts can still consume additional compute.
+This is an at-most-once **submission-attempt policy**, not an exactly-once execution guarantee. A runtime may start an earlier attempt late, or Pulse may restart and lose its cooldown. c2j checks readiness, leases, and resource compatibility when a container starts; overlapping attempts can still consume additional compute.
 
 ### Handoff, queues, and deadlines
 
@@ -214,7 +214,7 @@ Prefer prompt handoff to the underlying runtime, without a separate provider bac
 
 A provider that deliberately holds its own queue for runners must require `start_before` and prevent container startup at or after that timestamp. Expire missed queue entries without launching them; no retained terminal record is required. Without a deadline, dispatch directly or return `unsupported` if provider-owned queueing is the only option. Queueing is optional; return `no_capacity` when fallback is preferable.
 
-`start_before`, when supplied, always constrains actual container startup, not just handoff to another system. A provider that cannot enforce it must return `unsupported`. Native cloud handoff can omit it. Cortex sets it through `defaults.start_window`, which must be positive and no longer than `cooldown`. No universal startup deadline is imposed when it is absent. `timeout_seconds` remains a separate limit measured after startup; an HTTP call timeout is neither of these deadlines.
+`start_before`, when supplied, always constrains actual container startup, not just handoff to another system. A provider that cannot enforce it must return `unsupported`. Native cloud handoff can omit it. Pulse sets it through `defaults.start_window`, which must be positive and no longer than `cooldown`. No universal startup deadline is imposed when it is absent. `timeout_seconds` remains a separate limit measured after startup; an HTTP call timeout is neither of these deadlines.
 
 ## Active instance listing
 
@@ -224,7 +224,7 @@ Parameters are optional `page_size` (1–100, default 100), opaque `page_token`,
 
 Return `items: []` for an empty page. If `next_page_token` exists, callers must continue even when the current page has no matching instances. Keep filters unchanged between pages. Listing is a changing view, not an atomic snapshot or historical ledger. Missing instances do not prove non-acceptance, completion, or available capacity. A failed list operation returns an error, never an empty success.
 
-Cortex implements the same list interface for all built-in adapters and exposes it through its [public read-only HTTP API](docs/http-api.md). It does not use listing to bypass cooldown, resolve uncertain submissions, or reserve capacity. Native resource reads, pagination, and credential refresh are allowed; listing must not submit, cancel, restart, or reconcile launches.
+Pulse implements the same list interface for all built-in adapters and exposes it through its [public read-only HTTP API](docs/http-api.md). It does not use listing to bypass cooldown, resolve uncertain submissions, or reserve capacity. Native resource reads, pagination, and credential refresh are allowed; listing must not submit, cancel, restart, or reconcile launches.
 
 ### Example: list active instances for one launch
 
@@ -239,12 +239,12 @@ Cortex implements the same list interface for all built-in adapters and exposes 
       "launch_id": "launch-001",
       "state": "running",
       "metadata": {
-        "cortex_metadata_version": "1",
-        "cortex_managed_by": "cortex",
-        "cortex_jobdb_instance_id": "production",
-        "cortex_tenant_id": "acme",
-        "cortex_job_id": "job-123",
-        "cortex_launch_id": "launch-001"
+        "pulse_metadata_version": "1",
+        "pulse_managed_by": "pulse",
+        "pulse_jobdb_instance_id": "production",
+        "pulse_tenant_id": "acme",
+        "pulse_job_id": "job-123",
+        "pulse_launch_id": "launch-001"
       },
       "refs": [
         "runner-pool/runner-17/containers/container-456"

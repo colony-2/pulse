@@ -1,5 +1,5 @@
-# For simple containers, pass this complete YAML as CORTEX_CONFIG.
-# Alternatively mount it and pass -config /etc/cortex/cortex.yaml.
+# For simple containers, pass this complete YAML as PULSE_CONFIG.
+# Alternatively mount it and pass -config /etc/pulse/pulse.yaml.
 # HTTP listens on PORT when supplied by the platform, otherwise port 8080.
 
 poll_interval: 5s
@@ -16,7 +16,7 @@ providers:
   runners:
     type: remote
     endpoint: https://runners.example.com
-    token_env: CORTEX_PROVIDER_TOKEN
+    token_env: PULSE_PROVIDER_TOKEN
 targets:
   - instance_id: production
     jobdb: https://jobdb.example.com/acme

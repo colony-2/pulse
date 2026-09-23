@@ -3,7 +3,7 @@ package docker
 import (
 	"context"
 	"encoding/json"
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/pkg/compute"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -51,7 +51,7 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 		for k, v := range body["Labels"].(map[string]any) {
 			labels[k] = v.(string)
 		}
-		id := labels["cortex_launch_id"]
+		id := labels["pulse_launch_id"]
 		var c container
 		c.ID = id
 		c.Config.Labels = labels
@@ -89,7 +89,7 @@ func testProvider(t *testing.T, d *daemon) (*Provider, *httptest.Server) {
 func requests(ids ...string) []compute.Request {
 	rs := []compute.Request{}
 	for _, id := range ids {
-		rs = append(rs, compute.Request{LaunchID: id, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Image: "runner:1", Platform: "linux/arm64"}, TimeoutSeconds: 60, Metadata: map[string]string{"cortex_job_id": id}})
+		rs = append(rs, compute.Request{LaunchID: id, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Image: "runner:1", Platform: "linux/arm64"}, TimeoutSeconds: 60, Metadata: map[string]string{"pulse_job_id": id}})
 	}
 	return rs
 }
@@ -201,7 +201,7 @@ func TestRoundingPreservesRequestedEnvironment(t *testing.T) {
 	rs := requests("round")
 	rs[0].CPUMillis = 1001
 	ls := launches(rs)
-	ls[0].Process.Env = map[string]string{"C2J_EXECUTION_CPU": "1001m", "CORTEX_SCRATCH_DIR": "/custom", "TMPDIR": "/custom/tmp", "LITERAL": "$HOME"}
+	ls[0].Process.Env = map[string]string{"C2J_EXECUTION_CPU": "1001m", "PULSE_SCRATCH_DIR": "/custom", "TMPDIR": "/custom/tmp", "LITERAL": "$HOME"}
 	out, err := p.Submit(context.Background(), ls)
 	if err != nil || out[0].Status != compute.Accepted {
 		t.Fatal(out, err)

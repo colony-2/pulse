@@ -4,12 +4,12 @@ package providers
 import (
 	"context"
 	"fmt"
-	"github.com/colony-2/cortex/internal/config"
-	"github.com/colony-2/cortex/internal/providers/cloud"
-	"github.com/colony-2/cortex/internal/providers/docker"
-	"github.com/colony-2/cortex/internal/providers/remote"
-	"github.com/colony-2/cortex/internal/quantity"
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/internal/config"
+	"github.com/colony-2/pulse/internal/providers/cloud"
+	"github.com/colony-2/pulse/internal/providers/docker"
+	"github.com/colony-2/pulse/internal/providers/remote"
+	"github.com/colony-2/pulse/internal/quantity"
+	"github.com/colony-2/pulse/pkg/compute"
 	"github.com/distribution/reference"
 	"os"
 )

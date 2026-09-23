@@ -1,4 +1,4 @@
-module github.com/colony-2/cortex
+module github.com/colony-2/pulse
 
 go 1.26
 

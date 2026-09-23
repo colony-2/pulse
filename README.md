@@ -1,8 +1,8 @@
-# Cortex
+# Pulse
 
 **Run c2j jobs on cloud compute or your own runners.**
 
-Cortex watches configured repository cells, finds jobs that need an executor, and starts a container for each selected job. It uses c2j's public Go library for discovery and tags each launch with its JobDB identity. The controller needs no separate c2j executable; **executor images must contain c2j and the tools their recipes need**.
+Pulse watches configured repository cells, finds jobs that need an executor, and starts a container for each selected job. It uses c2j's public Go library for discovery and tags each launch with its JobDB identity. The controller needs no separate c2j executable; **executor images must contain c2j and the tools their recipes need**.
 
 [Install](#install) · [Quick start](#quick-start) · [Run in a container](#run-in-a-container) · [Configuration](#configuration) · [Providers](#providers) · [HTTP API](#http-api)
 
@@ -11,15 +11,15 @@ Cortex watches configured repository cells, finds jobs that need an executor, an
 ### npm
 
 ```sh
-npm install --global @colony2/cortex
-cortex -version
+npm install --global @colony2/pulse
+pulse -version
 ```
 
 Requires Node.js 22+, `tar`, enabled install scripts, and HTTPS access to GitHub Releases. The installer downloads the matching native executable and verifies its SHA-256 checksum.
 
 ### Native executable
 
-Download your platform's archive from [GitHub Releases](https://github.com/colony-2/cortex/releases), verify it against `checksums.txt`, and put `cortex` on your `PATH`. Native executables need no Node.js. Linux archives also contain the `cortex-exec` helper used by Docker and ECS.
+Download your platform's archive from [GitHub Releases](https://github.com/colony-2/pulse/releases), verify it against `checksums.txt`, and put `pulse` on your `PATH`. Native executables need no Node.js. Linux archives also contain the `pulse-exec` helper used by Docker and ECS.
 
 Linux and macOS are supported on AMD64 and ARM64. Container images support Linux AMD64 and ARM64. The local Docker provider requires a Linux controller.
 
@@ -27,57 +27,57 @@ Linux and macOS are supported on AMD64 and ARM64. Container images support Linux
 
 1. Choose an executor image containing c2j and your recipe dependencies.
 2. Copy a configuration example: [remote runners](examples/remote.yaml), [local Docker](examples/docker.yaml), or [cloud providers](examples/clouds.yaml).
-3. Save it as `cortex.yaml` and fill in the JobDB tenant URL, repository cells, default executor image, and provider settings.
+3. Save it as `pulse.yaml` and fill in the JobDB tenant URL, repository cells, default executor image, and provider settings.
 
 For the remote-runner example:
 
 ```sh
-export CORTEX_PROVIDER_TOKEN='your-provider-token'
-cortex -config cortex.yaml -check
-cortex -config cortex.yaml -once
-cortex -config cortex.yaml
+export PULSE_PROVIDER_TOKEN='your-provider-token'
+pulse -config pulse.yaml -check
+pulse -config pulse.yaml -once
+pulse -config pulse.yaml
 ```
 
 `-check` validates configuration and initializes clients/providers; it does not verify remote connectivity or launch permissions. `-once` performs one discovery/submission pass. Normal mode keeps polling until SIGINT or SIGTERM and writes JSON logs to stderr. Launched containers continue under their own lifetime controls.
 
 ## Run in a container
 
-Use **`ghcr.io/colony-2/cortex`**. For simple deployments, pass the complete YAML in **`CORTEX_CONFIG`**. Start with [examples/container.yaml](examples/container.yaml), fill in the settings, then run:
+Use **`ghcr.io/colony-2/pulse`**. For simple deployments, pass the complete YAML in **`PULSE_CONFIG`**. Start with [examples/container.yaml](examples/container.yaml), fill in the settings, then run:
 
 ```sh
-export CORTEX_CONFIG="$(cat cortex.yaml)"
+export PULSE_CONFIG="$(cat pulse.yaml)"
 docker run --rm --init \
   --read-only --tmpfs /tmp -p 8080:8080 \
-  -e CORTEX_CONFIG -e CORTEX_PROVIDER_TOKEN \
-  ghcr.io/colony-2/cortex:latest
+  -e PULSE_CONFIG -e PULSE_PROVIDER_TOKEN \
+  ghcr.io/colony-2/pulse:latest
 ```
 
-The file is read on the host. In a deployment console, set `CORTEX_CONFIG` directly to the YAML contents. Keep credentials in separate secret/environment settings or use the hosting platform's identity. For repeatable deployments, select a release tag such as `:vX.Y.Z` or an image digest.
+The file is read on the host. In a deployment console, set `PULSE_CONFIG` directly to the YAML contents. Keep credentials in separate secret/environment settings or use the hosting platform's identity. For repeatable deployments, select a release tag such as `:vX.Y.Z` or an image digest.
 
-The image is distroless, runs as UID/GID `65532:65532`, and contains Cortex, its execution supervisor, and CA certificates. It includes native cloud authentication and needs no shell, Node.js, Git, cloud CLI, or separate c2j executable. Configure `defaults.image` with your workload's executor image.
+The image is distroless, runs as UID/GID `65532:65532`, and contains Pulse, its execution supervisor, and CA certificates. It includes native cloud authentication and needs no shell, Node.js, Git, cloud CLI, or separate c2j executable. Configure `defaults.image` with your workload's executor image.
 
 For mounted YAML, pass the file path explicitly:
 
 ```sh
 docker run --rm --init --read-only --tmpfs /tmp -p 8080:8080 \
-  --mount "type=bind,source=$PWD/cortex.yaml,target=/etc/cortex/cortex.yaml,readonly" \
-  -e CORTEX_PROVIDER_TOKEN \
-  ghcr.io/colony-2/cortex:latest -config /etc/cortex/cortex.yaml
+  --mount "type=bind,source=$PWD/pulse.yaml,target=/etc/pulse/pulse.yaml,readonly" \
+  -e PULSE_PROVIDER_TOKEN \
+  ghcr.io/colony-2/pulse:latest -config /etc/pulse/pulse.yaml
 ```
 
 The mounted file must be readable by UID 65532. See [configuration and Cloud Run deployment](docs/configuration.md), [cloud authentication](docs/cloud-authentication.md), and [Docker socket/helper setup](docs/providers.md).
 
 ## Configuration
 
-Cortex selects one complete YAML document, in order:
+Pulse selects one complete YAML document, in order:
 
 1. Explicit `-config PATH`.
-2. `CORTEX_CONFIG` containing the YAML itself.
-3. `./cortex.yaml`.
+2. `PULSE_CONFIG` containing the YAML itself.
+3. `./pulse.yaml`.
 
 Sources are not merged. Empty or invalid inline configuration fails startup unless an explicit file was selected. Values are literal, without environment-placeholder expansion. Restart or redeploy to apply changes.
 
-Targets select a JobDB instance/tenant and explicit repository identities, such as `github.com/acme/app` or `file:///absolute/repository/path`. These must match the repository metadata used when submitting jobs. Cortex does not discover local checkouts or resolve aliases.
+Targets select a JobDB instance/tenant and explicit repository identities, such as `github.com/acme/app` or `file:///absolute/repository/path`. These must match the repository metadata used when submitting jobs. Pulse does not discover local checkouts or resolve aliases.
 
 Launch services have positive numeric priorities: **1 is preferred over 2**. Equal-priority services rotate first choice for each batch. A provider can accept part of a batch and decline the rest for fallback.
 
@@ -95,7 +95,7 @@ targets:
 
 Define these service names under `providers` and supply `JOBDB_TOKEN` for authenticated JobDB access. Omit `jobdb_token_env` for an unauthenticated deployment. Provider authentication is configured separately.
 
-Defaults are a 5-second poll interval, a 60-second per-job cooldown, and batches of at most 100 jobs. Cortex stores cooldowns and rotation in memory. A restart or uncertain launch can result in duplicate compute; c2j/JobDB leases govern job ownership. See [configuration details](docs/configuration.md) and the complete [examples](examples).
+Defaults are a 5-second poll interval, a 60-second per-job cooldown, and batches of at most 100 jobs. Pulse stores cooldowns and rotation in memory. A restart or uncertain launch can result in duplicate compute; c2j/JobDB leases govern job ownership. See [configuration details](docs/configuration.md) and the complete [examples](examples).
 
 ## Providers
 

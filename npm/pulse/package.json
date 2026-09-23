@@ -1,15 +1,15 @@
 {
-  "name": "@colony2/cortex",
+  "name": "@colony2/pulse",
   "version": "0.0.0-development",
   "description": "Container compute orchestration for c2j jobs",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/colony-2/cortex",
+  "homepage": "https://github.com/colony-2/pulse",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/colony-2/cortex.git"
+    "url": "git+https://github.com/colony-2/pulse.git"
   },
   "bugs": {
-    "url": "https://github.com/colony-2/cortex/issues"
+    "url": "https://github.com/colony-2/pulse/issues"
   },
   "author": {
     "name": "Colony 2",
@@ -23,7 +23,7 @@
     "cli"
   ],
   "bin": {
-    "cortex": "bin/cli.js"
+    "pulse": "bin/cli.js"
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.js"

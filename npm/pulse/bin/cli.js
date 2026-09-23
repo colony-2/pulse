@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 "use strict";
 
-// Adapted from colony-2/c2j's npm launcher. Cortex forwards termination signals
+// Adapted from colony-2/c2j's npm launcher. Pulse forwards termination signals
 // so a long-running controller shuts down when its npm launcher is stopped.
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
-const binary = path.resolve(__dirname, "../vendor/cortex");
+const binary = path.resolve(__dirname, "../vendor/pulse");
 
 if (!fs.existsSync(binary)) {
-  console.error("Cortex binary is missing. Run npm rebuild @colony2/cortex with install scripts enabled.");
+  console.error("Pulse binary is missing. Run npm rebuild @colony2/pulse with install scripts enabled.");
   process.exit(1);
 }
 

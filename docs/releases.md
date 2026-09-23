@@ -1,6 +1,6 @@
 # Packaging and releases
 
-Cortex follows [c2j's GitHub Actions release pattern](https://github.com/colony-2/c2j/blob/main/.github/workflows/release.yaml): test, bump a version on `main`, build native Go executables, optionally sign macOS binaries, publish GitHub assets, and publish an npm wrapper. Cortex additionally publishes a distroless container for both Linux architectures.
+Pulse follows [c2j's GitHub Actions release pattern](https://github.com/colony-2/c2j/blob/main/.github/workflows/release.yaml): test, bump a version on `main`, build native Go executables, optionally sign macOS binaries, publish GitHub assets, and publish an npm wrapper. Pulse additionally publishes a distroless container for both Linux architectures.
 
 ## Release outputs
 
@@ -8,19 +8,19 @@ For `vX.Y.Z`:
 
 | Output | Location / name |
 | --- | --- |
-| Linux AMD64 executable and supervisor | `cortex_X.Y.Z_Linux_x86_64.tar.gz` |
-| Linux ARM64 executable and supervisor | `cortex_X.Y.Z_Linux_arm64.tar.gz` |
-| macOS Intel executable | `cortex_X.Y.Z_Darwin_x86_64.tar.gz` |
-| macOS Apple Silicon executable | `cortex_X.Y.Z_Darwin_arm64.tar.gz` |
-| npm package | `colony2-cortex-X.Y.Z.tgz`, also published as `@colony2/cortex@X.Y.Z` |
-| Multi-architecture image | `ghcr.io/colony-2/cortex:vX.Y.Z` |
-| Architecture-specific images | `ghcr.io/colony-2/cortex:vX.Y.Z-amd64` and `:vX.Y.Z-arm64` |
-| Container archives | `cortex_X.Y.Z_container_Linux_amd64.tar.gz` and `_arm64.tar.gz` |
+| Linux AMD64 executable and supervisor | `pulse_X.Y.Z_Linux_x86_64.tar.gz` |
+| Linux ARM64 executable and supervisor | `pulse_X.Y.Z_Linux_arm64.tar.gz` |
+| macOS Intel executable | `pulse_X.Y.Z_Darwin_x86_64.tar.gz` |
+| macOS Apple Silicon executable | `pulse_X.Y.Z_Darwin_arm64.tar.gz` |
+| npm package | `colony2-pulse-X.Y.Z.tgz`, also published as `@colony2/pulse@X.Y.Z` |
+| Multi-architecture image | `ghcr.io/colony-2/pulse:vX.Y.Z` |
+| Architecture-specific images | `ghcr.io/colony-2/pulse:vX.Y.Z-amd64` and `:vX.Y.Z-arm64` |
+| Container archives | `pulse_X.Y.Z_container_Linux_amd64.tar.gz` and `_arm64.tar.gz` |
 | Verification and identity | `checksums.txt`, `container-image.txt`, `versions.txt` |
 
 All listed files are attached to the GitHub release. The container archives use Docker's save format and support `docker load --input`. `container-image.txt` records the registry manifest digest. `checksums.txt` covers the executable archives, npm tarball, container archives, and version/manifest records.
 
-The npm wrapper installs the native Cortex binary only. It verifies the downloaded GitHub archive against the release checksums, extracts the executable, and atomically installs it under the package's `vendor` directory. Failed checksum verification preserves an existing installation. The launcher forwards command-line arguments, exit codes, and termination signals. Install scripts, `tar`, and access to GitHub download endpoints are required; installations with scripts disabled can run `npm rebuild @colony2/cortex` after enabling them.
+The npm wrapper installs the native Pulse binary only. It verifies the downloaded GitHub archive against the release checksums, extracts the executable, and atomically installs it under the package's `vendor` directory. Failed checksum verification preserves an existing installation. The launcher forwards command-line arguments, exit codes, and termination signals. Install scripts, `tar`, and access to GitHub download endpoints are required; installations with scripts disabled can run `npm rebuild @colony2/pulse` after enabling them.
 
 ## Pipeline
 
@@ -43,19 +43,19 @@ No tags, npm packages, or images are published by local test commands. Pushing t
 
 ### GitHub / GHCR
 
-- Use the `colony-2/cortex` repository. Automatic publishing is restricted to the `colony-2` owner.
+- Use the `colony-2/pulse` repository. Automatic publishing is restricted to the `colony-2` owner.
 - Allow the workflow's `GITHUB_TOKEN` to create tags/releases (`contents: write`) and publish images (`packages: write`). Grant the repository access if a pre-existing GHCR package is owned elsewhere.
 - Set the GHCR package visibility to **public** for anonymous pulls. Workflow permission to push does not itself change package visibility.
 - Configure the npm scope/package below before the first release.
 
 ### npm
 
-Publish to `@colony2/cortex`, following c2j's two supported authentication modes:
+Publish to `@colony2/pulse`, following c2j's two supported authentication modes:
 
-1. **Trusted publishing:** configure the package's trusted publisher with owner `colony-2`, repository `cortex`, and workflow filename `release.yaml`. The job has `id-token: write`, Node 24, and npm 11, satisfying npm's OIDC requirements. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
-2. **Token publishing:** set repository secret `NPM_TOKEN` to a token with publish access to `@colony2/cortex`. This is also the bootstrap option if the package does not yet exist and trusted publishing is not configured. The workflow supplies it as `NODE_AUTH_TOKEN` only to the publishing step.
+1. **Trusted publishing:** configure the package's trusted publisher with owner `colony-2`, repository `pulse`, and workflow filename `release.yaml`. The job has `id-token: write`, Node 24, and npm 11, satisfying npm's OIDC requirements. See [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/).
+2. **Token publishing:** set repository secret `NPM_TOKEN` to a token with publish access to `@colony2/pulse`. This is also the bootstrap option if the package does not yet exist and trusted publishing is not configured. The workflow supplies it as `NODE_AUTH_TOKEN` only to the publishing step.
 
-Both paths request provenance and public access. The npm package name and GitHub download repository are fixed to Cortex, so forks must update the package metadata, installer URL, image labels, and workflow owner guard before publishing their own package.
+Both paths request provenance and public access. The npm package name and GitHub download repository are fixed to Pulse, so forks must update the package metadata, installer URL, image labels, and workflow owner guard before publishing their own package.
 
 ### Optional macOS signing
 
@@ -71,11 +71,11 @@ With all five present, Quill v0.7.1 signs and notarizes Darwin binaries before t
 
 ## Container composition
 
-Simple deployments pass the full YAML document as `CORTEX_CONFIG`. The image runs Cortex without default command arguments so that this environment source is selected automatically. For a mounted file, pass `-config /etc/cortex/cortex.yaml` explicitly; this overrides inline configuration. See [configuration and deployment](configuration.md).
+Simple deployments pass the full YAML document as `PULSE_CONFIG`. The image runs Pulse without default command arguments so that this environment source is selected automatically. For a mounted file, pass `-config /etc/pulse/pulse.yaml` explicitly; this overrides inline configuration. See [configuration and deployment](configuration.md).
 
-[Dockerfile](../Dockerfile) cross-compiles Cortex and its supervisor with CGO disabled. The default final stage is `gcr.io/distroless/static-debian12:nonroot`, containing those two executables and the embedded listing dependency’s license/version records. It contains no standalone c2j executable, Go compiler, Python, Node.js/npm, shell, Git, or cloud CLI executables. Native cloud SDKs are compiled into Cortex.
+[Dockerfile](../Dockerfile) cross-compiles Pulse and its supervisor with CGO disabled. The default final stage is `gcr.io/distroless/static-debian12:nonroot`, containing those two executables and the embedded listing dependency’s license/version records. It contains no standalone c2j executable, Go compiler, Python, Node.js/npm, shell, Git, or cloud CLI executables. Native cloud SDKs are compiled into Pulse.
 
-The c2j Go module is pinned in `go.mod`; release builds do not resolve a newer version implicitly. The initial public API integration uses `v0.0.53-0.20260922032206-ef65f0001972`, because the API was available upstream before a containing tag was published. This is a remotely resolvable Go pseudo-version, with no development-only `replace`. Both architectures use that same dependency. The selected version is recorded at `/usr/share/cortex/c2j-version.txt` and in release `versions.txt`.
+The c2j Go module is pinned in `go.mod`; release builds do not resolve a newer version implicitly. The initial public API integration uses `v0.0.53-0.20260922032206-ef65f0001972`, because the API was available upstream before a containing tag was published. This is a remotely resolvable Go pseudo-version, with no development-only `replace`. Both architectures use that same dependency. The selected version is recorded at `/usr/share/pulse/c2j-version.txt` and in release `versions.txt`.
 
 Remote and all built-in cloud providers work without external command-line tools. Cloud authentication uses native SDK credential discovery and refresh, including environment/file credentials and platform roles or identities. See [cloud authentication](cloud-authentication.md). Executor job images are configured independently and must supply their recipe dependencies.
 
@@ -83,10 +83,10 @@ The test-only `cloud-smoke` target runs static cloud-adapter tests in the same n
 
 ### Docker provider from a container
 
-A containerized Cortex controlling a host Docker daemon additionally needs:
+A containerized Pulse controlling a host Docker daemon additionally needs:
 
 - The daemon socket mounted and accessible to the controller UID or supplementary socket group.
-- A host copy of the Linux `cortex-exec` helper, mounted at the **same absolute path** in the controller and configured as `providers.<name>.helper`. Merely having `/usr/local/bin/cortex-exec` inside the controller image does not make that path available to the host daemon's bind mounts.
+- A host copy of the Linux `pulse-exec` helper, mounted at the **same absolute path** in the controller and configured as `providers.<name>.helper`. Merely having `/usr/local/bin/pulse-exec` inside the controller image does not make that path available to the host daemon's bind mounts.
 - A shared host directory for `providers.<name>.lock_dir`, mounted identically by every controller that could reach this daemon. Private container `/tmp` directories cannot enforce a single admission owner across controllers.
 - Capacity budgets reserving headroom for the host, controller, and other workloads.
 
@@ -104,8 +104,8 @@ With Docker and Buildx available:
 ```sh
 docker buildx build --load --platform linux/arm64 \
   --build-arg VERSION=0.0.0 \
-  -t cortex:test-arm64 .
-scripts/smoke-container.sh cortex:test-arm64 0.0.0 linux/arm64
+  -t pulse:test-arm64 .
+scripts/smoke-container.sh pulse:test-arm64 0.0.0 linux/arm64
 ```
 
-Repeat for `linux/amd64`; execution on a different host architecture requires QEMU/binfmt support. CI configures this automatically. The smoke check runs Cortex, validates inline YAML without a mounted file and explicit-file precedence on a read-only filesystem, exercises the supervisor, checks the non-root image user, confirms the default image has no c2j executable, and runs the cloud authentication/API tests in the test-only distroless target. The CLI integration tests exercise embedded discovery through the JobDB HTTP protocol with an empty `PATH`.
+Repeat for `linux/amd64`; execution on a different host architecture requires QEMU/binfmt support. CI configures this automatically. The smoke check runs Pulse, validates inline YAML without a mounted file and explicit-file precedence on a read-only filesystem, exercises the supervisor, checks the non-root image user, confirms the default image has no c2j executable, and runs the cloud authentication/API tests in the test-only distroless target. The CLI integration tests exercise embedded discovery through the JobDB HTTP protocol with an empty `PATH`.

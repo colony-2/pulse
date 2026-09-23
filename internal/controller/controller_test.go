@@ -3,10 +3,10 @@ package controller
 import (
 	"context"
 	"errors"
-	"github.com/colony-2/cortex/internal/c2j"
-	"github.com/colony-2/cortex/internal/config"
-	"github.com/colony-2/cortex/internal/scheduler"
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/internal/c2j"
+	"github.com/colony-2/pulse/internal/config"
+	"github.com/colony-2/pulse/internal/scheduler"
+	"github.com/colony-2/pulse/pkg/compute"
 	"io"
 	"log/slog"
 	"testing"
@@ -59,10 +59,10 @@ func TestCellIsolationPaginationAndCooldown(t *testing.T) {
 	if len(p.requests) != 2 || calls != 2 {
 		t.Fatal(p.requests, calls)
 	}
-	if p.requests[0].Metadata["cortex_job_id"] != "a" || p.requests[1].Metadata["cortex_job_id"] != "b" {
+	if p.requests[0].Metadata["pulse_job_id"] != "a" || p.requests[1].Metadata["pulse_job_id"] != "b" {
 		t.Fatal("wrong closures")
 	}
-	if p.process[1].Env["CORTEX_JOB_ID"] != "b" {
+	if p.process[1].Env["PULSE_JOB_ID"] != "b" {
 		t.Fatal(p.process)
 	}
 	c.Once(context.Background())

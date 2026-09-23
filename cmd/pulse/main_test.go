@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/colony-2/c2j/pkg/joblist"
-	"github.com/colony-2/cortex/pkg/compute"
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	jobremote "github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
+	"github.com/colony-2/pulse/pkg/compute"
 	"gopkg.in/yaml.v3"
 	"net/http"
 	"net/http/httptest"
@@ -23,7 +23,7 @@ import (
 
 func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
 	dir := t.TempDir()
-	binary := filepath.Join(dir, "cortex")
+	binary := filepath.Join(dir, "pulse")
 	if out, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %s %v", out, err)
 	}
@@ -64,7 +64,7 @@ func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
 				}
 				results := []map[string]any{}
 				for _, item := range in.Items {
-					if item.CPUMillis != 1000 || item.Image == "" || item.Metadata["cortex_job_id"] == "" || item.Process.Env["C2J_EXECUTION_CPU"] != "1000m" || item.Process.Env["CORTEX_JOB_ID"] == "" || item.Process.Env["CORTEX_CONFIG"] != "" {
+					if item.CPUMillis != 1000 || item.Image == "" || item.Metadata["pulse_job_id"] == "" || item.Process.Env["C2J_EXECUTION_CPU"] != "1000m" || item.Process.Env["PULSE_JOB_ID"] == "" || item.Process.Env["PULSE_CONFIG"] != "" {
 						t.Error(item)
 					}
 					results = append(results, map[string]any{"launch_id": item.LaunchID, "status": "accepted"})
@@ -77,21 +77,21 @@ func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
 			defer server.Close()
 			cfg := map[string]any{
 				"defaults":  map[string]any{"image": "registry.example/runner:1", "platform": "linux/arm64", "cpu": "1", "memory": "1Gi", "scratch": "1Gi"},
-				"providers": map[string]any{"remote": map[string]any{"type": "remote", "endpoint": server.URL, "allow_http": true, "token_env": "CORTEX_TEST_PROVIDER_TOKEN"}},
+				"providers": map[string]any{"remote": map[string]any{"type": "remote", "endpoint": server.URL, "allow_http": true, "token_env": "PULSE_TEST_PROVIDER_TOKEN"}},
 				"targets":   []any{map[string]any{"instance_id": "test", "jobdb": db.URL + "/acme", "cells": []string{"github.com/acme/app"}, "launch_services": []any{map[string]any{"name": "remote", "priority": 1}}}},
 			}
 			data, _ := yaml.Marshal(cfg)
 			cmd := exec.Command(binary, "-once")
 			cmd.Dir = t.TempDir()
-			cmd.Env = []string{"PATH=" + t.TempDir(), "CORTEX_TEST_PROVIDER_TOKEN=test-token"}
+			cmd.Env = []string{"PATH=" + t.TempDir(), "PULSE_TEST_PROVIDER_TOKEN=test-token"}
 			if source == "file" {
-				path := filepath.Join(dir, "cortex.yaml")
+				path := filepath.Join(dir, "pulse.yaml")
 				if err := os.WriteFile(path, data, 0600); err != nil {
 					t.Fatal(err)
 				}
 				cmd.Args = append(cmd.Args, "-config", path)
 			} else {
-				cmd.Env = append(cmd.Env, "CORTEX_CONFIG="+string(data))
+				cmd.Env = append(cmd.Env, "PULSE_CONFIG="+string(data))
 			}
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("CLI: %s %v", out, err)
@@ -116,7 +116,7 @@ func (r listOnlyRuntime) ListJobs(ctx context.Context, req jobdb.ListJobsRequest
 
 func TestCLIHTTPAndShutdown(t *testing.T) {
 	dir := t.TempDir()
-	binary := filepath.Join(dir, "cortex")
+	binary := filepath.Join(dir, "pulse")
 	if out, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %s %v", out, err)
 	}
@@ -131,13 +131,13 @@ func TestCLIHTTPAndShutdown(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(compute.ListResponse{Items: []compute.Instance{{ID: "queued-one", LaunchID: "launch-one", State: "queued", Metadata: map[string]string{"cortex_launch_id": "launch-one"}, Refs: []string{}}}})
+		json.NewEncoder(w).Encode(compute.ListResponse{Items: []compute.Instance{{ID: "queued-one", LaunchID: "launch-one", State: "queued", Metadata: map[string]string{"pulse_launch_id": "launch-one"}, Refs: []string{}}}})
 	}))
 	defer provider.Close()
 	cfg := map[string]any{
 		"http":      map[string]any{"listen": "127.0.0.1:0"},
 		"defaults":  map[string]any{"image": "registry.example/runner:1", "platform": "linux/amd64", "cpu": "1", "memory": "1Gi", "scratch": "1Gi"},
-		"providers": map[string]any{"pool": map[string]any{"type": "remote", "endpoint": provider.URL, "allow_http": true, "token_env": "CORTEX_TEST_PROVIDER_TOKEN"}},
+		"providers": map[string]any{"pool": map[string]any{"type": "remote", "endpoint": provider.URL, "allow_http": true, "token_env": "PULSE_TEST_PROVIDER_TOKEN"}},
 		"targets":   []any{map[string]any{"instance_id": "test", "jobdb": db.URL + "/acme", "cells": []string{"github.com/acme/app"}, "launch_services": []any{map[string]any{"name": "pool", "priority": 1}}}},
 	}
 	data, _ := yaml.Marshal(cfg)
@@ -145,7 +145,7 @@ func TestCLIHTTPAndShutdown(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary)
 	cmd.Dir = dir
-	cmd.Env = []string{"PATH=" + t.TempDir(), "CORTEX_TEST_PROVIDER_TOKEN=test-token", "CORTEX_CONFIG=" + string(data)}
+	cmd.Env = []string{"PATH=" + t.TempDir(), "PULSE_TEST_PROVIDER_TOKEN=test-token", "PULSE_CONFIG=" + string(data)}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -218,7 +218,7 @@ func TestCLIHTTPAndShutdown(t *testing.T) {
 
 func TestCLIConfigurationSources(t *testing.T) {
 	dir := t.TempDir()
-	binary := filepath.Join(dir, "cortex")
+	binary := filepath.Join(dir, "pulse")
 	if out, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %s %v", out, err)
 	}
@@ -226,7 +226,7 @@ func TestCLIConfigurationSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(dir, "cortex.yaml"), data, 0600); err != nil {
+	if err = os.WriteFile(filepath.Join(dir, "pulse.yaml"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
 	for _, tt := range []struct {
@@ -235,17 +235,17 @@ func TestCLIConfigurationSources(t *testing.T) {
 		wantError string
 	}{
 		{name: "default file", args: []string{"-check"}},
-		{name: "explicit file overrides invalid env", args: []string{"-config", "cortex.yaml", "-check"}, env: []string{"CORTEX_CONFIG=[invalid"}},
-		{name: "missing explicit file does not fall back", args: []string{"-config", "missing.yaml", "-check"}, env: []string{"CORTEX_CONFIG=" + string(data)}, wantError: "missing.yaml"},
-		{name: "invalid env does not fall back", args: []string{"-check"}, env: []string{"CORTEX_CONFIG=[invalid"}, wantError: "CORTEX_CONFIG"},
-		{name: "empty env does not fall back", args: []string{"-check"}, env: []string{"CORTEX_CONFIG="}, wantError: "CORTEX_CONFIG"},
-		{name: "empty explicit path", args: []string{"-config=", "-check"}, env: []string{"CORTEX_CONFIG=" + string(data)}, wantError: "nonempty file path"},
-		{name: "version ignores config", args: []string{"-version"}, env: []string{"CORTEX_CONFIG=[invalid"}},
+		{name: "explicit file overrides invalid env", args: []string{"-config", "pulse.yaml", "-check"}, env: []string{"PULSE_CONFIG=[invalid"}},
+		{name: "missing explicit file does not fall back", args: []string{"-config", "missing.yaml", "-check"}, env: []string{"PULSE_CONFIG=" + string(data)}, wantError: "missing.yaml"},
+		{name: "invalid env does not fall back", args: []string{"-check"}, env: []string{"PULSE_CONFIG=[invalid"}, wantError: "PULSE_CONFIG"},
+		{name: "empty env does not fall back", args: []string{"-check"}, env: []string{"PULSE_CONFIG="}, wantError: "PULSE_CONFIG"},
+		{name: "empty explicit path", args: []string{"-config=", "-check"}, env: []string{"PULSE_CONFIG=" + string(data)}, wantError: "nonempty file path"},
+		{name: "version ignores config", args: []string{"-version"}, env: []string{"PULSE_CONFIG=[invalid"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := exec.Command(binary, tt.args...)
 			cmd.Dir = dir
-			cmd.Env = append([]string{"PATH=" + t.TempDir(), "CORTEX_PROVIDER_TOKEN=test-token"}, tt.env...)
+			cmd.Env = append([]string{"PATH=" + t.TempDir(), "PULSE_PROVIDER_TOKEN=test-token"}, tt.env...)
 			out, err := cmd.CombinedOutput()
 			if tt.wantError != "" {
 				if err == nil || !strings.Contains(string(out), tt.wantError) {

@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// Run supervises a process group so timeout enforcement survives Cortex exit.
+// Run supervises a process group so timeout enforcement survives Pulse exit.
 func Run(ctx context.Context, argv []string, timeout time.Duration, startBefore time.Time) int {
 	if len(argv) == 0 || timeout <= 0 {
 		return 125

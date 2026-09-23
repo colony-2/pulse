@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/pkg/compute"
 )
 
 func metadata(id string) map[string]string {
-	return map[string]string{"cortex_managed_by": "cortex", "cortex_launch_id": id, "cortex_job_id": "job-" + id}
+	return map[string]string{"pulse_managed_by": "pulse", "pulse_launch_id": id, "pulse_job_id": "job-" + id}
 }
 func TestGoogleListActiveAndPagination(t *testing.T) {
 	p, _ := New(Config{Kind: "cloudrun", Region: "region", Project: "project"})
@@ -26,7 +26,7 @@ func TestGoogleListActiveAndPagination(t *testing.T) {
 			t.Error(r.Method, r.URL, r.Header)
 		}
 		row := func(id string) map[string]any {
-			return map[string]any{"name": "executions/" + id, "template": map[string]any{"containers": []any{map[string]any{"env": []any{map[string]string{"name": "CORTEX_MANAGED_BY", "value": "cortex"}, map[string]string{"name": "CORTEX_LAUNCH_ID", "value": id}, map[string]string{"name": "SECRET", "value": "hidden"}}}}}}
+			return map[string]any{"name": "executions/" + id, "template": map[string]any{"containers": []any{map[string]any{"env": []any{map[string]string{"name": "PULSE_MANAGED_BY", "value": "pulse"}, map[string]string{"name": "PULSE_LAUNCH_ID", "value": id}, map[string]string{"name": "SECRET", "value": "hidden"}}}}}}
 		}
 		if r.URL.Query().Get("pageToken") == "next" {
 			x := row("run")

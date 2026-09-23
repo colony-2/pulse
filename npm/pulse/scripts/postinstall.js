@@ -20,11 +20,11 @@ const platforms = {
 
 function assetName(version, platform = process.platform, arch = process.arch) {
   const target = platforms[`${platform}:${arch}`];
-  if (!target) throw new Error(`Unsupported Cortex platform: ${platform}/${arch}`);
+  if (!target) throw new Error(`Unsupported Pulse platform: ${platform}/${arch}`);
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
-    throw new Error(`Invalid Cortex release version: ${version}`);
+    throw new Error(`Invalid Pulse release version: ${version}`);
   }
-  return `cortex_${version}_${target[0]}_${target[1]}.tar.gz`;
+  return `pulse_${version}_${target[0]}_${target[1]}.tar.gz`;
 }
 
 function download(url, destination, redirects = 0) {
@@ -78,8 +78,8 @@ function verifyChecksum(archive, checksums, name) {
 async function install({ root = path.resolve(__dirname, ".."), fetch = downloadWithRetry } = {}) {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   const name = assetName(pkg.version);
-  const base = `https://github.com/colony-2/cortex/releases/download/v${pkg.version}`;
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "cortex-install-"));
+  const base = `https://github.com/colony-2/pulse/releases/download/v${pkg.version}`;
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pulse-install-"));
   const vendor = path.join(root, "vendor");
   let staged;
   try {
@@ -89,14 +89,14 @@ async function install({ root = path.resolve(__dirname, ".."), fetch = downloadW
     await fetch(`${base}/checksums.txt`, checksums);
     verifyChecksum(archive, checksums, name);
     // Extract only the expected binary, never arbitrary archive paths.
-    execFileSync("tar", ["-xzf", archive, "-C", temp, "cortex"], { stdio: "inherit" });
-    const extracted = path.join(temp, "cortex");
+    execFileSync("tar", ["-xzf", archive, "-C", temp, "pulse"], { stdio: "inherit" });
+    const extracted = path.join(temp, "pulse");
     if (!fs.lstatSync(extracted).isFile()) throw new Error("Release binary is not a regular file");
     fs.mkdirSync(vendor, { recursive: true });
-    staged = path.join(vendor, `.cortex-${process.pid}-${crypto.randomBytes(6).toString("hex")}`);
+    staged = path.join(vendor, `.pulse-${process.pid}-${crypto.randomBytes(6).toString("hex")}`);
     fs.copyFileSync(extracted, staged);
     fs.chmodSync(staged, 0o755);
-    fs.renameSync(staged, path.join(vendor, "cortex"));
+    fs.renameSync(staged, path.join(vendor, "pulse"));
   } finally {
     if (staged) fs.rmSync(staged, { force: true });
     fs.rmSync(temp, { recursive: true, force: true });

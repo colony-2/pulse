@@ -3,7 +3,7 @@ package cloud
 import (
 	"context"
 	"encoding/json"
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/pkg/compute"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,7 +11,7 @@ import (
 )
 
 func request(id string) compute.Request {
-	return compute.Request{LaunchID: id, Allocation: compute.Allocation{CPUMillis: 1500, MemoryBytes: 3 * Gi, ScratchBytes: Gi, Image: "registry.example/runner@sha256:" + strings.Repeat("a", 64), Platform: "linux/amd64"}, TimeoutSeconds: 60, Metadata: map[string]string{"cortex_job_id": "job", "cortex_launch_id": id}}
+	return compute.Request{LaunchID: id, Allocation: compute.Allocation{CPUMillis: 1500, MemoryBytes: 3 * Gi, ScratchBytes: Gi, Image: "registry.example/runner@sha256:" + strings.Repeat("a", 64), Platform: "linux/amd64"}, TimeoutSeconds: 60, Metadata: map[string]string{"pulse_job_id": "job", "pulse_launch_id": id}}
 }
 func launch(r compute.Request) compute.Launch {
 	return compute.Launch{Request: r, Process: compute.Process{Command: []string{"c2j"}, Args: []string{"run"}, Env: map[string]string{"TEST": "literal $value", "C2J_EXECUTION_CPU": "1500m"}}}
@@ -94,7 +94,7 @@ func TestGoogleCapacityAndUnknownStart(t *testing.T) {
 func TestECSNativeTaskAndFailure(t *testing.T) {
 	for _, full := range []bool{false, true} {
 		req := request("ecs")
-		p, _ := New(Config{Kind: "ecs", Region: "r", Cluster: "cluster", Subnets: []string{"subnet"}, ExecutionRole: "role", SupervisorPath: "/usr/local/bin/cortex-exec", ImageStorageBounds: map[string]int64{req.Image: 2 * Gi}})
+		p, _ := New(Config{Kind: "ecs", Region: "r", Cluster: "cluster", Subnets: []string{"subnet"}, ExecutionRole: "role", SupervisorPath: "/usr/local/bin/pulse-exec", ImageStorageBounds: map[string]int64{req.Image: 2 * Gi}})
 		calls := 0
 		t.Setenv("AWS_ACCESS_KEY_ID", "test-access-key")
 		t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
@@ -191,8 +191,8 @@ func TestUnsupportedScratchEvidence(t *testing.T) {
 }
 
 func TestEnvironmentPreservesSuppliedValues(t *testing.T) {
-	supplied := map[string]string{"CORTEX_JOB_ID": "literal", "CORTEX_SCRATCH_DIR": "/custom", "TMPDIR": "/custom/tmp", "C2J_EXECUTION_CPU": "1500m"}
-	entries := envList(compute.Process{Env: supplied}, map[string]string{"cortex_job_id": "metadata"})
+	supplied := map[string]string{"PULSE_JOB_ID": "literal", "PULSE_SCRATCH_DIR": "/custom", "TMPDIR": "/custom/tmp", "C2J_EXECUTION_CPU": "1500m"}
+	entries := envList(compute.Process{Env: supplied}, map[string]string{"pulse_job_id": "metadata"})
 	for _, entry := range entries {
 		if want, ok := supplied[entry["name"]]; ok && entry["value"] != want {
 			t.Fatal(entry)

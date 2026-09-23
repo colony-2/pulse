@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/colony-2/cortex/internal/controller"
-	"github.com/colony-2/cortex/internal/scheduler"
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/internal/controller"
+	"github.com/colony-2/pulse/internal/scheduler"
+	"github.com/colony-2/pulse/pkg/compute"
 )
 
 type API struct {

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/colony-2/cortex/pkg/compute"
+	"github.com/colony-2/pulse/pkg/compute"
 )
 
 type Key struct{ Instance, Tenant, Job string }
