@@ -26,9 +26,11 @@ func TestNativeStdinDeliveryAndEOF(t *testing.T) {
 				return
 			}
 			defer conn.Close()
+			// Publish attachment before the response lets the client start. The
+			// /start handler can run as soon as Flush sends the upgrade response.
+			close(attached)
 			rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n")
 			rw.Flush()
-			close(attached)
 			data, err := io.ReadAll(rw)
 			if err != nil {
 				t.Error(err)
