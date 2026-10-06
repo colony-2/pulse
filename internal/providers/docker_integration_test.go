@@ -231,7 +231,11 @@ cat "$TMPDIR/result"`)
 		started := time.Now()
 		submit(t, l, compute.Accepted)
 		out := wait(t, name, "4")
-		if time.Since(started) > 15*time.Second || !strings.Contains(out, "job total timed out after 1s") {
+		// Assert c2j's timeout outcome, not Docker/VM startup and teardown speed.
+		// This container has only 100m CPU when the daemon enforces limits.
+		// The enclosing test context still bounds a hung executor.
+		t.Logf("c2j timeout result received after %s including container startup", time.Since(started))
+		if !strings.Contains(out, "job total timed out after 1s") {
 			t.Fatalf("c2j did not enforce its recipe timeout: %s", out)
 		}
 		if command := docker(t, "inspect", "--format", "{{json .Config.Entrypoint}}", name); command != `["c2j"]` {
@@ -248,8 +252,15 @@ cat "$TMPDIR/result"`)
 		}
 	})
 	t.Run("capacity and execution survive provider restart", func(t *testing.T) {
-		l, name := newLaunch(t, "echo started; sleep 5; echo completed")
+		// Keep the job alive until all restart/accounting assertions finish.
+		// A fixed sleep races slow daemon startup, especially in a macOS VM.
+		l, name := newLaunch(t, `mkfifo /scratch/release
+echo started
+read -r signal < /scratch/release
+test "$signal" = release
+echo completed`)
 		submit(t, l, compute.Accepted)
+		docker(t, "exec", name, "/bin/sh", "-ec", "until [ -p /scratch/release ]; do sleep 0.1; done")
 		closeProviders()
 		instances, closeAgain, err := providers.Build(ctx, cfg)
 		if err != nil {
@@ -263,6 +274,7 @@ cat "$TMPDIR/result"`)
 		if err != nil || len(listed.Items) != 1 || listed.Items[0].State != "running" {
 			t.Fatalf("running job missing from listing: %+v, %v", listed, err)
 		}
+		docker(t, "exec", name, "/bin/sh", "-ec", "printf 'release\\n' > /scratch/release")
 		if out := wait(t, name, "0"); out != "started\ncompleted" {
 			t.Fatalf("controller restart interrupted execution: %q", out)
 		}
