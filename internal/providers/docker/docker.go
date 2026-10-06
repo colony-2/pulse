@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -23,6 +25,7 @@ import (
 )
 
 const accountingLabel = "pulse_docker_accounting"
+const limitsLabel = "pulse_docker_limits"
 
 type Config struct {
 	Socket, Helper, LockDir, ScratchPath, RegistryAuth string
@@ -40,13 +43,14 @@ func (c charge) add(b charge) charge {
 }
 
 type Provider struct {
-	cfg       Config
-	e         *engine
-	platform  string
-	gate      chan struct{}
-	uncertain map[string]charge
-	lock      *os.File
-	closeOnce sync.Once
+	cfg        Config
+	e          *engine
+	platform   string
+	gate       chan struct{}
+	uncertain  map[string]charge
+	lock       *os.File
+	closeOnce  sync.Once
+	unenforced bool
 }
 type nativePlan struct {
 	Request    compute.Request
@@ -79,6 +83,25 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 	if runtime.GOOS != "linux" || !strings.HasPrefix(cfg.Socket, "unix:///") {
 		return nil, fmt.Errorf("local Docker requires Linux and a Unix socket")
 	}
+	if cfg.Helper == "" {
+		// Release archives and the container image install both binaries together.
+		if executable, err := os.Executable(); err == nil {
+			candidate := filepath.Join(filepath.Dir(executable), "pulse-exec")
+			if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() && stat.Mode()&0111 != 0 {
+				cfg.Helper = candidate
+			}
+		}
+		if cfg.Helper == "" {
+			helper, err := exec.LookPath("pulse-exec")
+			if err != nil {
+				return nil, fmt.Errorf("Docker requires pulse-exec beside pulse or on PATH; alternatively configure providers.<name>.helper with an absolute daemon-visible path")
+			}
+			cfg.Helper, err = filepath.Abs(helper)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 	if !filepath.IsAbs(cfg.Helper) {
 		return nil, fmt.Errorf("Docker helper must be an absolute daemon-visible path")
 	}
@@ -88,7 +111,17 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 	}
 	e := newEngine(cfg.Socket)
 	e.registryAuth = cfg.RegistryAuth
-	return open(ctx, cfg, e, true)
+	p, err := open(ctx, cfg, e, true)
+	if err != nil {
+		return nil, err
+	}
+	if !p.unenforced {
+		if err := p.checkLimits(ctx); err != nil {
+			p.Close()
+			return nil, err
+		}
+	}
+	return p, nil
 }
 func open(ctx context.Context, cfg Config, e *engine, locking bool) (*Provider, error) {
 	if cfg.CPUMillis <= 0 || cfg.MemoryBytes <= 0 || cfg.MaxContainers <= 0 || cfg.Overhead < 0 {
@@ -127,13 +160,16 @@ func open(ctx context.Context, cfg Config, e *engine, locking bool) (*Provider, 
 	case "x86_64":
 		arch = "amd64"
 	}
-	if info.OSType != "linux" || !info.MemoryLimit || !info.SwapLimit || !info.CPUCfsQuota {
-		return nil, fmt.Errorf("Docker daemon lacks required Linux CPU/memory/swap limits")
+	if info.OSType != "linux" {
+		return nil, fmt.Errorf("Docker daemon must run Linux")
 	}
 	if cfg.CPUMillis > int64(info.NCPU)*1000 || cfg.MemoryBytes > info.MemTotal {
 		return nil, fmt.Errorf("Docker budget exceeds daemon resources")
 	}
 	p := &Provider{cfg: cfg, e: e, platform: info.OSType + "/" + arch, gate: make(chan struct{}, 1), uncertain: map[string]charge{}}
+	if !info.MemoryLimit || !info.SwapLimit || !info.CPUCfsQuota {
+		p.disableLimits("Docker reports CPU, memory, or swap limits unavailable")
+	}
 	if locking {
 		if cfg.LockDir == "" {
 			cfg.LockDir = filepath.Join(os.TempDir(), "pulse-docker-locks")
@@ -157,6 +193,11 @@ func open(ctx context.Context, cfg Config, e *engine, locking bool) (*Provider, 
 		return nil, err
 	}
 	return p, nil
+}
+
+func (p *Provider) disableLimits(reason string) {
+	p.unenforced = true
+	slog.Warn("Docker resource limits unavailable; jobs will run without CPU, memory, or swap enforcement; admission budgets still apply", "reason", reason)
 }
 func (p *Provider) Close() {
 	p.closeOnce.Do(func() {
@@ -210,7 +251,15 @@ func (p *Provider) usage(ctx context.Context) (charge, map[string]container, err
 			return charge{}, nil, fmt.Errorf("invalid managed capacity accounting")
 		}
 		h := c.HostConfig
-		if h.NanoCPUs <= 0 || h.NanoCPUs%1000000 != 0 || h.NanoCPUs/1000000 != cost.CPU || h.Memory <= 0 || h.Memory > cost.Memory || h.MemorySwap != h.Memory || h.RestartPolicy.Name != "no" {
+		validLimits := h.NanoCPUs > 0 && h.NanoCPUs%1000000 == 0 && h.NanoCPUs/1000000 == cost.CPU && h.Memory > 0 && h.Memory <= cost.Memory && h.MemorySwap == h.Memory
+		switch c.Config.Labels[limitsLabel] {
+		case "disabled":
+			validLimits = h.NanoCPUs == 0 && h.Memory == 0 && h.MemorySwap == 0
+		case "", "enforced": // Containers from older versions have no limits label.
+		default:
+			validLimits = false
+		}
+		if !validLimits || h.RestartPolicy.Name != "no" {
 			return charge{}, nil, fmt.Errorf("managed container limits disagree with accounting")
 		}
 		delete(p.uncertain, id)
@@ -360,6 +409,10 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		accounting, _ := json.Marshal(cost)
 		labels[accountingLabel] = string(accounting)
 		labels["pulse_process_fingerprint"] = hash
+		labels[limitsLabel] = "enforced"
+		if p.unenforced {
+			labels[limitsLabel] = "disabled"
+		}
 		env := []string{}
 		for k, v := range l.Process.Env {
 			env = append(env, k+"="+v)
@@ -381,7 +434,11 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		args = append(args, l.Process.Command...)
 		args = append(args, l.Process.Args...)
 		a := plan.Allocation
-		body := map[string]any{"Image": plan.ImageID, "Entrypoint": []string{"/__pulse/exec"}, "Cmd": args, "Env": env, "Labels": labels, "WorkingDir": l.Process.WorkingDir, "HostConfig": map[string]any{"NanoCpus": a.CPUMillis * 1000000, "Memory": a.MemoryBytes + a.ScratchBytes, "MemorySwap": a.MemoryBytes + a.ScratchBytes, "RestartPolicy": map[string]any{"Name": "no"}, "AutoRemove": false, "Binds": []string{p.cfg.Helper + ":/__pulse/exec:ro"}, "Tmpfs": map[string]string{p.cfg.ScratchPath: fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes)}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "3"}}}}
+		cpu, memory := a.CPUMillis*1000000, a.MemoryBytes+a.ScratchBytes
+		if p.unenforced {
+			cpu, memory = 0, 0
+		}
+		body := map[string]any{"Image": plan.ImageID, "Entrypoint": []string{"/__pulse/exec"}, "Cmd": args, "Env": env, "Labels": labels, "WorkingDir": l.Process.WorkingDir, "HostConfig": map[string]any{"NanoCpus": cpu, "Memory": memory, "MemorySwap": memory, "RestartPolicy": map[string]any{"Name": "no"}, "AutoRemove": false, "Binds": []string{p.cfg.Helper + ":/__pulse/exec:ro"}, "Tmpfs": map[string]string{p.cfg.ScratchPath: fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes)}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "3"}}}}
 		sum := sha256.Sum256([]byte(l.LaunchID))
 		name := "pulse-" + hex.EncodeToString(sum[:16])
 		var created struct {
@@ -420,7 +477,7 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 			continue
 		}
 		var inspected container
-		if err = p.e.call(ctx, "GET", "/containers/"+url.PathEscape(created.ID)+"/json", nil, &inspected); err != nil || inspected.HostConfig.NanoCPUs != a.CPUMillis*1000000 || inspected.HostConfig.Memory != a.MemoryBytes+a.ScratchBytes || inspected.HostConfig.MemorySwap != inspected.HostConfig.Memory || inspected.HostConfig.RestartPolicy.Name != "no" || inspected.HostConfig.Tmpfs[p.cfg.ScratchPath] != fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes) {
+		if err = p.e.call(ctx, "GET", "/containers/"+url.PathEscape(created.ID)+"/json", nil, &inspected); err != nil || inspected.HostConfig.NanoCPUs != cpu || inspected.HostConfig.Memory != memory || inspected.HostConfig.MemorySwap != memory || inspected.HostConfig.RestartPolicy.Name != "no" || inspected.HostConfig.Tmpfs[p.cfg.ScratchPath] != fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes) {
 			r.Status = compute.Unknown
 			r.Reason = "Docker configuration verification failed; container not started"
 			out = append(out, r)

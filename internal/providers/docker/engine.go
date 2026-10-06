@@ -18,7 +18,10 @@ type engine struct {
 	base, version string
 	registryAuth  string
 }
-type apiError struct{ code int }
+type apiError struct {
+	code    int
+	message string // Used internally to distinguish unsupported cgroups from other failures.
+}
 
 func (e *apiError) Error() string { return fmt.Sprintf("Docker API returned HTTP %d", e.code) }
 func newEngine(socket string) *engine {
@@ -49,8 +52,9 @@ func (e *engine) call(ctx context.Context, method, path string, body any, out an
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-		return &apiError{resp.StatusCode}
+		var body struct{ Message string }
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&body)
+		return &apiError{code: resp.StatusCode, message: body.Message}
 	}
 	if out == nil {
 		_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
@@ -74,7 +78,7 @@ func (e *engine) pull(ctx context.Context, image, platform string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return &apiError{resp.StatusCode}
+		return &apiError{code: resp.StatusCode}
 	}
 	d := json.NewDecoder(io.LimitReader(resp.Body, 64<<20))
 	for {

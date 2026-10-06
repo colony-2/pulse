@@ -205,3 +205,69 @@ func TestClaimBatchLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultDockerProvider(t *testing.T) {
+	start := strings.Index(valid, "providers:\n")
+	end := strings.Index(valid, "targets:\n")
+	base := valid[:start] + valid[end:]
+	base = strings.Replace(base, "    launch_services: [{name: pool, priority: 1}]\n", "", 1)
+	for _, providers := range []string{"", "providers: {}\n", "providers: null\n"} {
+		t.Run(providers, func(t *testing.T) {
+			cfg, err := Parse([]byte(base + providers))
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := cfg.Providers["docker"]
+			if len(cfg.Providers) != 1 || p.Type != "docker" || p.Socket != "unix:///var/run/docker.sock" || p.Capacity.CPU != "1000m" || p.Capacity.Memory != "2359296Ki" || p.Capacity.MaxContainers != 1 || p.Overhead != "256Mi" {
+				t.Fatalf("unexpected Docker defaults: %+v", p)
+			}
+			if services := cfg.Targets[0].Services; len(services) != 1 || services[0] != (Service{Name: "docker", Priority: 1}) {
+				t.Fatalf("unexpected launch services: %+v", services)
+			}
+		})
+	}
+	if _, err := Parse([]byte(base + "    launch_services: [{name: typo, priority: 1}]\n")); err == nil {
+		t.Fatal("unknown explicit service silently replaced")
+	}
+	cfg, err := Parse([]byte(base + "    launch_services: [{name: docker, priority: 2}]\n"))
+	if err != nil || cfg.Targets[0].Services[0].Priority != 2 {
+		t.Fatal("explicit Docker route not preserved", err)
+	}
+}
+
+func TestExplicitProviderDoesNotAddDocker(t *testing.T) {
+	cfg, err := Parse([]byte(valid))
+	if err != nil || len(cfg.Providers) != 1 || cfg.Providers["pool"].Type != "remote" {
+		t.Fatal(cfg, err)
+	}
+	for _, data := range []string{
+		strings.Replace(valid, "type: remote", "type: invalid", 1),
+		strings.Replace(valid, "    launch_services: [{name: pool, priority: 1}]\n", "", 1),
+	} {
+		if _, err := Parse([]byte(data)); err == nil {
+			t.Fatal("invalid explicit provider configuration fell back to Docker")
+		}
+	}
+}
+
+func TestDockerBudgetDefaultsRoundUp(t *testing.T) {
+	data := strings.Replace(valid, "type: remote", "type: docker", 1)
+	data = strings.Replace(data, `cpu: "1"`, `cpu: "1001m"`, 1)
+	data = strings.ReplaceAll(data, "1Gi", "1Ki")
+	cfg, err := Parse([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Providers["pool"]
+	if p.Capacity.CPU != "1010m" || p.Capacity.Memory != "268288Ki" {
+		t.Fatalf("budget cannot fit rounded default job: %+v", p)
+	}
+	cfg, err = Load("../../examples/docker.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p = cfg.Providers["local"]
+	if p.Capacity.CPU != "4" || p.Capacity.Memory != "8Gi" || p.Capacity.MaxContainers != 4 || p.Helper != "/usr/local/lib/pulse/pulse-exec" {
+		t.Fatalf("explicit Docker configuration changed: %+v", p)
+	}
+}

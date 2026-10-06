@@ -6,7 +6,7 @@ Status: design for the built-in `docker` adapter. See [README.md](README.md) for
 
 Docker containers have no resource constraints by default; CPU and memory limits bound individual containers. Our admission policy must also bound the sum of their allocations. Use a configured pool budget rather than admitting work based on low instantaneous utilization. See [Docker resource constraints](https://docs.docker.com/engine/containers/resource_constraints/).
 
-Initial scope: a local Linux Docker Engine with working CPU, memory, and swap-limit enforcement. One Pulse process owns admission to that daemon. Configure an explicit budget after leaving headroom for the host, Docker, image operations, and other workloads:
+Initial scope: a local Linux Docker Engine. CPU, memory, and swap limits are applied when available. If the daemon cannot enforce them, Pulse warns at startup and runs without those limits while retaining admission accounting, bounded tmpfs, and execution deadlines. One Pulse process owns admission to that daemon. Configure an explicit budget after leaving headroom for the host, Docker, image operations, and other workloads:
 
 ```yaml
 providers:
@@ -23,7 +23,7 @@ providers:
       path: /scratch
 ```
 
-This provider instance can be referenced by a target as `{name: local, priority: 1}`. The example budget is illustrative, not an automatically detected machine size. Startup validates it against the daemon's available CPU/memory and required enforcement features. The budget is an operator-reserved pool; unrelated processes or unrestricted containers cannot be assumed to respect it. Use a dedicated daemon/workload host or explicitly reserve and enforce the budget outside that pool.
+This provider instance can be referenced by a target as `{name: local, priority: 1}`. The example budget is illustrative, not an automatically detected machine size. Startup validates it against the daemon's available CPU/memory and probes resource enforcement. A daemon lacking enforcement produces a warning and uses admission-only budgets, which do not bound actual CPU or memory consumption. See [startup probing and Docker defaults](docs/providers.md#local-docker-capacity). The budget is an operator-reserved pool; unrelated processes or unrestricted containers cannot be assumed to respect it. Use a dedicated daemon/workload host or explicitly reserve and enforce the budget outside that pool.
 
 For an allocation with CPU `C`, usable memory `M`, scratch `S`, and configured per-container overhead `H`, charge:
 
@@ -41,7 +41,7 @@ An item fits only if every committed sum plus its charge stays within the corres
 
 A request too large for the total pool is `unsupported`; a busy pool is `no_capacity`. Neither queues a container. Review each item in order and continue after a non-fitting item, because a smaller item may still fit. Return exactly one result per item. Pulse can submit explicit declines to another service. There is no pending-work queue.
 
-The process environment remains exactly as supplied, including requested capacities when Docker limits round upward. Capacity accounting uses the rounded native values. Verify those limits before starting: enforcement failure is not permission to run unconstrained. A confirmed failure releases its reservation only when no delayed start remains possible. An uncertain create/start response retains its charge and returns `unknown` until reconciliation establishes the outcome.
+The process environment remains exactly as supplied, including requested capacities when Docker limits round upward. Capacity accounting uses the rounded native values. Verify the selected configuration before starting: constrained containers must retain their resource limits, and startup-detected fallback containers must record `pulse_docker_limits=disabled` with zero CPU/memory/swap limits. Recovery validates each container according to its recorded mode. A confirmed failure releases its reservation only when no delayed start remains possible. An uncertain create/start response retains its charge and returns `unknown` until reconciliation establishes the outcome.
 
 ## Recover accounting from Docker
 

@@ -17,6 +17,7 @@ type daemon struct {
 	creates     []map[string]any
 	startError  bool
 	createError bool
+	noLimits    bool
 }
 
 func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +29,7 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 	case path == "/version":
 		enc.Encode(map[string]any{"ApiVersion": "1.47"})
 	case path == "/info":
-		enc.Encode(map[string]any{"ID": "test", "NCPU": 8, "MemTotal": int64(16 << 30), "OSType": "linux", "Architecture": "arm64", "MemoryLimit": true, "SwapLimit": true, "CpuCfsQuota": true})
+		enc.Encode(map[string]any{"ID": "test", "NCPU": 8, "MemTotal": int64(16 << 30), "OSType": "linux", "Architecture": "arm64", "MemoryLimit": !d.noLimits, "SwapLimit": !d.noLimits, "CpuCfsQuota": !d.noLimits})
 	case strings.HasPrefix(path, "/images/"):
 		enc.Encode(map[string]any{"Id": "sha256:config", "Os": "linux", "Architecture": "arm64", "RepoDigests": []string{}})
 	case path == "/containers/json":

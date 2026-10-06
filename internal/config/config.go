@@ -242,8 +242,16 @@ func Parse(b []byte) (*Config, error) {
 			return nil, fmt.Errorf("route job_type required")
 		}
 	}
-	if len(c.Targets) == 0 || len(c.Providers) == 0 {
-		return nil, fmt.Errorf("targets and providers are required")
+	if len(c.Targets) == 0 {
+		return nil, fmt.Errorf("targets are required")
+	}
+	if len(c.Providers) == 0 {
+		c.Providers = map[string]Provider{"docker": {Type: "docker"}}
+		for i := range c.Targets {
+			if len(c.Targets[i].Services) == 0 {
+				c.Targets[i].Services = []Service{{Name: "docker", Priority: 1}}
+			}
+		}
 	}
 	for name, p := range c.Providers {
 		if name == "" {
@@ -253,6 +261,33 @@ func Parse(b []byte) (*Config, error) {
 		case "remote", "docker", "cloudrun", "ecs", "azurejobs":
 		default:
 			return nil, fmt.Errorf("unknown provider type %q", p.Type)
+		}
+		if p.Type == "docker" {
+			if p.Socket == "" {
+				p.Socket = "unix:///var/run/docker.sock"
+			}
+			if p.Overhead == "" {
+				p.Overhead = "256Mi"
+			}
+			overhead, err := quantity.Parse(p.Overhead, false)
+			if err != nil {
+				return nil, err
+			}
+			// Start with a single default-sized job. Larger pools are explicit.
+			if p.Capacity.CPU == "" {
+				p.Capacity.CPU = quantity.CPU((a.CPUMillis + 9) / 10 * 10)
+			}
+			if p.Capacity.Memory == "" {
+				memory := (a.MemoryBytes+4095)/4096*4096 + (a.ScratchBytes+4095)/4096*4096
+				if memory < 6<<20 {
+					memory = 6 << 20
+				}
+				p.Capacity.Memory = quantity.Bytes(memory + overhead)
+			}
+			if p.Capacity.MaxContainers == 0 {
+				p.Capacity.MaxContainers = 1
+			}
+			c.Providers[name] = p
 		}
 	}
 	instances := map[string]string{}
