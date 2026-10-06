@@ -17,8 +17,9 @@ async function main() {
     await install({ root, fetch: async (url, output) => {
       fs.copyFileSync(path.join(releaseDir, path.basename(new URL(url).pathname)), output);
     } });
-    const output = execFileSync(process.execPath, [path.join(root, "bin/cli.js"), "-version"], { encoding: "utf8" }).trim();
-    if (output !== `pulse ${version}`) throw new Error(`Unexpected npm-installed version: ${output}`);
+    fs.accessSync(path.join(root, "vendor/pulse-exec"), fs.constants.X_OK);
+    const output = execFileSync(process.execPath, [path.join(root, "bin/cli.js"), "version"], { encoding: "utf8" }).trim();
+    if (output !== `pulse version ${version}`) throw new Error(`Unexpected npm-installed version: ${output}`);
     console.log(`Packed npm install passed: ${output}`);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

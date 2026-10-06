@@ -28,10 +28,10 @@ func (testLease) Route() jobdb.Route                                            
 func (testLease) ExecutionState() jobdb.ExecutionState                               { return jobdb.ExecutionState{} }
 func (testLease) Reschedule(context.Context, jobdb.RescheduleExecutionRequest) error { return nil }
 
-type listFunc func(context.Context, string, string, string) (c2j.Page, error)
+type listFunc func(context.Context, string, string) (c2j.Page, error)
 
-func (f listFunc) List(c context.Context, u, cell, token string) (c2j.Page, error) {
-	return f(c, u, cell, token)
+func (f listFunc) List(c context.Context, u, token string) (c2j.Page, error) {
+	return f(c, u, token)
 }
 
 type accept struct {
@@ -50,14 +50,15 @@ func (p *accept) Submit(_ context.Context, ls []compute.Launch) ([]compute.Submi
 	}
 	return out, nil
 }
-func TestCellIsolationPaginationAndLeaseOwnership(t *testing.T) {
+func TestTenantIsolationPaginationAndLeaseOwnership(t *testing.T) {
 	p := &accept{}
-	cfg := &config.Config{Call: time.Second, Batch: time.Second, Cool: time.Minute, BatchSize: 1, PerCell: 10, MaxPages: 10, ExecutionTimeout: time.Hour, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Image: "registry.example/runner:1", Platform: "linux/arm64"}}
+	cfg := &config.Config{Call: time.Second, Batch: time.Second, Cool: time.Minute, BatchSize: 1, PerTenant: 10, MaxPages: 10, ExecutionTimeout: time.Hour, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Image: "registry.example/runner:1", Platform: "linux/arm64"}}
 	cfg.Defaults.Routes = []c2j.Route{{JobType: "recipe"}}
-	cfg.Targets = []config.Target{{Instance: "db", JobDB: "https://db/t", Tenant: "t", Cells: []string{"bad", "good"}, Services: []config.Service{{Name: "p", Priority: 1}}}}
+	cfg.Targets = []config.Target{{Instance: "db", JobDB: "https://db/t", Tenant: "t", Services: []config.Service{{Name: "p", Priority: 1}}}}
+	cfg.Targets = append([]config.Target{{Instance: "db", JobDB: "https://db/bad", Tenant: "bad", Services: cfg.Targets[0].Services}}, cfg.Targets...)
 	calls := 0
-	list := listFunc(func(_ context.Context, _, cell, token string) (c2j.Page, error) {
-		if cell == "bad" {
+	list := listFunc(func(_ context.Context, uri, token string) (c2j.Page, error) {
+		if uri == "https://db/bad" {
 			return c2j.Page{}, errors.New("offline")
 		}
 		calls++
@@ -67,7 +68,7 @@ func TestCellIsolationPaginationAndLeaseOwnership(t *testing.T) {
 			id = "b"
 			next = ""
 		}
-		return c2j.Page{Jobs: []c2j.Job{{Tenant: "t", ID: id, Status: "READY", Next: &c2j.Route{JobType: "recipe"}, Execution: &c2j.View{Status: "unresolved", Source: "absent"}}}, Next: next}, nil
+		return c2j.Page{Jobs: []c2j.Job{{Tenant: "t", ID: id, Repository: "github.com/acme/" + id, Status: "READY", Next: &c2j.Route{JobType: "recipe"}, Execution: &c2j.View{Status: "unresolved", Source: "absent"}}}, Next: next}, nil
 	})
 	claimed := map[string]bool{}
 	claimer := claimFunc(func(_ context.Context, _ string, job c2j.Job, _ string, _ time.Duration) (*c2j.Claimed, error) {
@@ -90,7 +91,7 @@ func TestCellIsolationPaginationAndLeaseOwnership(t *testing.T) {
 	})
 	c := Controller{Config: cfg, Lister: list, Claimer: claimer, Scheduler: scheduler.New(time.Minute, time.Second), Providers: map[string]compute.Provider{"p": p}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	if c.Once(context.Background()) == nil {
-		t.Fatal("lost cell failure")
+		t.Fatal("lost tenant failure")
 	}
 	if len(p.requests) != 2 || calls != 2 {
 		t.Fatal(p.requests, calls)
@@ -116,11 +117,11 @@ func (p *accept) List(context.Context, compute.ListRequest) (compute.ListRespons
 
 func TestConfiguredBatchSizeBoundsClaimCount(t *testing.T) {
 	p := &accept{}
-	cfg := &config.Config{Call: time.Second, Batch: time.Second, Lease: time.Minute, Cool: time.Minute, BatchSize: 2, PerCell: 7, MaxPages: 1, ExecutionTimeout: time.Hour, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Image: "runner:1", Platform: "linux/amd64"}}
+	cfg := &config.Config{Call: time.Second, Batch: time.Second, Lease: time.Minute, Cool: time.Minute, BatchSize: 2, PerTenant: 7, MaxPages: 1, ExecutionTimeout: time.Hour, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Image: "runner:1", Platform: "linux/amd64"}}
 	cfg.Defaults.Routes = []c2j.Route{{JobType: "recipe"}}
-	cfg.Targets = []config.Target{{Instance: "db", JobDB: "https://db/t", Tenant: "t", Cells: []string{"cell"}, Services: []config.Service{{Name: "p", Priority: 1}}}}
+	cfg.Targets = []config.Target{{Instance: "db", JobDB: "https://db/t", Tenant: "t", Services: []config.Service{{Name: "p", Priority: 1}}}}
 	var claims atomic.Int32
-	list := listFunc(func(context.Context, string, string, string) (c2j.Page, error) {
+	list := listFunc(func(context.Context, string, string) (c2j.Page, error) {
 		page := c2j.Page{}
 		for i := range 7 {
 			page.Jobs = append(page.Jobs, c2j.Job{Tenant: "t", ID: string(rune('a' + i)), Status: "READY", Next: &c2j.Route{JobType: "recipe"}, Execution: &c2j.View{Status: "unresolved", Source: "absent"}})

@@ -44,7 +44,6 @@ providers:
 targets:
   - instance_id: production
     jobdb: https://jobdb.example.com/acme
-    cells: [github.com/acme/app]
     launch_services:
       - name: google
         priority: 1

@@ -11,7 +11,7 @@ http:
   listen: ":8080"
 ```
 
-For local access only, use `127.0.0.1:8080`. Publish the container port with `-p 8080:8080` when using Docker. A bind failure stops startup. SIGINT/SIGTERM stops polling and shuts down the listener. `-once`, `-check`, and `-version` do not start the HTTP server.
+For local access only, use `127.0.0.1:8080`. Publish the container port with `-p 8080:8080` when using Docker. A bind failure stops startup. SIGINT/SIGTERM stops polling and shuts down the listener. `run --once`, `check`, and `version` do not start the HTTP server.
 
 ## Routes
 
@@ -105,7 +105,7 @@ An instance has a provider-local `id`, originating `launch_id`, state, correlati
 
 Always follow `next_page_token`, including after an empty `items` page: native pages may contain only terminal or unrelated resources. Omission ends pagination. Lists reflect current provider observations and can change between requests. They are not a snapshot or history. Native cloud APIs may briefly lag submission/state changes; absence does not prove non-acceptance, completion, or free capacity.
 
-Scope comes from each configured service: remote endpoint/principal, Docker daemon, Cloud Run project/region, ECS cluster, or Azure resource group. Lists include managed resources from previous Pulse processes and other controllers in the same scope. They are not limited to current target cells. See [provider listing details and read permissions](providers.md#active-instances-and-retention).
+Scope comes from each configured service: remote endpoint/principal, Docker daemon, Cloud Run project/region, ECS cluster, or Azure resource group. Lists include managed resources from previous Pulse processes and other controllers in the same scope. They are not limited to current target tenants. See [provider listing details and read permissions](providers.md#active-instances-and-retention).
 
 ### All providers
 

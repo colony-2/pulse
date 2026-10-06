@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/colony-2/c2j/pkg/execution"
@@ -25,15 +26,15 @@ type Connection struct {
 // Embedded uses c2j discovery and JobDB's public remote lease API. Once constructed it is
 // immutable and safe for concurrent calls. Call contexts bound HTTP work.
 type Embedded struct {
-	clients  map[string]*joblist.Client
+	tenants  map[string]string
 	runtimes map[string]*remote.Runtime
 }
 
 func NewEmbedded(connections []Connection) (*Embedded, error) {
-	e := &Embedded{clients: make(map[string]*joblist.Client), runtimes: make(map[string]*remote.Runtime)}
+	e := &Embedded{tenants: make(map[string]string), runtimes: make(map[string]*remote.Runtime)}
 	tokens := map[string]string{}
 	for _, c := range connections {
-		if _, exists := e.clients[c.URI]; exists {
+		if _, exists := e.tenants[c.URI]; exists {
 			if tokens[c.URI] != c.TokenEnv {
 				return nil, fmt.Errorf("conflicting authentication settings for JobDB target")
 			}
@@ -46,12 +47,13 @@ func NewEmbedded(connections []Connection) (*Embedded, error) {
 			Transport:     tokenTransport{base: http.DefaultTransport, env: c.TokenEnv},
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		}
-		client, err := joblist.New(joblist.Config{JobDBURI: c.URI, HTTPClient: httpClient})
+		_, err := joblist.New(joblist.Config{JobDBURI: c.URI, HTTPClient: httpClient})
 		if err != nil {
 			return nil, err
 		}
-		e.clients[c.URI], tokens[c.URI] = client, c.TokenEnv
+		tokens[c.URI] = c.TokenEnv
 		u, _ := url.Parse(c.URI) // Already validated by joblist.New.
+		e.tenants[c.URI] = strings.Trim(u.Path, "/")
 		runtime, err := remote.New((&url.URL{Scheme: u.Scheme, Host: u.Host}).String(), httpClient)
 		if err != nil {
 			return nil, err
@@ -118,32 +120,23 @@ func (c *Claimed) Release(ctx context.Context, backoff time.Duration) error {
 	return nil
 }
 
-func listingQuery(repo, token string) joblist.Query {
-	return joblist.Query{
-		Repository: repo, JobTypes: []string{"recipe"},
-		Statuses: []jobdb.JobStatus{jobdb.JobStatusReady, jobdb.JobStatusCrashConcern},
-		PageSize: 100, PageToken: token,
-	}
-}
-
-// ValidateRepository checks explicit identity syntax without configuration
-// discovery, filesystem access, or a network request.
-func ValidateRepository(tenant, repo string) error {
-	_, err := joblist.BuildRequest(tenant, listingQuery(repo, ""))
-	return err
-}
-
-func (e *Embedded) List(ctx context.Context, uri, repo, token string) (Page, error) {
-	client, ok := e.clients[uri]
+// List discovers runnable c2j jobs across the entire tenant, without a repository filter.
+func (e *Embedded) List(ctx context.Context, uri, token string) (Page, error) {
+	tenant, ok := e.tenants[uri]
 	if !ok {
 		return Page{}, fmt.Errorf("unconfigured JobDB target")
 	}
-	p, err := client.List(ctx, listingQuery(repo, token))
+	statuses := []jobdb.JobStatus{jobdb.JobStatusReady, jobdb.JobStatusCrashConcern}
+	p, err := joblist.ListExecutionJobs(ctx, e.runtimes[uri], jobdb.ListJobsRequest{
+		TenantIds: []string{tenant}, JobTypes: []string{"recipe"}, Statuses: statuses,
+		Stores: joblist.StoresForStatuses(statuses), PageSize: 100, PageToken: token,
+	}, nil)
 	if err != nil {
 		return Page{}, err
 	}
 	out := Page{Jobs: make([]Job, 0, len(p.Jobs)), Next: p.NextPageToken}
-	for _, j := range p.Jobs {
+	for _, summary := range p.Jobs {
+		j := joblist.JobFromSummary(summary)
 		view := j.Execution
 		job := Job{Tenant: j.TenantID, ID: j.JobID, Repository: j.RepositorySource,
 			Status: string(j.Status), AvailableAt: j.AvailableAt,

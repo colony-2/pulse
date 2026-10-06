@@ -40,6 +40,9 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	handler := remote.NewServer(readOnly{list: func(_ context.Context, req jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
+		if req.MetadataFilter != nil {
+			t.Error("tenant discovery must not filter repositories")
+		}
 		if !reflect.DeepEqual(req.JobTypes, []string{"recipe"}) || !reflect.DeepEqual(req.Statuses, []jobdb.JobStatus{jobdb.JobStatusReady, jobdb.JobStatusCrashConcern}) || req.PageSize != 100 || len(req.TenantIds) != 1 {
 			t.Errorf("incorrect listing query: %+v", req)
 		}
@@ -71,12 +74,12 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 	var wg sync.WaitGroup
 	for _, tenant := range []string{"one", "two"} {
 		wg.Go(func() {
-			first, err := c.List(context.Background(), server.URL+"/"+tenant, "github.com/acme/app", "")
+			first, err := c.List(context.Background(), server.URL+"/"+tenant, "")
 			if err != nil || len(first.Jobs) != 0 || first.Next != "opaque-next" {
 				t.Error(first, err)
 				return
 			}
-			page, err := c.List(context.Background(), server.URL+"/"+tenant, "github.com/acme/app", first.Next)
+			page, err := c.List(context.Background(), server.URL+"/"+tenant, first.Next)
 			if err != nil || len(page.Jobs) != 2 {
 				t.Error(page, err)
 				return
@@ -112,7 +115,7 @@ func TestEmbeddedCancellationAndRedirect(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	_, err = c.List(ctx, server.URL+"/tenant", "github.com/acme/app", "")
+	_, err = c.List(ctx, server.URL+"/tenant", "")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
@@ -127,21 +130,13 @@ func TestEmbeddedCancellationAndRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = c.List(context.Background(), redirect.URL+"/tenant", "github.com/acme/app", ""); err == nil {
+	if _, err = c.List(context.Background(), redirect.URL+"/tenant", ""); err == nil {
 		t.Fatal("redirect accepted")
 	}
 }
 
 func TestEmbeddedInputValidation(t *testing.T) {
 	if _, err := NewEmbedded([]Connection{{URI: "https://example.com"}}); !errors.Is(err, joblist.ErrInvalidInput) {
-		t.Fatal(err)
-	}
-	for _, repo := range []string{"app", "/tmp/app"} {
-		if err := ValidateRepository("tenant", repo); !errors.Is(err, joblist.ErrInvalidInput) {
-			t.Fatal(repo, err)
-		}
-	}
-	if err := ValidateRepository("tenant", "file:///tmp/app"); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PULSE_TEST_EMPTY_TOKEN", "")

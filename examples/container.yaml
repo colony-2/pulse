@@ -1,5 +1,5 @@
 # For simple containers, pass this complete YAML as PULSE_CONFIG.
-# Alternatively mount it and pass -config /etc/pulse/pulse.yaml.
+# Alternatively mount it and pass --config /etc/pulse/pulse.yaml.
 # HTTP listens on PORT when supplied by the platform, otherwise port 8080.
 
 poll_interval: 5s
@@ -20,7 +20,6 @@ providers:
 targets:
   - instance_id: production
     jobdb: https://jobdb.example.com/acme
-    cells: [github.com/acme/app]
     launch_services:
       - name: runners
         priority: 1

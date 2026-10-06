@@ -71,7 +71,7 @@ With all five present, Quill v0.7.1 signs and notarizes Darwin binaries before t
 
 ## Container composition
 
-Simple deployments pass the full YAML document as `PULSE_CONFIG`. The image runs Pulse without default command arguments so that this environment source is selected automatically. For a mounted file, pass `-config /etc/pulse/pulse.yaml` explicitly; this overrides inline configuration. See [configuration and deployment](configuration.md).
+Simple deployments pass the full YAML document as `PULSE_CONFIG`. The image runs Pulse without default command arguments so that this environment source is selected automatically. For a mounted file, pass `--config /etc/pulse/pulse.yaml` explicitly; this overrides inline configuration. See [configuration and deployment](configuration.md).
 
 [Dockerfile](../Dockerfile) cross-compiles Pulse and its supervisor with CGO disabled. The default final stage is `gcr.io/distroless/static-debian12:nonroot`, containing those two executables and the embedded listing dependency’s license/version records. It contains no standalone c2j executable, Go compiler, Python, Node.js/npm, shell, Git, or cloud CLI executables. Native cloud SDKs are compiled into Pulse.
 

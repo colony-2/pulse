@@ -1,12 +1,5 @@
-# No providers or launch_services needed for the single-job local Docker pool.
-# Install pulse-exec beside pulse or on PATH, visible at the same daemon path.
-defaults:
-  image: pulse-runner:local
-  platform: linux/amd64 # Use linux/arm64 on an arm64 Docker daemon.
-  cpu: "1"
-  memory: 1Gi
-  scratch: 1Gi
+# Optional: Pulse already uses Docker and ghcr.io/colony-2/shai-mega:latest.
+# Without this file, the tenant comes from C2J_JOBDB or .c2j/config.yaml.
+# Install pulse-exec beside pulse or on PATH (included by npm and release archives).
 targets:
-  - instance_id: development
-    jobdb: http://jobdb.example.com/test-tenant
-    cells: [github.com/acme/app]
+  - jobdb: http://jobdb.example.com/test-tenant

@@ -222,7 +222,7 @@ jobs:
           set -euo pipefail
           install_dir="$(mktemp -d)"
           npm install --prefix "$install_dir" "$PWD/dist/release/colony2-pulse-$VERSION.tgz"
-          [[ "$("$install_dir/node_modules/.bin/pulse" -version)" == "pulse $VERSION" ]]
+          [[ "$("$install_dir/node_modules/.bin/pulse" version)" == "pulse version $VERSION" ]]
       - name: Publish exact GitHub npm artifact with token
         if: env.NPM_TOKEN != ''
         env:

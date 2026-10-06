@@ -6,7 +6,7 @@ Status: architecture for the initial Go implementation. See [README.md](README.m
 
 ## Purpose
 
-Pulse supplies compute for c2j jobs that are ready to run. It periodically lists runnable jobs in an explicitly configured set of repository cells, picks individual jobs, reads their current execution requirements, acquires ordinary JobDB leases, and starts containers through a generic compute interface. Adapters include local Docker, remote providers using a standard OpenAPI protocol, Google Cloud Run Jobs, Amazon ECS tasks, and Azure Container Apps Jobs.
+Pulse supplies compute for c2j jobs that are ready to run. It periodically lists runnable jobs in each selected JobDB tenant, picks individual jobs, reads their current execution requirements, acquires ordinary JobDB leases, and starts containers through a generic compute interface. Adapters include local Docker, remote providers using a standard OpenAPI protocol, Google Cloud Run Jobs, Amazon ECS tasks, and Azure Container Apps Jobs.
 
 **Pulse has no persisted state.** Its scheduling memory consists of failure backoff keyed by job identity, submissions currently in progress, and round-robin cursors for equally preferred services. Jobdb holds job state; c2j handles discovery and execution; providers hold compute resources and their correlation metadata.
 
@@ -38,15 +38,15 @@ flowchart LR
 
 ## Integration contract and availability
 
-The controller uses `github.com/colony-2/c2j/pkg/joblist` for all discovery. See [the feature response](C2J_FEATURE_REQUESTS_RESPONSE.md) for the public API contract. It requires explicit repository identities and does not discover local checkouts or resolve aliases. Listing does not initialize an executor or claim work. Executor containers still run the c2j CLI.
+The controller uses `github.com/colony-2/c2j/pkg/joblist` for all discovery. See [the feature response](C2J_FEATURE_REQUESTS_RESPONSE.md) for the public API contract. It uses tenant-wide requests without repository filters. Listing does not initialize an executor or claim work. Executor containers still run the c2j CLI.
 
 Use [GUIDE-Execution-Tracking.md](GUIDE-Execution-Tracking.md) for the command contract and [C2J_PORTABLE_EXECUTION_REQUIREMENTS_DESIGN.md](C2J_PORTABLE_EXECUTION_REQUIREMENTS_DESIGN.md) for design background. Requirement-change handling belongs entirely to c2j; older descriptions of unconditional yielding do not establish an outstanding integration requirement.
 
 The updated guide documents recipe requirements, submission overrides, actual allocation flags/environment variables, execution preflight, durable environment handoffs, operation directives, and the enriched list view as available. These provide the underlying contract Pulse needs; cloud provisioning remains Pulse's responsibility. Pin compatible controller, container c2j, and JobDB versions and verify their integration. The guide requires fresh format-3 JobDB storage and reports no in-place migration of old jobs/history; adopting it is a deployment prerequisite, not a Pulse migration responsibility.
 
-The public API returns typed pages from a reusable client per connection/tenant. Query recipe jobs in `READY` or `CRASH_CONCERN` status for the configured repository, with page size 100.
+The public API returns typed pages from a reusable client per connection/tenant. Query recipe jobs in `READY` or `CRASH_CONCERN` status for the selected tenant, with page size 100.
 
-Repeat this for each configured repository, advancing the opaque continuation token within configured page limits. Recipe execution remains targeted with `c2j run with-lease --job-id`; Pulse never asks a launched container to select unrelated work.
+Repeat this for each configured tenant, advancing the opaque continuation token within configured page limits. Recipe execution remains targeted with `c2j run with-lease --job-id`; Pulse never asks a launched container to select unrelated work.
 
 ### Discovery and typed routes
 
@@ -186,7 +186,7 @@ Pulse lists candidates through c2j, then acquires an ordinary JobDB lease before
 
 For each bounded polling pass:
 
-1. Query configured targets and explicit repository identities, page through results, and deduplicate by instance/tenant/job. Rotate cell order and bound work per cell.
+1. Query configured tenant targets, page through results, and deduplicate by instance/tenant/job. Rotate tenant order and bound work per tenant.
 2. Skip unsupported routes and invalid demand. Locally exclude in-flight attempts and provisioning failures still in cooldown.
 3. Acquire a lease for each selected job and route, with at most `claim_concurrency` calls in flight (default 8), a `claim_timeout` window (default 5 seconds), and at most `batch_size` candidate attempts (default 100). Stop starting claims once the time or count limit is met, let in-flight calls finish under their normal request timeout, and submit the successful subset. Candidates whose calls never started remain eligible without cooldown. A stale listing or competing controller can yield no lease; submit nothing in that case. An uncertain claim is never followed by compute submission; any acquired lease expires.
 4. Recompute allocation from the leased client payload and immutable submission hints using c2j's execution projection. Export with JobDB's public capability API. Pulse starts no heartbeat.
@@ -200,7 +200,7 @@ The provider contract requires a definite decline to guarantee that its submissi
 
 The 60-second default `cooldown` is failure backoff, not ownership. JobDB persists the release wait deadline. Pulse also keeps local backoff for provisioning and preparation failures. Accepted/uncertain submissions have no residual local cooldown; successful executor yields can be reconsidered on the next poll. Controller restarts and overlapping controller discovery do not bypass JobDB ownership. Provider capacity admission remains independently scoped to its compute pool.
 
-Configuration is one YAML document selected from explicit `-config`, then `PULSE_CONFIG`, then `./pulse.yaml`. Targets name stable instance IDs, tenant URLs, explicit repository identities, and launch-service priorities. See [configuration](docs/configuration.md) and [examples](examples). Pulse retains only in-flight attempts, failure backoff, and round-robin cursors in memory; no controller database is introduced.
+Configuration is one YAML document selected from explicit `--config`, then `PULSE_CONFIG`, then `./pulse.yaml`. The YAML file is optional. c2j settings select the default tenant, Docker supplies compute, and unspecified images use `ghcr.io/colony-2/shai-mega:latest`. Targets can override instance IDs, tenant URLs, and launch-service priorities. See [configuration](docs/configuration.md) and [examples](examples). Pulse retains only in-flight attempts, failure backoff, and round-robin cursors in memory; no controller database is introduced.
 
 Pulse does not wait for containers to finish or infer lease ownership from provider inventory. Lease expiry can still overlap external side effects, so applications retain their normal idempotency requirements. Duration limits bound abandoned compute.
 
@@ -363,11 +363,11 @@ pkg/compute/                provider-neutral batch submission interface
 api/provider.openapi.yaml   standard remote provider HTTP contract
 ```
 
-Use a pinned c2j public listing library with explicit tenant/repository inputs and per-call deadlines. Executor run output has its own mixed progress/event format. A failed discovery call is not an empty queue; log that target/cell error and continue with others.
+Use a pinned c2j public listing library with explicit tenant inputs and per-call deadlines. Executor run output has its own mixed progress/event format. A failed discovery call is not an empty queue; log that tenant error and continue with others.
 
 ### Delivery gates
 
-1. Build the polling loop, image/default selection, batch submission contract, and allocation injection against a fake provider and recorded list fixtures. Preserve cell configuration and use cooldown only for provisioning failures.
+1. Build the polling loop, image/default selection, batch submission contract, and allocation injection against a fake provider and recorded list fixtures. Preserve tenant configuration and use cooldown only for provisioning failures.
 2. Pin matching versions implementing the updated guide and verify the enriched list view, allocation inputs, and preflight/handoff path. Default/bootstrap executors receive the same allocation contract as requirement-selected executors. Unknown flags or missing schema support must fail visibly, not trigger a silent fallback.
 3. Verify that published demand from a c2j handoff produces a suitable replacement through the ordinary polling path. Requirement recording and recovery remain c2j responsibilities.
 4. Ensure every worker that can claim constrained jobs supports this contract. An old worker can obtain a lease because JobDB does not resource-match; adding a new Pulse launcher alone is insufficient to make a mixed fleet safe.
@@ -380,7 +380,7 @@ Use a pinned c2j public listing library with explicit tenant/repository inputs a
 - Image reference, manifest digest, and runtime image ID remain distinct; missing digest evidence cannot pass a digest constraint.
 - Use `execution.demand.effective` from the c2j projection. Unresolved/bootstrap, unspecified, malformed, unsupported, and incompatible response contracts follow their defined paths. Historical handoff allocations never become new allocation facts.
 - Typed route identifiers retain exact field values; ready human-input or unsupported task routes do not trigger ordinary recipe executors. Client-payload revisions and task ordinals do not create new launch identities.
-- Discovery sees jobs requiring a different environment from the default. All configured cells/pages are covered; one failed or busy cell does not starve another; duplicate selectors share one cooldown.
+- Discovery sees jobs requiring a different environment from the default. All configured tenants/pages are covered; one failed or busy tenant does not starve another; duplicate selectors share one cooldown.
 - A default executor resolves and pins the recipe, continues if sufficient, or yields before dependent work if insufficient. Subsequent attempts use published demand.
 - An insufficient runtime request yields, and the same job resumes with its cached results/artifacts in a suitable environment. Stale incompatible executors release promptly, and cancellation remains authoritative.
 - Definite non-starts release with backoff; accepted/ambiguous launches retain their lease. A successful yield has no old cooldown. Restart and competing controllers cannot claim a currently leased job.

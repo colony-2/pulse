@@ -151,7 +151,6 @@ providers:
 targets:
   - instance_id: production
     jobdb: https://jobdb.example.com/acme
-    cells: [github.com/acme/app]
     launch_services:
       - name: runner_pool
         priority: 1
@@ -160,11 +159,11 @@ targets:
 Set `PULSE_RUNNER_TOKEN`, then run:
 
 ```sh
-pulse -config pulse.yaml -check
-pulse -config pulse.yaml -once
+pulse check --config pulse.yaml
+pulse run --once --config pulse.yaml
 ```
 
-`-check` validates configuration and initializes the listing client; it makes no JobDB/provider health request. Use `-once` with seeded test jobs to exercise submission. For development HTTP endpoints, explicitly set `allow_http: true`.
+`check` validates configuration and initializes the listing client; it makes no JobDB/provider health request. Use `run --once` with seeded test jobs to exercise submission. For development HTTP endpoints, explicitly set `allow_http: true`.
 
 Test single/maximum batches, invalid envelopes without side effects, partial acceptance, resource rounding with unchanged environment, concurrent capacity admission, duplicate IDs within a batch, response loss without launch retries, lost queue entries without provider recovery, deadlines, principal isolation, queued visibility before assignment, pagination (including empty filtered pages), terminal exclusion, and read-only listing. Verify that native resources map back to the originating job. Keep bearer tokens and environment secrets out of logs. Schema validation alone cannot prove these behaviors.
 

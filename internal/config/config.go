@@ -2,6 +2,8 @@ package config
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"fmt"
 	"github.com/colony-2/pulse/internal/c2j"
 	"github.com/colony-2/pulse/internal/quantity"
@@ -12,6 +14,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -25,7 +28,6 @@ type Target struct {
 	JobDBTokenEnv string    `yaml:"jobdb_token_env"`
 	Instance      string    `yaml:"instance_id"`
 	JobDB         string    `yaml:"jobdb"`
-	Cells         []string  `yaml:"cells"`
 	Services      []Service `yaml:"launch_services"`
 	Tenant        string    `yaml:"-"`
 }
@@ -75,8 +77,8 @@ type Config struct {
 	ClaimTimeout     string `yaml:"claim_timeout"`
 	ClaimConcurrency int    `yaml:"claim_concurrency"`
 	BatchSize        int    `yaml:"batch_size"`
-	PerCell          int    `yaml:"max_jobs_per_cell"`
-	MaxPages         int    `yaml:"max_pages_per_cell"`
+	PerTenant        int    `yaml:"max_jobs_per_tenant"`
+	MaxPages         int    `yaml:"max_pages_per_tenant"`
 	Defaults         struct {
 		Image       string            `yaml:"image"`
 		Platform    string            `yaml:"platform"`
@@ -91,6 +93,7 @@ type Config struct {
 	Providers                                              map[string]Provider `yaml:"providers"`
 	Targets                                                []Target            `yaml:"targets"`
 	Allocation                                             compute.Allocation  `yaml:"-"`
+	AutoPlatform                                           bool                `yaml:"-"`
 	Poll, Cool, Call, Batch, ExecutionTimeout, StartWindow time.Duration       `yaml:"-"`
 	Claim                                                  time.Duration       `yaml:"-"`
 	Lease                                                  time.Duration       `yaml:"-"`
@@ -104,26 +107,11 @@ func Load(path string) (*Config, error) {
 	return Parse(b)
 }
 
-// LoadSource chooses an explicit file, inline YAML, or the default local file.
-// Sources are never merged, and a selected source's failure never falls back.
-func LoadSource(path string) (*Config, error) {
-	if path != "" {
-		return Load(path)
-	}
-	if value, ok := os.LookupEnv("PULSE_CONFIG"); ok {
-		if strings.TrimSpace(value) == "" {
-			return nil, fmt.Errorf("PULSE_CONFIG must contain a YAML configuration")
-		}
-		cfg, err := Parse([]byte(value))
-		if err != nil {
-			return nil, fmt.Errorf("PULSE_CONFIG: %w", err)
-		}
-		return cfg, nil
-	}
-	return Load("pulse.yaml")
+func Parse(b []byte) (*Config, error) {
+	return parse(context.Background(), b, "")
 }
 
-func Parse(b []byte) (*Config, error) {
+func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 	c := &Config{}
 	d := yaml.NewDecoder(bytes.NewReader(b))
 	d.KnownFields(true)
@@ -133,6 +121,43 @@ func Parse(b []byte) (*Config, error) {
 	var extra any
 	if e := d.Decode(&extra); e != io.EOF {
 		return nil, fmt.Errorf("configuration must contain one YAML document")
+	}
+	if jobdb != "" {
+		if len(c.Targets) > 1 {
+			return nil, fmt.Errorf("--jobdb cannot override multiple configured targets")
+		}
+		if len(c.Targets) == 0 {
+			c.Targets = []Target{{}}
+		}
+		c.Targets[0].JobDB = jobdb
+	}
+	if len(c.Targets) == 0 {
+		c.Targets = []Target{{}}
+	}
+	for i := range c.Targets {
+		if c.Targets[i].JobDB == "" {
+			uri, err := resolveJobDB(ctx)
+			if err != nil {
+				return nil, err
+			}
+			c.Targets[i].JobDB = uri
+		}
+	}
+	if c.Defaults.Image == "" {
+		c.Defaults.Image = "ghcr.io/colony-2/shai-mega:latest"
+	}
+	if c.Defaults.Platform == "" {
+		c.Defaults.Platform = "linux/" + runtime.GOARCH
+		c.AutoPlatform = true
+	}
+	if c.Defaults.CPU == "" {
+		c.Defaults.CPU = "1"
+	}
+	if c.Defaults.Memory == "" {
+		c.Defaults.Memory = "1Gi"
+	}
+	if c.Defaults.Scratch == "" {
+		c.Defaults.Scratch = "1Gi"
 	}
 	if c.HTTP.Listen == "" {
 		port := os.Getenv("PORT")
@@ -201,13 +226,13 @@ func Parse(b []byte) (*Config, error) {
 	if c.BatchSize == 0 {
 		c.BatchSize = 100
 	}
-	if c.PerCell == 0 {
-		c.PerCell = 100
+	if c.PerTenant == 0 {
+		c.PerTenant = 100
 	}
 	if c.MaxPages == 0 {
 		c.MaxPages = 1000
 	}
-	if c.BatchSize < 1 || c.BatchSize > 100 || c.PerCell < 1 || c.MaxPages < 1 {
+	if c.BatchSize < 1 || c.BatchSize > 100 || c.PerTenant < 1 || c.MaxPages < 1 {
 		return nil, fmt.Errorf("invalid batch/page limits")
 	}
 	a := compute.Allocation{Image: c.Defaults.Image, Platform: strings.ToLower(c.Defaults.Platform)}
@@ -292,17 +317,21 @@ func Parse(b []byte) (*Config, error) {
 	for i, t := range c.Targets {
 		u, e := url.Parse(t.JobDB)
 		if e != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-			return nil, fmt.Errorf("invalid jobdb URL")
+			return nil, fmt.Errorf("jobdb must be an HTTP(S) tenant URL; embedded c2j databases cannot serve container workers")
 		}
 		path := strings.Trim(u.Path, "/")
 		if path == "" || strings.Contains(path, "/") {
 			return nil, fmt.Errorf("jobdb URL must select one tenant")
 		}
 		c.Targets[i].Tenant = path
-		if t.Instance == "" || len(t.Cells) == 0 || len(t.Services) == 0 {
-			return nil, fmt.Errorf("target needs instance_id, cells and launch_services")
+		if len(t.Services) == 0 {
+			return nil, fmt.Errorf("target needs launch_services when providers are configured")
 		}
-		endpoint := u.Scheme + "://" + u.Host
+		endpoint := u.Scheme + "://" + strings.ToLower(u.Host)
+		if t.Instance == "" {
+			t.Instance = fmt.Sprintf("jobdb-%x", sha256.Sum256([]byte(endpoint)))
+			c.Targets[i].Instance = t.Instance
+		}
 		if prior, ok := instances[t.Instance]; ok && prior != endpoint {
 			return nil, fmt.Errorf("instance_id maps to multiple deployments")
 		}
@@ -314,19 +343,11 @@ func Parse(b []byte) (*Config, error) {
 			}
 			names[s.Name] = true
 		}
-		for _, cell := range t.Cells {
-			if err := c2j.ValidateRepository(path, cell); err != nil {
-				return nil, fmt.Errorf("listing requires an explicit repository identity (use file:/// for a local repository): %w", err)
-			}
-			if strings.TrimSpace(cell) == "" {
-				return nil, fmt.Errorf("empty cell")
-			}
-			key := t.Instance + "\x00" + path + "\x00" + cell
-			if scopes[key] {
-				return nil, fmt.Errorf("duplicate target/cell scope")
-			}
-			scopes[key] = true
+		key := endpoint + "\x00" + path
+		if scopes[key] {
+			return nil, fmt.Errorf("duplicate tenant target")
 		}
+		scopes[key] = true
 	}
 	return c, nil
 }

@@ -30,8 +30,9 @@ function fixture(t, script = "#!/bin/sh\nprintf '%s\\n' \"$@\"\nexit 7\n") {
   fs.mkdirSync(path.join(root, "bin"));
   fs.copyFileSync("npm/pulse/bin/cli.js", path.join(root, "bin/cli.js"));
   fs.writeFileSync(path.join(root, "pulse"), script, { mode: 0o755 });
+  fs.writeFileSync(path.join(root, "pulse-exec"), "linux container helper", { mode: 0o755 });
   const archive = path.join(root, assetName("1.2.3"));
-  execFileSync("tar", ["-czf", archive, "-C", root, "pulse"]);
+  execFileSync("tar", ["-czf", archive, "-C", root, "pulse", "pulse-exec"]);
   let sum = crypto.createHash("sha256").update(fs.readFileSync(archive)).digest("hex");
   return {
     root,
@@ -53,10 +54,14 @@ test("verified install forwards arguments and exit code; corruption preserves ex
   assert.deepEqual(await once(child, "exit"), [7, null]);
   assert.equal(output, "one argument\n--once\n");
   const binary = path.join(f.root, "vendor/pulse");
+  const helper = path.join(f.root, "vendor/pulse-exec");
+  assert.equal(fs.readFileSync(helper, "utf8"), "linux container helper");
+  assert.equal(fs.statSync(helper).mode & 0o777, 0o755);
   const original = fs.readFileSync(binary);
   f.corrupt();
   await assert.rejects(install(f), /Checksum mismatch/);
   assert.deepEqual(fs.readFileSync(binary), original);
+  assert.equal(fs.readFileSync(helper, "utf8"), "linux container helper");
 });
 
 test("launcher forwards SIGTERM to the controller", { timeout: 10000 }, async (t) => {

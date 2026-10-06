@@ -1,24 +1,50 @@
 # Configuration and container deployment
 
-**Use `PULSE_CONFIG` for simple container deployments.** Its value is the complete YAML configuration, with the same schema and validation used for files. Pulse parses it directly in Go, including in the distroless image.
+**Pulse runs without a Pulse configuration file.** It uses c2j tenant settings and Docker by default. Optional YAML overrides defaults or configures additional providers and tenants. `PULSE_CONFIG` contains YAML directly, using the same schema and validation as files, including in the distroless image.
 
 ## Source selection
 
 | Priority | Source |
 | --- | --- |
-| 1 | File explicitly selected by `-config PATH`. |
+| 1 | File explicitly selected by `--config PATH`. |
 | 2 | YAML contents in `PULSE_CONFIG`, if the variable is set. |
-| 3 | `pulse.yaml` in the working directory. |
+| 3 | `pulse.yaml` in the working directory, if present. |
+| 4 | Built-in defaults. |
 
-Only one source is used. There is no merging, and a selected source's failure does not trigger fallback. A set-but-empty or whitespace-only `PULSE_CONFIG` is an error; unset it to use the default file. An explicit file ignores the inline value, even if that value is invalid. An explicit missing file fails instead of using the environment.
+Only one source is used. There is no merging, and a selected source's failure does not trigger fallback. A set-but-empty or whitespace-only `PULSE_CONFIG` is an error; unset it to use the local file or built-in defaults. An explicit file ignores the inline value, even if that value is invalid. An explicit missing file fails instead of using the environment.
 
 The value is raw YAML, not a filename, URL, or base64 string. Use real newlines for multiline YAML. Pulse performs no shell expansion or `${VARIABLE}` interpolation. Quoting and expansion performed by your host shell or deployment tooling happen before Pulse receives the value.
 
-Configuration is read once at startup. Restart or deploy a new revision after changes. `-check` and `-once` use the same source selection; `-version` needs no configuration. `/config` shows the parsed, redacted configuration regardless of its source, never the raw environment document. See [HTTP API](http-api.md).
+Configuration is read once at startup. Restart or deploy a new revision after changes. `check` and `run --once` use the same source selection; `version` needs no configuration. `/config` shows the parsed, redacted configuration regardless of its source, never the raw environment document. See [HTTP API](http-api.md).
 
-## Repository selection
+## Tenant selection and defaults
 
-Discovery always uses c2j's public Go listing API. Each target must name explicit repository identities, such as `github.com/acme/app` or `file:///absolute/repository/path`, matching job metadata. Local checkout discovery and aliases are not supported. Remove the old top-level `c2j` section, including `mode: embedded`, when upgrading; those obsolete settings are rejected by configuration validation. Use `jobdb_token_env` on each target for authenticated JobDB access. Executor images still provide the c2j command used to run jobs.
+Pulse selects the tenant using `--jobdb`, an explicit Pulse target's `jobdb`, `C2J_JOBDB`, then `jobdb` in the nearest ancestor `.c2j/config.yaml`. The c2j public settings loader handles both literal and command-valued project settings. No repository scope is needed: discovery lists all eligible recipe jobs in the tenant, across repositories. Remove obsolete target `cells` and top-level `c2j` settings when upgrading; validation rejects them.
+
+```sh
+export C2J_JOBDB=https://jobdb.example.com/acme
+pulse
+# Equivalent continuous command:
+pulse run
+pulse run --once
+pulse check
+pulse version
+```
+
+Pulse needs an HTTP(S) JobDB service with a tenant path. A missing tenant produces an error explaining these settings; c2j's `embed:///` database cannot serve remote container workers. Use `jobdb_token_env` on a target when the service needs a bearer token. Multiple targets remain supported through YAML; `--jobdb` can override only a single target. Missing `instance_id` values are stable hashes of the deployment URL, shared by tenants on that deployment.
+
+| Setting | Default |
+| --- | --- |
+| Provider | Local Docker, discovered using the active Docker context/socket |
+| Image | `ghcr.io/colony-2/shai-mega:latest` |
+| CPU / memory / scratch | `1` / `1Gi` / `1Gi` |
+| Platform | Docker daemon's native Linux platform for a single Docker provider; otherwise `linux/<host architecture>` |
+| Execution timeout | `1h` |
+| Docker capacity | One default-sized job plus `256Mi` memory overhead |
+| `max_jobs_per_tenant` | `100` per poll |
+| `max_pages_per_tenant` | `1000` per poll |
+
+Job execution requirements override allocation defaults. `defaults` in optional YAML changes the fallback values. When providers are explicitly configured, targets specify their `launch_services`. For advanced deployments, keep `instance_id` explicit if it must survive changes to the deployment URL. Executor images still provide c2j and recipe dependencies.
 
 ## Lease handoff and recovery
 
@@ -59,7 +85,7 @@ Copy [container.yaml](../examples/container.yaml), edit the deployment settings,
 
 ```sh
 export PULSE_CONFIG="$(cat pulse.yaml)"
-pulse -check
+pulse check
 pulse
 ```
 
@@ -91,14 +117,13 @@ providers:
 targets:
   - instance_id: production
     jobdb: https://jobdb.example.com/acme
-    cells: [github.com/acme/app]
     launch_services: [{name: runners, priority: 1}]
 '
 ```
 
 ## Google Cloud Run
 
-For a simple Cloud Run service deployment, add `PULSE_CONFIG` under **Containers → Variables & Secrets**, with the complete YAML as its value. Leave container arguments unset so an explicit `-config` does not override it. Environment settings belong to the service revision. Cloud Run limits each environment variable to 32 KB; larger configurations can use a mounted file. See [Cloud Run environment configuration](https://docs.cloud.google.com/run/docs/configuring/services/environment-variables).
+For a simple Cloud Run service deployment, add `PULSE_CONFIG` under **Containers → Variables & Secrets**, with the complete YAML as its value. Leave container arguments unset so an explicit `--config` does not override it. Environment settings belong to the service revision. Cloud Run limits each environment variable to 32 KB; larger configurations can use a mounted file. See [Cloud Run environment configuration](https://docs.cloud.google.com/run/docs/configuring/services/environment-variables).
 
 If you already store the document in Secret Manager, Cloud Run can inject a selected version as the `PULSE_CONFIG` environment variable instead of mounting a file. See [secret injection](https://docs.cloud.google.com/run/docs/configuring/services/secrets). Use the controller's attached service account for cloud API access as described in [cloud authentication](cloud-authentication.md).
 
@@ -112,7 +137,7 @@ File configuration remains available for larger documents and deployments that a
 docker run --rm --init --read-only --tmpfs /tmp -p 8080:8080 \
   --mount "type=bind,source=$PWD/pulse.yaml,target=/etc/pulse/pulse.yaml,readonly" \
   -e PULSE_PROVIDER_TOKEN \
-  ghcr.io/colony-2/pulse:latest -config /etc/pulse/pulse.yaml
+  ghcr.io/colony-2/pulse:latest --config /etc/pulse/pulse.yaml
 ```
 
-The file must be readable by UID/GID `65532:65532`. The image no longer supplies `-config /etc/pulse/pulse.yaml` as default arguments, so existing deployments using that mounted path must add the explicit arguments shown above. No source is baked into the image; environment-only deployments start it without arguments.
+The file must be readable by UID/GID `65532:65532`. The image no longer supplies `--config /etc/pulse/pulse.yaml` as default arguments, so existing deployments using that mounted path must add the explicit arguments shown above. No source is baked into the image; environment-only deployments start it without arguments.

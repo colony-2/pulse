@@ -16,7 +16,7 @@ import (
 )
 
 type Lister interface {
-	List(context.Context, string, string, string) (c2j.Page, error)
+	List(context.Context, string, string) (c2j.Page, error)
 }
 type Claimer interface {
 	Claim(context.Context, string, c2j.Job, string, time.Duration) (*c2j.Claimed, error)
@@ -49,28 +49,18 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 			c.status.FailedPasses++
 		}
 	}()
-	type scope struct {
-		target config.Target
-		cell   string
+	targets := append([]config.Target(nil), c.Config.Targets...)
+	if len(targets) == 0 {
+		return fmt.Errorf("no tenant targets")
 	}
-	scopes := []scope{}
-	for _, t := range c.Config.Targets {
-		for _, cell := range t.Cells {
-			scopes = append(scopes, scope{t, cell})
-		}
-	}
-	if len(scopes) == 0 {
-		return fmt.Errorf("no scopes")
-	}
-	offset := c.pass % len(scopes)
+	offset := c.pass % len(targets)
 	c.pass++
-	scopes = append(scopes[offset:], scopes[:offset]...)
+	targets = append(targets[offset:], targets[:offset]...)
 	var errs []error
-	for _, scope := range scopes {
+	for _, t := range targets {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		t := scope.target
 		serviceCfg := append([]config.Service{}, t.Services...)
 		sort.Slice(serviceCfg, func(i, j int) bool { return serviceCfg[i].Name < serviceCfg[j].Name })
 		scopeKey, _ := json.Marshal(serviceCfg)
@@ -84,10 +74,10 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 		selected := map[scheduler.Key]bool{}
 		for pageNumber := 0; pageNumber < c.Config.MaxPages; pageNumber++ {
 			call, cancel := context.WithTimeout(ctx, c.Config.Call)
-			page, e := c.Lister.List(call, t.JobDB, scope.cell, token)
+			page, e := c.Lister.List(call, t.JobDB, token)
 			cancel()
 			if e != nil {
-				c.Log.Error("discovery failed", "cell", scope.cell, "error", e)
+				c.Log.Error("discovery failed", "tenant", t.Tenant, "error", e)
 				errs = append(errs, e)
 				break
 			}
@@ -154,11 +144,11 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 					return compute.Launch{Request: request, Process: process}, release, nil
 				}})
 				selected[k] = true
-				if len(jobs) >= c.Config.PerCell {
+				if len(jobs) >= c.Config.PerTenant {
 					break
 				}
 			}
-			if len(jobs) >= c.Config.PerCell || page.Next == "" {
+			if len(jobs) >= c.Config.PerTenant || page.Next == "" {
 				break
 			}
 			if tokens[page.Next] || page.Next == token {
@@ -168,7 +158,7 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 			tokens[page.Next] = true
 			token = page.Next
 			if pageNumber == c.Config.MaxPages-1 {
-				errs = append(errs, fmt.Errorf("cell %s exceeded page limit", scope.cell))
+				errs = append(errs, fmt.Errorf("tenant %s exceeded page limit", t.Tenant))
 			}
 		}
 		for start := 0; start < len(jobs); start += c.Config.BatchSize {

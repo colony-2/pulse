@@ -104,5 +104,13 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]compute.Provider
 			out[name] = c
 		}
 	}
+	if cfg.AutoPlatform && len(out) == 1 {
+		for _, provider := range out {
+			if dockerProvider, ok := provider.(*docker.Provider); ok {
+				cfg.Defaults.Platform = dockerProvider.Platform()
+				cfg.Allocation.Platform = dockerProvider.Platform()
+			}
+		}
+	}
 	return out, closeAll, nil
 }

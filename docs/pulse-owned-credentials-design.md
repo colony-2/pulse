@@ -250,7 +250,6 @@ credentials:
 targets:
   - instance_id: production
     jobdb: https://jobdb.example.com/acme
-    cells: [github.com/acme/api]
     credential_profiles: [repository-worker]
     launch_services: [{name: runners, priority: 1}]
 ```
@@ -261,7 +260,7 @@ Only the trusted target/profile association selects grants initially. Keep signi
 
 Use a durable store for grant state, activation concurrency, deadlines, and revocation. SQLite on durable local storage is a reasonable single-instance starting point. HA replicas need shared transactional state; a shared signing key alone does not coordinate activation or revocation. Loss of state must deny renewal rather than reconstruct authority from unauthenticated IDs.
 
-Keep the issuer service running independently of any one scheduling pass. `pulse -once` cannot provide long-running refresh unless it registers grants with an already-running Pulse credential service. Reject that combination when no persistent issuer endpoint exists. The default read-only container deployment will also need a durable state mount or external store.
+Keep the issuer service running independently of any one scheduling pass. `pulse run --once` cannot provide long-running refresh unless it registers grants with an already-running Pulse credential service. Reject that combination when no persistent issuer endpoint exists. The default read-only container deployment will also need a durable state mount or external store.
 
 Load the private key through a mounted secret, restrict access to the Pulse service, and keep it out of logs, child processes, provider submissions, and configuration output. For rotation, publish the new public key to all gitvend instances first, then switch issuance to its `kid`. Retain the old public key through the maximum old-token lifetime and clock tolerance, then remove it. Track key IDs in audit records.
 
@@ -271,7 +270,7 @@ Record authorization decisions, grant/launch IDs, policy revision, token ID, exp
 
 1. **Grant model and policy:** explicit profiles, identity binding, state store, and a pinned gitvend signer. No arbitrary job-supplied grants.
 2. **End-to-end Docker execution:** authenticated activation/issuance, file refresh, Git configuration, and process deadline integration.
-3. **Provider portability:** compatible helper images, protected bootstrap delivery, remote contract changes, diagnostics, and documented `-once` behavior.
+3. **Provider portability:** compatible helper images, protected bootstrap delivery, remote contract changes, diagnostics, and documented `run --once` behavior.
 4. **Lifecycle integration:** trusted completion/cancellation and optional ownership-gated access; HA if deployment requires it.
 
 Before enabling production credentials, verify cross-tenant denial, competing activation and lost-response retries, restart recovery, refresh across multiple token lifetimes, exact Git grant enforcement, key rotation, definite-decline fallback, uncertain submission, queued-start expiry, missing signer/state, symlink/path handling, and absence of secrets in diagnostics and launch logs. Include live provider acceptance tests for bootstrap exposure and cleanup.

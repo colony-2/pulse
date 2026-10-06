@@ -24,7 +24,6 @@ providers:
 targets:
   - instance_id: development
     jobdb: http://jobdb.example.com/test-tenant
-    cells: [github.com/acme/app]
     launch_services:
       - name: local
         priority: 1

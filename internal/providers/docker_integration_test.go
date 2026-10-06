@@ -55,17 +55,15 @@ func TestDockerIntegration(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	// Omit providers and launch_services: exercise the actual default-provider
 	// construction, helper discovery, and image pull path used by Pulse.
-	data := fmt.Sprintf(`defaults:
+	data := `defaults:
   image: alpine:3.21
-  platform: %s
   cpu: "100m"
   memory: 32Mi
   scratch: 8Mi
 targets:
   - instance_id: docker-integration
     jobdb: http://localhost/acme
-    cells: [github.com/acme/app]
-`, platform)
+`
 	cfg, err := config.Parse([]byte(data))
 	if err != nil {
 		t.Fatal(err)
@@ -77,9 +75,14 @@ targets:
 		if out, err := build.CombinedOutput(); err != nil {
 			t.Fatalf("build Pulse: %v\n%s", err, out)
 		}
-		cmd := exec.CommandContext(ctx, binary, "-check")
+		cmd := exec.CommandContext(ctx, binary, "check")
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "PULSE_CONFIG="+data, "PATH="+t.TempDir())
+		for _, entry := range os.Environ() {
+			if !strings.HasPrefix(entry, "PULSE_CONFIG=") && !strings.HasPrefix(entry, "C2J_JOBDB=") && !strings.HasPrefix(entry, "PATH=") {
+				cmd.Env = append(cmd.Env, entry)
+			}
+		}
+		cmd.Env = append(cmd.Env, "C2J_JOBDB=http://localhost/acme", "PATH="+t.TempDir())
 		out, err := cmd.CombinedOutput()
 		if err != nil || !strings.Contains(string(out), "providers are valid") {
 			t.Fatalf("default Docker CLI initialization: %v\n%s", err, out)
@@ -91,6 +94,9 @@ targets:
 		t.Fatal(err)
 	}
 	t.Cleanup(closeProviders)
+	if cfg.Allocation.Platform != platform {
+		t.Fatalf("default platform %s does not match daemon %s", cfg.Allocation.Platform, platform)
+	}
 	provider := instances[cfg.Targets[0].Services[0].Name]
 	if provider == nil {
 		t.Fatal("default target did not resolve to a provider")

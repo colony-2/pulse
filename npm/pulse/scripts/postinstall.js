@@ -81,24 +81,29 @@ async function install({ root = path.resolve(__dirname, ".."), fetch = downloadW
   const base = `https://github.com/colony-2/pulse/releases/download/v${pkg.version}`;
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pulse-install-"));
   const vendor = path.join(root, "vendor");
-  let staged;
+  const staged = [];
   try {
     const archive = path.join(temp, name);
     const checksums = path.join(temp, "checksums.txt");
     await fetch(`${base}/${name}`, archive);
     await fetch(`${base}/checksums.txt`, checksums);
     verifyChecksum(archive, checksums, name);
-    // Extract only the expected binary, never arbitrary archive paths.
-    execFileSync("tar", ["-xzf", archive, "-C", temp, "pulse"], { stdio: "inherit" });
-    const extracted = path.join(temp, "pulse");
-    if (!fs.lstatSync(extracted).isFile()) throw new Error("Release binary is not a regular file");
+    // Extract only the expected executables, never arbitrary archive paths.
+    const binaries = ["pulse-exec", "pulse"];
+    execFileSync("tar", ["-xzf", archive, "-C", temp, ...binaries], { stdio: "inherit" });
+    for (const binary of binaries) {
+      if (!fs.lstatSync(path.join(temp, binary)).isFile()) throw new Error("Release binary is not a regular file");
+    }
     fs.mkdirSync(vendor, { recursive: true });
-    staged = path.join(vendor, `.pulse-${process.pid}-${crypto.randomBytes(6).toString("hex")}`);
-    fs.copyFileSync(extracted, staged);
-    fs.chmodSync(staged, 0o755);
-    fs.renameSync(staged, path.join(vendor, "pulse"));
+    for (const binary of binaries) {
+      const file = path.join(vendor, `.${binary}-${process.pid}-${crypto.randomBytes(6).toString("hex")}`);
+      staged.push(file);
+      fs.copyFileSync(path.join(temp, binary), file);
+      fs.chmodSync(file, 0o755);
+    }
+    for (const [index, binary] of binaries.entries()) fs.renameSync(staged[index], path.join(vendor, binary));
   } finally {
-    if (staged) fs.rmSync(staged, { force: true });
+    for (const file of staged) fs.rmSync(file, { force: true });
     fs.rmSync(temp, { recursive: true, force: true });
   }
 }

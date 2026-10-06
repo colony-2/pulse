@@ -22,7 +22,6 @@ providers:
 targets:
   - instance_id: test
     jobdb: https://db.example/acme
-    cells: [github.com/acme/app]
     launch_services: [{name: pool, priority: 1}]
 `
 
@@ -59,11 +58,10 @@ func TestRemovedListingOptions(t *testing.T) {
 			t.Fatal("removed listing settings accepted", addition)
 		}
 	}
-	for _, cell := range []string{"./repo", "/srv/repo", "my-alias"} {
-		if _, err := Parse([]byte(strings.Replace(valid, "github.com/acme/app", cell, 1))); err == nil {
-			t.Fatal("repository discovery accepted", cell)
-		}
+	if _, err := Parse([]byte(valid + "    cells: [github.com/acme/app]\n")); err == nil {
+		t.Fatal("obsolete repository scope accepted")
 	}
+
 }
 
 func TestHTTPListenConfiguration(t *testing.T) {
@@ -98,6 +96,7 @@ func TestHTTPListenConfiguration(t *testing.T) {
 }
 
 func TestConfigurationSourceSelection(t *testing.T) {
+	t.Setenv("C2J_JOBDB", "")
 	t.Chdir(t.TempDir())
 	file := []byte(valid)
 	if err := os.WriteFile("pulse.yaml", file, 0600); err != nil {

@@ -38,7 +38,7 @@ Continuous mode serves public read-only HTTP endpoints for status, redacted conf
 
 ## Inline container configuration
 
-`PULSE_CONFIG` accepts the complete YAML configuration using the same parser and validation as files. Explicit `-config` takes precedence, then inline configuration, then `./pulse.yaml`; sources never merge or silently fall back on errors. Simple-container documentation now uses this environment option. The image has no default file arguments, and mounted-file deployments pass their path explicitly. Tests cover precedence, invalid/empty documents, literal values, fileless CLI discovery/submission and continuous HTTP operation. Container smoke checks cover both sources on each release architecture.
+`PULSE_CONFIG` accepts the complete YAML configuration using the same parser and validation as files. Explicit `--config` takes precedence, then inline configuration, then `./pulse.yaml`; sources never merge or silently fall back on errors. Simple-container documentation now uses this environment option. The image has no default file arguments, and mounted-file deployments pass their path explicitly. Tests cover precedence, invalid/empty documents, literal values, fileless CLI discovery/submission and continuous HTTP operation. Container smoke checks cover both sources on each release architecture.
 
 ## Single-attempt submission contract
 

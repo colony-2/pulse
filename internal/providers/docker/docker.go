@@ -499,3 +499,6 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 	}
 	return out, nil
 }
+
+// Platform reports the Linux platform supported natively by the Docker daemon.
+func (p *Provider) Platform() string { return p.platform }
