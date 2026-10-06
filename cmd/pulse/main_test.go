@@ -97,7 +97,7 @@ func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
 					if !strings.Contains(args, "run with-lease") || !strings.Contains(args, "--lease-file -") || strings.Contains(args, "--worker-id") || strings.Contains(args, "--on-not-ready") {
 						t.Error("incorrect lease command", args)
 					}
-					if item.CPUMillis != 1000 || item.Image != "ghcr.io/colony-2/shai-mega:latest" || item.Metadata["pulse_job_id"] == "" || item.Process.Env["C2J_EXECUTION_CPU"] != "1000m" || item.Process.Env["PULSE_JOB_ID"] == "" || item.Process.Env["PULSE_CONFIG"] != "" {
+					if item.TimeoutSeconds != 0 || item.CPUMillis != 1000 || item.Image != "ghcr.io/colony-2/shai-mega:latest" || item.Metadata["pulse_job_id"] == "" || item.Process.Env["C2J_EXECUTION_CPU"] != "1000m" || item.Process.Env["PULSE_JOB_ID"] == "" || item.Process.Env["PULSE_CONFIG"] != "" {
 						t.Error(item)
 					}
 					results = append(results, map[string]any{"launch_id": item.LaunchID, "status": "accepted"})

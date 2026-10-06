@@ -67,7 +67,7 @@ Bound logs and reserve operational disk headroom for images, container layers, a
 
 Resolve images for the host's native platform, bind the launch to the resolved content, and keep reference/manifest/config identities distinct. Unsupported platforms return `unsupported` rather than silently using emulation. Preserve c2j's required image-reference matching when pinning content.
 
-A provider-supplied in-container supervisor enforces the execution timeout and any start deadline without depending on Pulse remaining alive. It launches the supplied process, forwards signals, and terminates the workload at the limit. The implementation must provide this helper for supported images/platforms before claiming timeout support; a Pulse-only timer is insufficient. The container's original application image remains the requested image.
+Docker launches the supplied c2j process directly and delivers the finite lease capability through Docker's native stdin attachment. No Pulse helper or host bind mount is required. c2j owns recipe and operation timeouts and cancellation. Pulse imposes no default execution cap. Requests with a positive infrastructure timeout or future actual-start deadline are unsupported by this adapter; already-expired starts are rejected.
 
 ## Implementation checks
 

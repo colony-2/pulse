@@ -11,10 +11,8 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -27,9 +25,9 @@ const accountingLabel = "pulse_docker_accounting"
 const limitsLabel = "pulse_docker_limits"
 
 type Config struct {
-	Socket, Helper, LockDir, ScratchPath, RegistryAuth string
-	CPUMillis, MemoryBytes, Overhead                   int64
-	MaxContainers                                      int
+	Socket, LockDir, ScratchPath, RegistryAuth string
+	CPUMillis, MemoryBytes, Overhead           int64
+	MaxContainers                              int
 }
 type charge struct {
 	CPU    int64 `json:"cpu"`
@@ -84,42 +82,12 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 		return nil, err
 	}
 	cfg.Socket = socket
-	if cfg.Helper == "" {
-		// Release archives and the container image install both binaries together.
-		if executable, err := os.Executable(); err == nil {
-			candidate := filepath.Join(filepath.Dir(executable), "pulse-exec")
-			if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() && stat.Mode()&0111 != 0 {
-				cfg.Helper = candidate
-			}
-		}
-		if cfg.Helper == "" {
-			helper, err := exec.LookPath("pulse-exec")
-			if err != nil {
-				return nil, fmt.Errorf("Docker requires pulse-exec beside pulse or on PATH; alternatively configure providers.<name>.helper with an absolute daemon-visible path")
-			}
-			cfg.Helper, err = filepath.Abs(helper)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-	if !filepath.IsAbs(cfg.Helper) {
-		return nil, fmt.Errorf("Docker helper must be an absolute daemon-visible path")
-	}
-	stat, err := os.Stat(cfg.Helper)
-	if err != nil || stat.IsDir() || stat.Mode()&0111 == 0 {
-		return nil, fmt.Errorf("Docker helper is missing or not executable")
-	}
-	// Docker Desktop shares canonical host paths with its Linux VM.
-	cfg.Helper, err = filepath.EvalSymlinks(cfg.Helper)
-	if err != nil {
-		return nil, err
-	}
 	e := newEngine(cfg.Socket)
 	e.registryAuth = cfg.RegistryAuth
+	slog.Info("initializing Docker provider", "socket", cfg.Socket)
 	p, err := open(ctx, cfg, e, true)
 	if err != nil {
-		return nil, err
+		return nil, probeDiagnostic("initialize daemon", err)
 	}
 	if !p.unenforced {
 		if err := p.checkLimits(ctx); err != nil {
@@ -127,6 +95,7 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 			return nil, err
 		}
 	}
+	slog.Info("Docker provider ready", "platform", p.platform, "resource_limits_enforced", !p.unenforced)
 	return p, nil
 }
 func open(ctx context.Context, cfg Config, e *engine, locking bool) (*Provider, error) {
@@ -291,6 +260,15 @@ func (p *Provider) resolve(ctx context.Context, r compute.Request, used charge) 
 	}
 	cost := p.cost(a)
 	switch {
+	case r.StartBefore != nil && !r.StartBefore.After(time.Now()):
+		result.Status = compute.Rejected
+		result.Reason = "start deadline expired"
+	case r.StartBefore != nil:
+		result.Status = compute.Unsupported
+		result.Reason = "Docker does not enforce an additional actual-start deadline; c2j validates the supplied lease"
+	case r.TimeoutSeconds != 0:
+		result.Status = compute.Unsupported
+		result.Reason = "Docker runs the executor directly; configure execution timeouts in c2j instead of defaults.timeout"
 	case r.Platform != p.platform:
 		result.Status = compute.Unsupported
 		result.Reason = "Docker native platform differs"
@@ -398,12 +376,6 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		}
 		cost := p.cost(plan.Allocation)
 
-		if plan.Request.StartBefore != nil && !plan.Request.StartBefore.After(time.Now()) {
-			r.Status = compute.Rejected
-			r.Reason = "start deadline expired"
-			out = append(out, r)
-			continue
-		}
 		used = used.add(cost)
 		p.uncertain[l.LaunchID] = cost
 		labels := map[string]string{}
@@ -423,28 +395,18 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		for k, v := range l.Process.Env {
 			env = append(env, k+"="+v)
 		}
-		if l.Process.Stdin != "" {
-			env = append(env, compute.StdinEnv+"="+string(l.Process.Stdin))
-		}
 		if _, ok := l.Process.Env["TMPDIR"]; !ok {
 			env = append(env, "TMPDIR="+p.cfg.ScratchPath)
 		}
 		if _, supplied := l.Process.Env["PULSE_SCRATCH_DIR"]; !supplied {
 			env = append(env, "PULSE_SCRATCH_DIR="+p.cfg.ScratchPath)
 		}
-		args := []string{"--timeout", strconv.FormatInt(plan.Request.TimeoutSeconds, 10) + "s"}
-		if plan.Request.StartBefore != nil {
-			args = append(args, "--start-before", plan.Request.StartBefore.Format(time.RFC3339Nano))
-		}
-		args = append(args, "--")
-		args = append(args, l.Process.Command...)
-		args = append(args, l.Process.Args...)
 		a := plan.Allocation
 		cpu, memory := a.CPUMillis*1000000, a.MemoryBytes+a.ScratchBytes
 		if p.unenforced {
 			cpu, memory = 0, 0
 		}
-		body := map[string]any{"Image": plan.ImageID, "Entrypoint": []string{"/__pulse/exec"}, "Cmd": args, "Env": env, "Labels": labels, "WorkingDir": l.Process.WorkingDir, "HostConfig": map[string]any{"NanoCpus": cpu, "Memory": memory, "MemorySwap": memory, "RestartPolicy": map[string]any{"Name": "no"}, "AutoRemove": false, "Binds": []string{p.cfg.Helper + ":/__pulse/exec:ro"}, "Tmpfs": map[string]string{p.cfg.ScratchPath: fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes)}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "3"}}}}
+		body := map[string]any{"Image": plan.ImageID, "Entrypoint": l.Process.Command, "Cmd": l.Process.Args, "OpenStdin": l.Process.Stdin != "", "StdinOnce": true, "AttachStdin": l.Process.Stdin != "", "Env": env, "Labels": labels, "WorkingDir": l.Process.WorkingDir, "HostConfig": map[string]any{"NanoCpus": cpu, "Memory": memory, "MemorySwap": memory, "RestartPolicy": map[string]any{"Name": "no"}, "AutoRemove": false, "Tmpfs": map[string]string{p.cfg.ScratchPath: fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes)}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "3"}}}}
 		sum := sha256.Sum256([]byte(l.LaunchID))
 		name := "pulse-" + hex.EncodeToString(sum[:16])
 		var created struct {
@@ -489,9 +451,9 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 			out = append(out, r)
 			continue
 		}
-		if err = p.e.call(ctx, "POST", "/containers/"+url.PathEscape(created.ID)+"/start", nil, nil); err != nil {
+		if err = p.e.start(ctx, created.ID, l.Process.Stdin); err != nil {
 			r.Status = compute.Unknown
-			r.Reason = "Docker start outcome uncertain"
+			r.Reason = "Docker start or stdin delivery outcome uncertain"
 		} else {
 			r.Status = compute.Accepted
 		}

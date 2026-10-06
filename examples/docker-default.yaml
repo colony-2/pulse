@@ -1,5 +1,5 @@
 # Optional: Pulse already uses Docker and ghcr.io/colony-2/shai-mega:latest.
 # Without this file, the tenant comes from C2J_JOBDB or .c2j/config.yaml.
-# Install pulse-exec beside pulse or on PATH (included by npm and release archives).
+# Only pulse is needed on the host; c2j comes from the executor image.
 targets:
   - jobdb: http://jobdb.example.com/test-tenant

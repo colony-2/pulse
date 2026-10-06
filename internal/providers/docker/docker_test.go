@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/colony-2/pulse/pkg/compute"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type daemon struct {
@@ -18,12 +20,44 @@ type daemon struct {
 	startError  bool
 	createError bool
 	noLimits    bool
+	stdin       map[string]string
+}
+
+func TestExplicitInfrastructureDeadlinesAreNotSilentlyIgnored(t *testing.T) {
+	d := &daemon{containers: map[string]container{}}
+	p, s := testProvider(t, d)
+	defer s.Close()
+	ls := launches(requests("timeout", "deadline"))
+	ls[0].TimeoutSeconds = 60
+	deadline := time.Now().Add(time.Hour)
+	ls[1].StartBefore = &deadline
+	out, err := p.Submit(context.Background(), ls)
+	if err != nil || len(out) != 2 || out[0].Status != compute.Unsupported || out[1].Status != compute.Unsupported || len(d.creates) != 0 {
+		t.Fatal(out, err)
+	}
 }
 
 func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/v1.47")
+	if strings.HasSuffix(path, "/attach") {
+		conn, rw, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			panic(err)
+		}
+		defer conn.Close()
+		rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n")
+		rw.Flush()
+		data, _ := io.ReadAll(rw)
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if d.stdin == nil {
+			d.stdin = map[string]string{}
+		}
+		d.stdin[strings.TrimSuffix(strings.TrimPrefix(path, "/containers/"), "/attach")] = string(data)
+		return
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	path := strings.TrimPrefix(r.URL.Path, "/v1.47")
 	enc := json.NewEncoder(w)
 	switch {
 	case path == "/version":
@@ -81,7 +115,7 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 func testProvider(t *testing.T, d *daemon) (*Provider, *httptest.Server) {
 	t.Helper()
 	s := httptest.NewServer(http.HandlerFunc(d.serve))
-	p, e := open(context.Background(), Config{CPUMillis: 2000, MemoryBytes: 4 << 30, MaxContainers: 2, Helper: "/helper"}, &engine{base: s.URL, client: s.Client()}, false)
+	p, e := open(context.Background(), Config{CPUMillis: 2000, MemoryBytes: 4 << 30, MaxContainers: 2}, &engine{base: s.URL, client: s.Client()}, false)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -90,7 +124,7 @@ func testProvider(t *testing.T, d *daemon) (*Provider, *httptest.Server) {
 func requests(ids ...string) []compute.Request {
 	rs := []compute.Request{}
 	for _, id := range ids {
-		rs = append(rs, compute.Request{LaunchID: id, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Image: "runner:1", Platform: "linux/arm64"}, TimeoutSeconds: 60, Metadata: map[string]string{"pulse_job_id": id}})
+		rs = append(rs, compute.Request{LaunchID: id, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Image: "runner:1", Platform: "linux/arm64"}, Metadata: map[string]string{"pulse_job_id": id}})
 	}
 	return rs
 }
@@ -225,7 +259,7 @@ func TestRoundingPreservesRequestedEnvironment(t *testing.T) {
 			t.Fatal(k, seen[k], v)
 		}
 	}
-	if seen[compute.StdinEnv] != "private-capability" {
-		t.Fatal("stdin transport missing")
+	if seen[compute.StdinEnv] != "" || body["OpenStdin"] != true || body["StdinOnce"] != true || body["HostConfig"].(map[string]any)["Binds"] != nil || body["Entrypoint"].([]any)[0] != "c2j" {
+		t.Fatal("expected direct executor, native stdin, and no host mounts", body)
 	}
 }

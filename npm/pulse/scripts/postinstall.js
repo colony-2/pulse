@@ -89,7 +89,7 @@ async function install({ root = path.resolve(__dirname, ".."), fetch = downloadW
     await fetch(`${base}/checksums.txt`, checksums);
     verifyChecksum(archive, checksums, name);
     // Extract only the expected executables, never arbitrary archive paths.
-    const binaries = ["pulse-exec", "pulse"];
+    const binaries = ["pulse"];
     execFileSync("tar", ["-xzf", archive, "-C", temp, ...binaries], { stdio: "inherit" });
     for (const binary of binaries) {
       if (!fs.lstatSync(path.join(temp, binary)).isFile()) throw new Error("Release binary is not a regular file");

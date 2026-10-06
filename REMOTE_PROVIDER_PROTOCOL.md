@@ -1,6 +1,6 @@
 # Remote compute provider protocol v1
 
-Pulse uses **one batch submission operation** to send complete container launches. The [OpenAPI contract](api/provider.openapi.yaml) specifies v1 (`1.1.0`), including optional sensitive stdin. Built-in adapters use the same submission model in-process. See [Implementing a remote provider](docs/implementing-a-remote-provider.md) for server guidance.
+Pulse uses **one batch submission operation** to send complete container launches. The [OpenAPI contract](api/provider.openapi.yaml) specifies v1 (`1.2.0`), including optional sensitive stdin and optional infrastructure timeouts. Built-in adapters use the same submission model in-process. See [Implementing a remote provider](docs/implementing-a-remote-provider.md) for server guidance.
 
 ## Operations
 
@@ -20,7 +20,7 @@ Each item contains:
 - A unique `launch_id` for this attempt.
 - An OCI `image` reference and `platform` (`os/architecture[/variant]`).
 - Positive integer `cpu_millis`, `memory_bytes`, and `scratch_bytes`. One CPU is 1000 millicores; the maximum integer is `9007199254740991`.
-- `timeout_seconds`, a positive execution limit of at most 31536000 seconds, and optional `start_before` in RFC 3339 format.
+- Optional `timeout_seconds`: absent or zero delegates execution timeouts to c2j; a positive value is an explicit infrastructure cap of at most 31536000 seconds, and optional `start_before` in RFC 3339 format.
 - Opaque string-valued `metadata` for reverse lookup.
 - `process`: explicit `command`, `args`, literal `env`, optional sensitive `stdin`, and optional absolute `working_dir`. Empty arguments/environment use `[]` and `{}`, not `null`.
 
@@ -182,7 +182,7 @@ Accepted results contain only `launch_id` and `status`. Every non-accepted resul
 
 All definite declines guarantee that execution cannot later start from that submission. A native failure after possibly initiating execution is `unknown`. Providers using optional native duplicate detection must leave an existing launch unchanged when rejecting a conflicting ID; such a rejection makes no claim about whether that earlier launch ran.
 
-Report `accepted` after admission or handoff has occurred, not merely after validating the request or creating an inert cloud parent. An accepted asynchronous native start operation is sufficient. The provider need not guarantee delivery after a crash, recover lost queue entries, or restart failed launches. Once execution starts, resource limits and `timeout_seconds` must be enforced independently of Pulse.
+Report `accepted` after admission or handoff has occurred, not merely after validating the request or creating an inert cloud parent. An accepted asynchronous native start operation is sufficient. The provider need not guarantee delivery after a crash, recover lost queue entries, or restart failed launches. Once execution starts, resource limits and any positive `timeout_seconds` must be enforced independently of Pulse.
 
 Batches are not transactions. Preserve valid explicit results in a complete response when another item is missing or malformed. Unaccounted-for IDs, duplicate results, unknown statuses, truncated JSON, timeouts, and transport failures imply uncertainty. Pulse never immediately falls back an uncertain item. Pulse leaves that lease alone; a new attempt requires JobDB to grant a fresh lease after expiry or executor rescheduling.
 
@@ -218,7 +218,7 @@ Prefer prompt handoff to the underlying runtime, without a separate provider bac
 
 A provider that deliberately holds its own queue for runners must require `start_before` and prevent container startup at or after that timestamp. Expire missed queue entries without launching them; no retained terminal record is required. Without a deadline, dispatch directly or return `unsupported` if provider-owned queueing is the only option. Queueing is optional; return `no_capacity` when fallback is preferable.
 
-`start_before`, when supplied, always constrains actual container startup, not just handoff to another system. A provider that cannot enforce it must return `unsupported`. Native cloud handoff can omit it. Pulse sets it through `defaults.start_window`, which must be positive and no longer than `lease_duration`. No universal startup deadline is imposed when it is absent. `timeout_seconds` remains a separate limit measured after startup; an HTTP call timeout is neither of these deadlines.
+`start_before`, when supplied, always constrains actual container startup, not just handoff to another system. A provider that cannot enforce it must return `unsupported`. Native cloud handoff can omit it. Pulse sets it through `defaults.start_window`, which must be positive and no longer than `lease_duration`. No universal startup deadline is imposed when it is absent. A positive `timeout_seconds` remains a separate infrastructure limit measured after startup; an HTTP call timeout is neither of these deadlines.
 
 ## Active instance listing
 

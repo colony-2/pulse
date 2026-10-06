@@ -69,7 +69,7 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]compute.Provider
 					return fail(e)
 				}
 			}
-			dc := docker.Config{Socket: socket, Helper: p.Helper, LockDir: p.LockDir, ScratchPath: p.ScratchPath, RegistryAuth: os.Getenv(p.RegistryAuthEnv), CPUMillis: cpu, MemoryBytes: mem, Overhead: overhead, MaxContainers: p.Capacity.MaxContainers}
+			dc := docker.Config{Socket: socket, LockDir: p.LockDir, ScratchPath: p.ScratchPath, RegistryAuth: os.Getenv(p.RegistryAuthEnv), CPUMillis: cpu, MemoryBytes: mem, Overhead: overhead, MaxContainers: p.Capacity.MaxContainers}
 			if prior, ok := locals[socket]; ok {
 				if prior.config != dc {
 					return fail(fmt.Errorf("Docker aliases must share an identical budget/configuration"))

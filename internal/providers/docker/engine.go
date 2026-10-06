@@ -20,10 +20,16 @@ type engine struct {
 }
 type apiError struct {
 	code    int
-	message string // Used internally to distinguish unsupported cgroups from other failures.
+	message string // Only synthetic startup probes may expose daemon details.
 }
 
 func (e *apiError) Error() string { return fmt.Sprintf("Docker API returned HTTP %d", e.code) }
+
+func readAPIError(resp *http.Response) error {
+	var body struct{ Message string }
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&body)
+	return &apiError{code: resp.StatusCode, message: body.Message}
+}
 func newEngine(socket string) *engine {
 	return &engine{base: "http://docker", client: &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", strings.TrimPrefix(socket, "unix://"))
@@ -52,9 +58,7 @@ func (e *engine) call(ctx context.Context, method, path string, body any, out an
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var body struct{ Message string }
-		_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&body)
-		return &apiError{code: resp.StatusCode, message: body.Message}
+		return readAPIError(resp)
 	}
 	if out == nil {
 		_, err = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))

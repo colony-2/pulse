@@ -10,6 +10,9 @@ import (
 )
 
 func TestExitAndTimeout(t *testing.T) {
+	if n := Run(context.Background(), []string{"/bin/sh", "-c", "sleep 0.02; exit 7"}, 0, time.Time{}); n != 7 {
+		t.Fatalf("cloud stdin bridge must allow executor-managed timeouts: %d", n)
+	}
 	if n := Run(context.Background(), []string{"/bin/sh", "-c", "exit 7"}, time.Second, time.Time{}); n != 7 {
 		t.Fatal(n)
 	}

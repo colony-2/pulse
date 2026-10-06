@@ -28,7 +28,6 @@ jobs:
         with:
           lima: v1.2.1
           colima: v0.9.1
-          colima-additional-options: --mount /private/var/folders:w
       - run: go test -race -count=1 ./...
       - run: make vet build
       - run: node --test scripts/npm.test.js

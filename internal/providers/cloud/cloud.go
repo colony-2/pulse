@@ -93,6 +93,9 @@ func (p *Provider) size(r compute.Request) (plan, string) {
 	}
 	pl := plan{Request: r, Allocation: a}
 	reason := ""
+	if r.TimeoutSeconds == 0 && p.cfg.Kind != "ecs" {
+		reason = "this cloud service requires an explicit infrastructure timeout; configure defaults.timeout"
+	}
 	if r.StartBefore != nil {
 		reason = "cloud adapter does not enforce queued start deadlines"
 	}

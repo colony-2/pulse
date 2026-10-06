@@ -86,7 +86,6 @@ The test-only `cloud-smoke` target runs static cloud-adapter tests in the same n
 A containerized Pulse controlling a host Docker daemon additionally needs:
 
 - The daemon socket mounted and accessible to the controller UID or supplementary socket group.
-- A host copy of the Linux `pulse-exec` helper, mounted at the **same absolute path** in the controller and configured as `providers.<name>.helper`. Merely having `/usr/local/bin/pulse-exec` inside the controller image does not make that path available to the host daemon's bind mounts.
 - A shared host directory for `providers.<name>.lock_dir`, mounted identically by every controller that could reach this daemon. Private container `/tmp` directories cannot enforce a single admission owner across controllers.
 - Capacity budgets reserving headroom for the host, controller, and other workloads.
 

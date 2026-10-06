@@ -92,7 +92,10 @@ func (c *Client) call(ctx context.Context, method, path string, body any, out an
 	return resp.StatusCode, nil
 }
 func requestWire(r compute.Request) map[string]any {
-	m := map[string]any{"launch_id": r.LaunchID, "image": r.Image, "platform": r.Platform, "cpu_millis": r.CPUMillis, "memory_bytes": r.MemoryBytes, "scratch_bytes": r.ScratchBytes, "timeout_seconds": r.TimeoutSeconds, "metadata": r.Metadata}
+	m := map[string]any{"launch_id": r.LaunchID, "image": r.Image, "platform": r.Platform, "cpu_millis": r.CPUMillis, "memory_bytes": r.MemoryBytes, "scratch_bytes": r.ScratchBytes, "metadata": r.Metadata}
+	if r.TimeoutSeconds != 0 {
+		m["timeout_seconds"] = r.TimeoutSeconds
+	}
 	if r.StartBefore != nil {
 		m["start_before"] = r.StartBefore
 	}

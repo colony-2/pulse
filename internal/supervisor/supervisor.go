@@ -13,7 +13,7 @@ import (
 
 // Run supervises a process group so timeout enforcement survives Pulse exit.
 func Run(ctx context.Context, argv []string, timeout time.Duration, startBefore time.Time) int {
-	if len(argv) == 0 || timeout <= 0 {
+	if len(argv) == 0 || timeout < 0 {
 		return 125
 	}
 	if !startBefore.IsZero() && !time.Now().Before(startBefore) {
@@ -44,8 +44,12 @@ func Run(ctx context.Context, argv []string, timeout time.Duration, startBefore 
 	defer syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
+	var timedOut <-chan time.Time
+	if timeout > 0 {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		timedOut = timer.C
+	}
 	select {
 	case err := <-done:
 		if err == nil {
@@ -57,7 +61,7 @@ func Run(ctx context.Context, argv []string, timeout time.Duration, startBefore 
 		}
 		return 125
 	case <-ctx.Done():
-	case <-timer.C:
+	case <-timedOut:
 	}
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 	grace := time.NewTimer(2 * time.Second)

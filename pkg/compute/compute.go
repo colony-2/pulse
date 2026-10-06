@@ -21,7 +21,7 @@ const MaxBatch = 100
 const MaxQuantity int64 = 9007199254740991
 const MaxStdin = 1 << 20
 
-// StdinEnv is the private transport from native container APIs to pulse-exec.
+// StdinEnv is the private transport from cloud container APIs to pulse-exec.
 // It is removed before starting the child and must never be set by a caller.
 const StdinEnv = "PULSE_EXEC_STDIN"
 
@@ -101,7 +101,7 @@ func (a Allocation) Satisfies(want Allocation) error {
 type Request struct {
 	LaunchID string `json:"launch_id"`
 	Allocation
-	TimeoutSeconds int64             `json:"timeout_seconds"`
+	TimeoutSeconds int64             `json:"timeout_seconds,omitempty"`
 	StartBefore    *time.Time        `json:"start_before,omitempty"`
 	Metadata       map[string]string `json:"metadata"`
 }
@@ -113,8 +113,8 @@ func (r Request) Validate() error {
 	if err := r.Allocation.Validate(); err != nil {
 		return err
 	}
-	if r.TimeoutSeconds <= 0 || r.TimeoutSeconds > int64((365*24*time.Hour)/time.Second) {
-		return errors.New("timeout must be positive and at most one year")
+	if r.TimeoutSeconds < 0 || r.TimeoutSeconds > int64((365*24*time.Hour)/time.Second) {
+		return errors.New("timeout must be zero (executor-managed) or positive and at most one year")
 	}
 	if len(r.Metadata) == 0 {
 		return errors.New("metadata is required")

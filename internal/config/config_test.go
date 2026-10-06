@@ -266,7 +266,7 @@ func TestDockerBudgetDefaultsRoundUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	p = cfg.Providers["local"]
-	if p.Capacity.CPU != "4" || p.Capacity.Memory != "8Gi" || p.Capacity.MaxContainers != 4 || p.Helper != "/usr/local/lib/pulse/pulse-exec" {
+	if p.Capacity.CPU != "4" || p.Capacity.Memory != "8Gi" || p.Capacity.MaxContainers != 4 {
 		t.Fatalf("explicit Docker configuration changed: %+v", p)
 	}
 }

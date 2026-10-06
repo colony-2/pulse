@@ -8,12 +8,10 @@ defaults:
   cpu: "1"
   memory: 1Gi
   scratch: 1Gi
-  timeout: 1h
 providers:
   local:
     type: docker
     socket: unix:///var/run/docker.sock
-    helper: /usr/local/lib/pulse/pulse-exec
     lock_dir: /tmp/pulse-docker-locks
     capacity:
       cpu: "4"

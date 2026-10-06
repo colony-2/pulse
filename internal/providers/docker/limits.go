@@ -1,35 +1,45 @@
 package docker
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"net/url"
-	"strings"
 	"time"
 )
 
 var errLimitsDiscarded = errors.New("Docker discarded probe resource limits")
 
 // checkLimits tests the daemon rather than the controller's cgroup namespace.
-// Some nested daemons advertise limits in /info but cannot apply them. A tiny
-// temporary scratch image and the already installed static helper let us probe
-// startup without pulling an image or executing any user job.
+// Some nested daemons advertise limits in /info but cannot apply them. Use a
+// disposable Alpine container, with no host mounts or installed helper.
 func (p *Provider) checkLimits(ctx context.Context) error {
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return err
 	}
 	name := "pulse-limits-probe-" + hex.EncodeToString(nonce[:])
-	image := name + ":probe"
+	const probeImage = "alpine:3.21"
+	var image struct {
+		ID string `json:"Id"`
+	}
+	imagePath := "/images/" + url.PathEscape(probeImage) + "/json"
+	err := p.e.call(ctx, "GET", imagePath, nil, &image)
+	var api *apiError
+	if errors.As(err, &api) && api.code == 404 {
+		if err = p.e.pull(ctx, probeImage, p.platform); err == nil {
+			err = p.e.call(ctx, "GET", imagePath, nil, &image)
+		}
+	}
+	if err != nil {
+		return probeDiagnostic("resolve probe image", err)
+	}
+	if image.ID == "" {
+		return fmt.Errorf("Docker probe image has no ID")
+	}
 	containers := []string{}
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -38,7 +48,6 @@ func (p *Provider) checkLimits(ctx context.Context) error {
 		for _, container := range containers {
 			paths = append(paths, "/containers/"+container+"?force=1")
 		}
-		paths = append(paths, "/images/"+image)
 		for _, path := range paths {
 			if err := p.e.call(cleanup, "DELETE", path, nil, nil); err != nil {
 				var api *apiError
@@ -48,24 +57,21 @@ func (p *Provider) checkLimits(ctx context.Context) error {
 			}
 		}
 	}()
-	if err := p.e.importProbeImage(ctx, name, p.platform); err != nil {
-		return fmt.Errorf("Docker resource-limit probe image: %w", err)
-	}
 	start := func(limited bool) error {
 		containerName := fmt.Sprintf("%s-%t", name, limited)
 		containers = append(containers, containerName)
-		host := map[string]any{"Binds": []string{p.cfg.Helper + ":/__pulse/exec:ro"}, "NetworkMode": "none"}
+		host := map[string]any{"NetworkMode": "none"}
 		if limited {
 			host["NanoCpus"] = int64(100000000)
 			host["Memory"] = int64(32 << 20)
 			host["MemorySwap"] = int64(32 << 20)
 		}
-		body := map[string]any{"Image": image, "Entrypoint": []string{"/__pulse/exec"}, "HostConfig": host}
+		body := map[string]any{"Image": image.ID, "Entrypoint": []string{"/bin/true"}, "HostConfig": host}
 		var created struct {
 			ID string `json:"Id"`
 		}
 		if err := p.e.call(ctx, "POST", "/containers/create?name="+containerName, body, &created); err != nil {
-			return err
+			return probeDiagnostic("create container", err)
 		}
 		if created.ID == "" {
 			return fmt.Errorf("Docker probe create returned no ID")
@@ -74,69 +80,40 @@ func (p *Provider) checkLimits(ctx context.Context) error {
 		if limited {
 			var inspected container
 			if err := p.e.call(ctx, "GET", "/containers/"+created.ID+"/json", nil, &inspected); err != nil {
-				return err
+				return probeDiagnostic("inspect container", err)
 			}
 			if inspected.HostConfig.NanoCPUs != 100000000 || inspected.HostConfig.Memory != 32<<20 || inspected.HostConfig.MemorySwap != 32<<20 {
 				return errLimitsDiscarded
 			}
 		}
-		return p.e.call(ctx, "POST", "/containers/"+created.ID+"/start", nil, nil)
+		if err := p.e.call(ctx, "POST", "/containers/"+created.ID+"/start", nil, nil); err != nil {
+			return probeDiagnostic("start container", err)
+		}
+		return nil
 	}
 	if err := start(true); err != nil {
 		var api *apiError
-		if !errors.Is(err, errLimitsDiscarded) && (!errors.As(err, &api) || !limitError(api.message)) {
+		if !errors.Is(err, errLimitsDiscarded) && (!errors.As(err, &api) || (api.code != 400 && api.code < 500)) {
 			return fmt.Errorf("Docker resource-limit probe: %w", err)
 		}
+		slog.Info("Docker resource-limit probe failed; checking startup without limits", "error", err)
 		// Confirm the daemon can actually run unconstrained containers. An unrelated
-		// failure (bad helper, permissions, networking, etc.) remains a startup error.
-		if err := start(false); err != nil {
-			return fmt.Errorf("Docker probe without resource limits: %w", err)
+		// failure (bad image, permissions, networking, etc.) remains a startup error.
+		if unlimitedErr := start(false); unlimitedErr != nil {
+			return fmt.Errorf("Docker startup probes failed (platform %s): %w", p.platform,
+				errors.Join(fmt.Errorf("with resource limits: %w", err), fmt.Errorf("without resource limits: %w", unlimitedErr)))
 		}
-		p.disableLimits("Docker startup probe could not apply cgroup resource limits")
+		p.disableLimits("Docker startup probe succeeded only without resource limits: " + err.Error())
 	}
 	return nil
 }
 
-func limitError(message string) bool {
-	message = strings.ToLower(message)
-	return strings.Contains(message, "cgroup") ||
-		strings.Contains(message, "memory limit") ||
-		strings.Contains(message, "swap limit") ||
-		strings.Contains(message, "cpu quota") ||
-		strings.Contains(message, "cpu cfs") ||
-		strings.Contains(message, "nanocpus")
-}
-
-func (e *engine) importProbeImage(ctx context.Context, name, platform string) error {
-	var archive bytes.Buffer
-	if err := tar.NewWriter(&archive).Close(); err != nil {
-		return err
+// Only synthetic startup probes expose daemon details. Job submission errors
+// retain their redacted formatting because Docker can echo sensitive job input.
+func probeDiagnostic(stage string, err error) error {
+	var api *apiError
+	if errors.As(err, &api) && api.message != "" {
+		return fmt.Errorf("Docker probe %s: %w: daemon message %q", stage, err, api.message)
 	}
-	query := url.Values{"fromSrc": {"-"}, "repo": {name}, "tag": {"probe"}, "platform": {platform}}
-	req, err := http.NewRequestWithContext(ctx, "POST", e.base+e.version+"/images/create?"+query.Encode(), &archive)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/x-tar")
-	resp, err := e.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return &apiError{code: resp.StatusCode}
-	}
-	decoder := json.NewDecoder(io.LimitReader(resp.Body, 1<<20))
-	for {
-		var event struct{ Error string }
-		if err := decoder.Decode(&event); err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return err
-		}
-		if event.Error != "" {
-			return fmt.Errorf("Docker probe image import failed")
-		}
-	}
+	return fmt.Errorf("Docker probe %s: %w", stage, err)
 }

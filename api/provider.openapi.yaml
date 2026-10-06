@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: Pulse Remote Compute Provider Protocol
-  version: 1.1.0
+  version: 1.2.0
   description: Batch-only compute provider contract. Each submission contains resources, process, deadlines, and
     metadata. Providers preserve supplied environment values, including when rounding resource capacity upward.
     See REMOTE_PROVIDER_PROTOCOL.md for single-attempt submission, recovery, and fallback semantics. Providers do
@@ -427,9 +427,11 @@ components:
         timeout_seconds:
           type: integer
           format: int64
-          minimum: 1
+          minimum: 0
           maximum: 31536000
-          description: Maximum execution duration after container startup.
+          default: 0
+          description: Optional infrastructure execution cap. Omitted or zero delegates timeouts to the executor.
+            A positive value must be enforced independently of Pulse; otherwise return unsupported.
         start_before:
           type: string
           format: date-time
@@ -448,7 +450,6 @@ components:
       - cpu_millis
       - memory_bytes
       - scratch_bytes
-      - timeout_seconds
       - metadata
       - process
       additionalProperties: false

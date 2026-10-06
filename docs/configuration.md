@@ -39,12 +39,20 @@ Pulse needs an HTTP(S) JobDB service with a tenant path. A missing tenant produc
 | Image | `ghcr.io/colony-2/shai-mega:latest` |
 | CPU / memory / scratch | `1` / `1Gi` / `1Gi` |
 | Platform | Docker daemon's native Linux platform for a single Docker provider; otherwise `linux/<host architecture>` |
-| Execution timeout | `1h` |
+| Execution timeout | Managed by c2j; no Pulse cap |
 | Docker capacity | One default-sized job plus `256Mi` memory overhead |
 | `max_jobs_per_tenant` | `100` per poll |
 | `max_pages_per_tenant` | `1000` per poll |
 
 Job execution requirements override allocation defaults. `defaults` in optional YAML changes the fallback values. When providers are explicitly configured, targets specify their `launch_services`. For advanced deployments, keep `instance_id` explicit if it must survive changes to the deployment URL. Executor images still provide c2j and recipe dependencies.
+
+## Execution lifetime
+
+c2j enforces recipe and operation timeouts, cancels process trees, and stops work on lease-renewal failure. Pulse no longer adds a one-hour timer to every container. Docker runs c2j directly and sends the lease through native stdin; no helper or host bind mount is required. Remove obsolete Docker `helper` settings when upgrading.
+
+`defaults.timeout`, if set, is an explicit infrastructure lifetime cap, from one second to one year. Providers must enforce a requested cap or decline it. Docker declines positive caps; use c2j recipe timeouts. Cloud Run and Azure require an explicit cap because their native job APIs require a task timeout. ECS and remote providers can use executor-managed timeouts without a Pulse cap. Cloud adapters still use `pulse-exec` as a stdin bridge; with no cap it applies no timer.
+
+Remote provider protocol 1.2 makes `timeout_seconds` optional: absent or zero means executor-managed timeouts. Upgrade remote providers before sending requests without a cap.
 
 ## Lease handoff and recovery
 
@@ -61,7 +69,7 @@ call_timeout: 10s
 batch_timeout: 1m
 ```
 
-`lease_duration` defaults to `5m` and accepts `1s` through `24h`. Allow enough time for lease acquisition of the batch, provider fallback, scheduling, image pulls, and c2j startup. A longer duration also delays recovery after a lost launch or runner crash; c2j renews with the inherited duration. `defaults.start_window`, when present, must be positive and no longer than `lease_duration`. It constrains actual startup; it does not extend the lease.
+`lease_duration` defaults to `5m` and accepts `1s` through `24h`. Allow enough time for lease acquisition of the batch, provider fallback, scheduling, image pulls, and c2j startup. A longer duration also delays recovery after a lost launch or runner crash; c2j renews with the inherited duration. `defaults.start_window`, when present, must be positive and no longer than `lease_duration`. It constrains actual startup; it does not extend the lease. Docker declines this option because it launches c2j directly; c2j validates the supplied lease on startup.
 
 Claims run concurrently before provider submission, with these controls:
 

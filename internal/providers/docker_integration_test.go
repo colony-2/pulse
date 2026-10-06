@@ -26,7 +26,7 @@ func TestDockerIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	docker := func(t *testing.T, args ...string) string {
 		t.Helper()
@@ -46,19 +46,11 @@ func TestDockerIntegration(t *testing.T) {
 	}
 	t.Logf("running real container jobs through Pulse defaults: %s (%s)", socket, platform)
 	dir := t.TempDir()
-	helper := filepath.Join(dir, "pulse-exec")
-	build := exec.CommandContext(ctx, "go", "build", "-o", helper, "../../cmd/pulse-exec")
-	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build supervisor: %v\n%s", err, out)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	// Omit providers and launch_services: exercise the actual default-provider
-	// construction, helper discovery, and image pull path used by Pulse.
+	// Omit providers and launch_services. No helper binary or host mount exists.
 	data := `defaults:
   image: alpine:3.21
   cpu: "100m"
-  memory: 32Mi
+  memory: 256Mi
   scratch: 8Mi
 targets:
   - instance_id: docker-integration
@@ -69,7 +61,7 @@ targets:
 		t.Fatal(err)
 	}
 	unenforced := false
-	t.Run("CLI defaults and sibling helper", func(t *testing.T) {
+	t.Run("CLI defaults without a helper", func(t *testing.T) {
 		binary := filepath.Join(dir, "pulse")
 		build := exec.CommandContext(ctx, "go", "build", "-o", binary, "../../cmd/pulse")
 		if out, err := build.CombinedOutput(); err != nil {
@@ -102,7 +94,7 @@ targets:
 		t.Fatal("default target did not resolve to a provider")
 	}
 
-	newLaunch := func(t *testing.T, script string, timeout int64) (compute.Launch, string) {
+	newLaunch := func(t *testing.T, script string) (compute.Launch, string) {
 		t.Helper()
 		id := fmt.Sprintf("docker-test-%d", time.Now().UnixNano())
 		sum := sha256.Sum256([]byte(id))
@@ -123,7 +115,7 @@ targets:
 			}
 		})
 		return compute.Launch{
-			Request: compute.Request{LaunchID: id, Allocation: cfg.Allocation, TimeoutSeconds: timeout, Metadata: map[string]string{"pulse_job_id": id}},
+			Request: compute.Request{LaunchID: id, Allocation: cfg.Allocation, Metadata: map[string]string{"pulse_job_id": id}},
 			Process: compute.Process{Command: []string{"/bin/sh"}, Args: []string{"-ec", script}, Env: map[string]string{}},
 		}, name
 	}
@@ -143,7 +135,7 @@ targets:
 	}
 
 	t.Run("process contract and limits", func(t *testing.T) {
-		l, name := newLaunch(t, `test "$(cat)" = 'finite stdin payload'
+		l, name := newLaunch(t, `test "$(wc -c)" -eq 163840
 test "${PULSE_EXEC_STDIN+x}" = ''
 test "$LITERAL" = '$HOME'
 test "$PWD" = /scratch
@@ -151,8 +143,8 @@ test "$TMPDIR" = /scratch
 test "$PULSE_SCRATCH_DIR" = /scratch
 grep -q ' /scratch tmpfs ' /proc/mounts
 printf 'scratch works' > "$TMPDIR/result"
-cat "$TMPDIR/result"`, 30)
-		l.Process.Stdin = "finite stdin payload"
+cat "$TMPDIR/result"`)
+		l.Process.Stdin = compute.SecretInput(strings.Repeat("finite stdin payload", 8192))
 		l.Process.Env["LITERAL"] = "$HOME"
 		l.Process.WorkingDir = "/scratch"
 		submit(t, l, compute.Accepted)
@@ -160,9 +152,14 @@ cat "$TMPDIR/result"`, 30)
 			t.Fatalf("unexpected job output: %q", out)
 		}
 		var inspected []struct {
-			Config     struct{ Labels map[string]string }
+			Config struct {
+				Labels     map[string]string
+				Entrypoint []string
+				Env        []string
+			}
 			HostConfig struct {
 				NanoCPUs, Memory, MemorySwap int64
+				Binds                        []string
 				Tmpfs                        map[string]string
 				RestartPolicy                struct{ Name string }
 			}
@@ -171,7 +168,15 @@ cat "$TMPDIR/result"`, 30)
 			t.Fatalf("inspect: %v", err)
 		}
 		h := inspected[0].HostConfig
-		cpu, memory, mode := int64(100000000), int64(40<<20), "enforced"
+		if len(h.Binds) != 0 || len(inspected[0].Config.Entrypoint) != 1 || inspected[0].Config.Entrypoint[0] != "/bin/sh" {
+			t.Fatal("job used a wrapper or host mount", inspected)
+		}
+		for _, env := range inspected[0].Config.Env {
+			if strings.Contains(env, "finite stdin payload") {
+				t.Fatal("stdin leaked into container metadata")
+			}
+		}
+		cpu, memory, mode := int64(100000000), int64(264<<20), "enforced"
 		if unenforced {
 			cpu, memory, mode = 0, 0, "disabled"
 		}
@@ -186,14 +191,55 @@ cat "$TMPDIR/result"`, 30)
 		}
 	})
 	t.Run("job failure", func(t *testing.T) {
-		l, name := newLaunch(t, "echo failed >&2; exit 23", 30)
+		l, name := newLaunch(t, "echo failed >&2; exit 23")
 		submit(t, l, compute.Accepted)
 		if out := wait(t, name, "23"); out != "failed" {
 			t.Fatalf("stderr not preserved: %q", out)
 		}
 	})
+	t.Run("c2j enforces recipe timeout without Pulse helper", func(t *testing.T) {
+		// Build the pinned c2j CLI, then COPY it into a disposable image. No
+		// filesystem sharing with the daemon is involved, including on macOS.
+		module := exec.CommandContext(ctx, "go", "list", "-m", "-f", "{{.Dir}}", "github.com/colony-2/c2j")
+		moduleDir, err := module.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		buildDir := t.TempDir()
+		build := exec.CommandContext(ctx, "go", "build", "-mod=readonly", "-o", filepath.Join(buildDir, "c2j"), "./cmd/c2j")
+		build.Dir = strings.TrimSpace(string(moduleDir))
+		build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
+		if out, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build c2j: %v\n%s", err, out)
+		}
+		for file, contents := range map[string]string{
+			"Dockerfile":  "FROM alpine:3.21\nRUN apk add --no-cache git bash\nCOPY c2j /usr/local/bin/c2j\nCOPY recipe.yaml /recipe.yaml\n",
+			"recipe.yaml": "id: timeout\ntimeout: 1s\nop: command_execution\ninputs:\n  shell: sh\n  run: 'sleep 30; echo should-not-complete'\n",
+		} {
+			if err := os.WriteFile(filepath.Join(buildDir, file), []byte(contents), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		image := fmt.Sprintf("pulse-c2j-test:%d", time.Now().UnixNano())
+		docker(t, "build", "-t", image, buildDir)
+		// Registered before the container cleanup, so the container is removed first.
+		t.Cleanup(func() { docker(t, "image", "rm", image) })
+		l, name := newLaunch(t, "")
+		l.Image = image
+		l.Process = compute.Process{Command: []string{"c2j"}, Args: []string{"test", "run", "--stdin", "--recipe-file", "/recipe.yaml", "--case-timeout", "30s", "--out-dir", "/results"},
+			Stdin: "cases:\n- id: real-timeout\n  type: integration_case\n  runtime: {}\n  mocks: {ops: [{match: {op: command_execution}, behavior: {mode: passthrough}}]}\n"}
+		started := time.Now()
+		submit(t, l, compute.Accepted)
+		out := wait(t, name, "4")
+		if time.Since(started) > 15*time.Second || !strings.Contains(out, "job total timed out after 1s") {
+			t.Fatalf("c2j did not enforce its recipe timeout: %s", out)
+		}
+		if command := docker(t, "inspect", "--format", "{{json .Config.Entrypoint}}", name); command != `["c2j"]` {
+			t.Fatalf("c2j must be the direct entrypoint: %s", command)
+		}
+	})
 	t.Run("expired start deadline", func(t *testing.T) {
-		l, name := newLaunch(t, "echo should-not-run", 30)
+		l, name := newLaunch(t, "echo should-not-run")
 		before := time.Now().Add(-time.Minute)
 		l.StartBefore = &before
 		submit(t, l, compute.Rejected)
@@ -201,8 +247,8 @@ cat "$TMPDIR/result"`, 30)
 			t.Fatal("expired launch created a container")
 		}
 	})
-	t.Run("capacity and timeout survive provider restart", func(t *testing.T) {
-		l, name := newLaunch(t, "echo started; sleep 60; echo should-not-run", 10)
+	t.Run("capacity and execution survive provider restart", func(t *testing.T) {
+		l, name := newLaunch(t, "echo started; sleep 5; echo completed")
 		submit(t, l, compute.Accepted)
 		closeProviders()
 		instances, closeAgain, err := providers.Build(ctx, cfg)
@@ -211,14 +257,14 @@ cat "$TMPDIR/result"`, 30)
 		}
 		t.Cleanup(closeAgain)
 		provider = instances["docker"]
-		blocked, nextName := newLaunch(t, "echo next-job", 30)
+		blocked, nextName := newLaunch(t, "echo next-job")
 		submit(t, blocked, compute.NoCapacity)
 		listed, err := provider.List(ctx, compute.ListRequest{LaunchID: l.LaunchID})
 		if err != nil || len(listed.Items) != 1 || listed.Items[0].State != "running" {
 			t.Fatalf("running job missing from listing: %+v, %v", listed, err)
 		}
-		if out := wait(t, name, "124"); out != "started" {
-			t.Fatalf("timeout failed to stop job: %q", out)
+		if out := wait(t, name, "0"); out != "started\ncompleted" {
+			t.Fatalf("controller restart interrupted execution: %q", out)
 		}
 		listed, err = provider.List(ctx, compute.ListRequest{LaunchID: l.LaunchID})
 		if err != nil || len(listed.Items) != 0 {

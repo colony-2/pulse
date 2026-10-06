@@ -41,7 +41,6 @@ type Provider struct {
 	TokenEnv  string `yaml:"token_env"`
 	AllowHTTP bool   `yaml:"allow_http"`
 	Socket    string `yaml:"socket"`
-	Helper    string `yaml:"helper"`
 	LockDir   string `yaml:"lock_dir"`
 	Capacity  struct {
 		CPU           string `yaml:"cpu"`
@@ -200,21 +199,22 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 	if c.BatchTimeout == "" {
 		c.BatchTimeout = "2m"
 	}
-	if c.Defaults.Timeout == "" {
-		c.Defaults.Timeout = "1h"
-	}
 	for _, v := range []struct {
 		s   string
 		dst *time.Duration
-	}{{c.PollInterval, &c.Poll}, {c.Cooldown, &c.Cool}, {c.CallTimeout, &c.Call}, {c.BatchTimeout, &c.Batch}, {c.ClaimTimeout, &c.Claim}, {c.Defaults.Timeout, &c.ExecutionTimeout}} {
+	}{{c.PollInterval, &c.Poll}, {c.Cooldown, &c.Cool}, {c.CallTimeout, &c.Call}, {c.BatchTimeout, &c.Batch}, {c.ClaimTimeout, &c.Claim}} {
 		n, e := time.ParseDuration(v.s)
 		if e != nil || n <= 0 || n > 365*24*time.Hour {
 			return nil, fmt.Errorf("invalid positive duration %q", v.s)
 		}
 		*v.dst = n
 	}
-	if c.ExecutionTimeout < time.Second {
-		return nil, fmt.Errorf("execution timeout must be at least one second")
+	if c.Defaults.Timeout != "" {
+		timeout, err := time.ParseDuration(c.Defaults.Timeout)
+		if err != nil || timeout < time.Second || timeout > 365*24*time.Hour {
+			return nil, fmt.Errorf("explicit infrastructure timeout must be between one second and one year")
+		}
+		c.ExecutionTimeout = timeout
 	}
 	if c.Defaults.StartWindow != "" {
 		n, e := time.ParseDuration(c.Defaults.StartWindow)
