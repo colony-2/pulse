@@ -6,33 +6,34 @@ Status: architecture for the initial Go implementation. See [README.md](README.m
 
 ## Purpose
 
-Pulse supplies compute for c2j jobs that are ready to run. It periodically lists runnable jobs in an explicitly configured set of repository cells, picks individual jobs, reads their current execution requirements, and starts containers through a generic compute interface. Planned adapters include local Docker, remote providers using a standard OpenAPI protocol, Google Cloud Run Jobs, Amazon ECS tasks, and Azure Container Apps Jobs.
+Pulse supplies compute for c2j jobs that are ready to run. It periodically lists runnable jobs in an explicitly configured set of repository cells, picks individual jobs, reads their current execution requirements, acquires ordinary JobDB leases, and starts containers through a generic compute interface. Adapters include local Docker, remote providers using a standard OpenAPI protocol, Google Cloud Run Jobs, Amazon ECS tasks, and Azure Container Apps Jobs.
 
-**Pulse has no persisted state.** Its scheduling memory consists of a short-lived cooldown keyed by job identity, submissions currently in progress, and round-robin cursors for equally preferred services. Jobdb holds job state; c2j handles discovery and execution; providers hold compute resources and their correlation metadata.
+**Pulse has no persisted state.** Its scheduling memory consists of failure backoff keyed by job identity, submissions currently in progress, and round-robin cursors for equally preferred services. Jobdb holds job state; c2j handles discovery and execution; providers hold compute resources and their correlation metadata.
 
 The local Docker adapter additionally uses transient admission reservations and reconstructs committed capacity from Docker's container records. This does not introduce a Pulse database.
 
-The design assumes executors normally start and acquire a lease within a configurable interval `X`. Occasional duplicate launches are acceptable. The cooldown reduces unnecessary launches; jobdb leases govern whether an executor can do work.
+Pulse acquires a lease before launching compute. The supplied capability must remain valid until c2j starts and renews it. Lost or uncertain starts recover through the ordinary lease timeout; no activation phase is needed.
 
 ## Responsibilities
 
 | Component | Responsibility |
 | --- | --- |
 | Jobdb | Persist jobs, progress, opaque continuation payloads, and results; enforce leases and atomic rescheduling. It does not match resource requirements. |
-| c2j | Publish effective execution demand, resolve recipes, acquire leases, preflight actual allocation, execute or suspend work, and preserve accepted requirement changes. |
-| Pulse | Poll c2j, resolve execution requirements against defaults, apply the cooldown, and request compute. |
+| c2j | Publish effective execution demand, resolve recipes, renew supplied leases, preflight actual allocation, execute or suspend work, and preserve accepted requirement changes. |
+| Pulse | Poll c2j, resolve execution requirements against defaults, claim and export a lease, and request compute. |
 | Compute adapter | Resolve image/platform and provider sizing, report usable allocation, launch that exact container configuration, and attach correlation metadata. |
-| Executor container | Run `c2j run` for the specific job supplied by Pulse. |
+| Executor container | Run `c2j run with-lease` for the job and lease supplied by Pulse. |
 
-Pulse uses c2j’s public `pkg/joblist` Go API for discovery. The API accepts public JobDB filter types, but c2j owns query construction, remote access, and execution projection. Recipe interpretation, dependency handling, lease operations, and application retries stay in c2j/jobdb.
+Pulse uses c2j’s public `pkg/joblist` Go API for discovery. The API accepts public JobDB filter types, but c2j owns query construction, remote access, and execution projection. Pulse uses the public JobDB remote API to claim and export a lease. Recipe interpretation, dependency handling, execution renewal, and application retries stay in c2j/jobdb.
 
 ```mermaid
 flowchart LR
     C[Pulse polling loop] -->|list runnable jobs| L[c2j public listing API]
     L --> J[Jobdb]
-    C -->|container request| P[Compute adapter]
+    C -->|claim and export lease| J
+    C -->|container request with lease stdin| P[Compute adapter]
     P --> E[Executor container]
-    E -->|c2j run for one job| J
+    E -->|validate and renew supplied lease| J
 ```
 
 ## Integration contract and availability
@@ -45,11 +46,11 @@ The updated guide documents recipe requirements, submission overrides, actual al
 
 The public API returns typed pages from a reusable client per connection/tenant. Query recipe jobs in `READY` or `CRASH_CONCERN` status for the configured repository, with page size 100.
 
-Repeat this for each configured repository, advancing the opaque continuation token within configured page limits. Recipe execution remains targeted with `c2j run --job-id`; Pulse never asks a launched container to select unrelated work.
+Repeat this for each configured repository, advancing the opaque continuation token within configured page limits. Recipe execution remains targeted with `c2j run with-lease --job-id`; Pulse never asks a launched container to select unrelated work.
 
 ### Discovery and typed routes
 
-The library returns typed jobs and `NextPageToken`. Retain job identity, status, next route, execution view, and availability information. Listing does not claim work, and a candidate can change before its container starts. c2j makes the authoritative lease/readiness check during targeted execution.
+The library returns typed jobs and `NextPageToken`. Retain job identity, status, next route, execution view, and availability information. Listing does not claim work, and a candidate can change before its container starts. Pulse claims authoritatively before submission; c2j validates and renews the exact supplied lease before execution.
 
 Read `next_route` as independent `jobType` and optional `taskType` fields. `{"jobType":"recipe"}` requests recipe job work; a task route requests that specific task. Identifiers are case-sensitive opaque strings and may contain colons, commas, or spaces. Do not parse the old capability-string format. `--job-type` takes one identifier per flag; `--waiting-for` takes a complete JSON task route per flag.
 
@@ -59,7 +60,7 @@ Read `next_route` as independent `jobType` and optional `taskType` fields. `{"jo
 
 ## Read effective demand through c2j
 
-Pulse consumes the list entry's `execution` view: `status`, `source`, `published`, `demand`, and the initial snapshot when available. `execution.demand.effective` supplies the current known requirements. Sources are `submission`, `yield`, and `absent`; statuses are `specified`, `unspecified`, `unresolved`, `malformed`, and `unsupported`. The listing is the boundary: Pulse does not query JobDB directly, load recipe artifacts, resolve recipe sources, or replay chapters.
+Pulse consumes the list entry's `execution` view: `status`, `source`, `published`, `demand`, and the initial snapshot when available. `execution.demand.effective` supplies the current known requirements. Sources are `submission`, `yield`, and `absent`; statuses are `specified`, `unspecified`, `unresolved`, `malformed`, and `unsupported`. Listing supplies candidates. Pulse refreshes demand from the leased client payload using the same c2j projection before placement; it does not load recipe artifacts, resolve recipe sources, or replay chapters.
 
 c2j owns the overlay and read precedence:
 
@@ -127,15 +128,15 @@ image: registry.example/recipe-runner:1.2
 command: [c2j]
 args:
   - run
+  - with-lease
   - --job-id
   - job-123
-  - --worker-id
-  - launch-456
-  - --on-not-ready
-  - fail
+  - --lease-file
+  - "-"
   - --ci
   - --input-mode
   - fail
+stdin: "<encoded lease capability; illustrative placeholder>"
 env:
   C2J_JOBDB: https://jobdb.example/acme
   C2J_EXECUTION_CPU: "2"
@@ -147,7 +148,7 @@ env:
 
 The example assumes the adapter guarantees those simultaneous usable capacities. A digest-pinned image also receives the corresponding `C2J_EXECUTION_IMAGE_DIGEST`; a tag request omits it. Default-image launches receive allocation inputs just like requirement-selected launches.
 
-Equivalent `--execution-*` CLI arguments override their corresponding environment variables. Pulse will use the environment form consistently and prevent image defaults or user configuration from adding conflicting allocation flags. Reserve `C2J_EXECUTION_*`, jobdb targeting, and the supplied job/worker arguments for the trusted launch configuration. Keep provider correlation under `PULSE_*` separate from c2j's allocation inputs. Recipe inputs cannot redefine the allocation descriptor.
+Equivalent `--execution-*` CLI arguments override their corresponding environment variables. Pulse will use the environment form consistently and prevent image defaults or user configuration from adding conflicting allocation flags. Reserve `C2J_EXECUTION_*`, jobdb targeting, and the supplied job/lease arguments for the trusted launch configuration. Keep provider correlation under `PULSE_*` separate from c2j's allocation inputs. Recipe inputs cannot redefine the allocation descriptor.
 
 These values are the requested allocation guaranteed by the provider, not security attestations. A provider must decline or fail a launch rather than silently weaken a requirement or rewrite its environment.
 
@@ -157,11 +158,11 @@ JobDB grants a lease using its typed-route, readiness, and ownership rules. **Re
 
 ### Bootstrap and initial preflight
 
-1. Pulse launches the requested image, or the default image when none is known, with requested, provider-guaranteed allocation inputs.
-2. c2j acquires the targeted lease and resolves/loads the pinned recipe through its normal durable execution path.
+1. Pulse claims the job, refreshes demand from the leased snapshot, and launches the selected image with allocation inputs and the exported lease on stdin.
+2. c2j validates and renews the supplied lease and resolves/loads the pinned recipe through its normal durable execution path.
 3. c2j compares the effective recipe-plus-job demand to its allocated environment.
 4. If sufficient, it continues without an unnecessary handoff. Otherwise it publishes the full demand through a lease-owned reschedule and exits before dependent work.
-5. Pulse discovers the same job again, observes current demand, and launches a suitable replacement after the remaining cooldown.
+5. Pulse discovers the same job again, observes current demand, and launches a suitable replacement on the next eligible poll.
 
 The recipe snapshot must survive bootstrap. Pulse never resolves recipes to avoid a bootstrap attempt.
 
@@ -169,83 +170,39 @@ The recipe snapshot must survive bootstrap. Pulse never resolves recipes to avoi
 
 c2j owns recording requirement changes in task steps, checking the current allocation, continuing or yielding, and recovering requirements during replay. Changes satisfied locally need no publication.
 
-When c2j publishes unmet demand and yields, Pulse provisions the same job through its normal polling and per-job cooldown. Pulse does not inspect task history, process requirement-change events, or maintain a separate recovery path.
+When c2j publishes unmet demand and yields, Pulse provisions the same job through its normal polling and lease acquisition. Pulse does not inspect task history, process requirement-change events, or maintain a separate recovery path.
 
 ### Outcomes
 
 An insufficient environment emits an `environment_required` JSON event containing `job`, `demand`, `allocation`, `mismatches`, and `published`. Targeted runs return promptly after handoff. Repeated insufficient attempts do not rewrite an already-published snapshot and report `published: false`. A successful handoff exits with code `0`; this does not mean the recipe completed. Keep provider-level retries disabled where configurable.
 
-For targeted `run` / `run one`, the other documented exit codes are `1` for execution/general failure, `2` for wait timeout, `3` for required input, `4` for not-ready policy failure, and `5` for option/identity validation failure. Use `--on-not-ready fail --input-mode fail --ci` for launched containers. `--ci` still permits non-JSON progress lines; do not parse the entire run stdout as one JSON document. `--wait-timeout` controls external blocking waits, so provider duration limits must supply the overall compute deadline.
+Use `run with-lease --lease-file - --input-mode fail --ci` for launched containers. Do not supply worker identity, lease-duration, readiness, or waiting flags: these are inherited from the capability or invalid for this mode. See [the supplied-lease guide](GUIDE-Run-With-Lease.md). `--ci` still permits non-JSON progress lines; provider duration limits supply the overall compute deadline.
 
 Pulse does not watch container exit codes or consume handoff events to decide which job to launch next. Listing current runnable demand drives that decision. Events and exits support diagnostics; they create no callback, notification, or persisted tracking requirement.
 
-## Polling and cooldown
+## Polling, leases, and failure backoff
 
-Decision: use a per-job cooldown held only in memory.
+Pulse lists candidates through c2j, then acquires an ordinary JobDB lease before submitting compute. There is no activation phase or transfer protocol. The launch ID is the lease's worker identity; export preserves it. The executor receives only that lease capability and cannot claim replacement work.
 
-Run one Pulse process for each non-overlapping set of configured jobdb targets and repository cells. A target contains a stable instance ID, a c2j `--jobdb` URI selecting the tenant, and the explicit cells to poll. The simplest initial deployment uses one process. Processes can share a tenant if they serve disjoint repository scopes.
+For each bounded polling pass:
 
-Example discovery configuration (illustrative Pulse syntax):
+1. Query configured targets and explicit repository identities, page through results, and deduplicate by instance/tenant/job. Rotate cell order and bound work per cell.
+2. Skip unsupported routes and invalid demand. Locally exclude in-flight attempts and provisioning failures still in cooldown.
+3. Acquire a lease for each selected job and route, with at most `claim_concurrency` calls in flight (default 8), a `claim_timeout` window (default 5 seconds), and at most `batch_size` candidate attempts (default 100). Stop starting claims once the time or count limit is met, let in-flight calls finish under their normal request timeout, and submit the successful subset. Candidates whose calls never started remain eligible without cooldown. A stale listing or competing controller can yield no lease; submit nothing in that case. An uncertain claim is never followed by compute submission; any acquired lease expires.
+4. Recompute allocation from the leased client payload and immutable submission hints using c2j's execution projection. Export with JobDB's public capability API. Pulse starts no heartbeat.
+5. Submit the complete launch with `c2j run with-lease`, the selected job ID, and sensitive stdin. Traverse numeric priority tiers and rotate equal-priority services. Preserve the same lease, launch ID, and process on fallback after definite non-start.
+6. On `accepted` or `unknown`, stop placement and leave the lease alone. Never release or retry a lease whose container might start. The executor renews it; a lost launch recovers through expiry.
+7. On a final definite non-start, release the unused lease by rescheduling the same route with `cooldown` backoff. Preserve task wait coordinates and client payload. Cleanup uses a bounded context even when the submission batch was cancelled before any possible start.
 
-```yaml
-targets:
-  - instance_id: production
-    jobdb: https://jobdb.example/acme
-    launch_services:
-      - name: runner-a
-        priority: 1
-      - name: runner-b
-        priority: 1
-      - name: runner-c
-        priority: 1
-      - name: cloudrun-primary
-        priority: 2
-      - name: ecs-overflow
-        priority: 2
-    cells:
-      - github.com/example/api
-      - github.com/example/worker
-```
+The provider contract requires a definite decline to guarantee that its submission cannot subsequently start. A lost response is `unknown`. There is no provider replay or launch recovery requirement. An accepted queue entry can be lost; the ordinary lease timeout handles it.
 
-Use explicit repository selectors for reproducible deployments. Use full repository identities; local aliases are not resolved. c2j's current cell filter selects repository metadata, so these scopes do not distinguish branches or multiple logical cells within the same repository.
+`lease_duration` defaults to five minutes and accepts one second through 24 hours. Include batch preparation, provider fallback, scheduling, image pulls, and executor startup when sizing it. Longer leases also delay crash recovery; c2j renews with the inherited duration. Optional `defaults.start_window` must be positive and no longer than the lease duration. A late executor validates its exact supplied lease and exits if it expired or was superseded.
 
-Each job belongs to one repository, recorded in its metadata. Pulse selects runnable jobs whose repository matches its configured list. Parent/child relationships do not affect repository selection. An empty cell list is a configuration error.
+The 60-second default `cooldown` is failure backoff, not ownership. JobDB persists the release wait deadline. Pulse also keeps local backoff for provisioning and preparation failures. Accepted/uncertain submissions have no residual local cooldown; successful executor yields can be reconsidered on the next poll. Controller restarts and overlapping controller discovery do not bypass JobDB ownership. Provider capacity admission remains independently scoped to its compute pool.
 
-Poll configured cells with bounded concurrency and rotate their processing order. Bound launches per cell per pass so a busy repository cannot monopolize submission capacity. Log a cell's discovery error and continue with the others. Merge results by `(instance, tenant, job ID)` and share the cooldown across all cell selectors; repository aliases must not create separate cooldown entries for the same job. Instance IDs must consistently identify the same jobdb deployment across configured targets.
+Configuration is one YAML document selected from explicit `-config`, then `PULSE_CONFIG`, then `./pulse.yaml`. Targets name stable instance IDs, tenant URLs, explicit repository identities, and launch-service priorities. See [configuration](docs/configuration.md) and [examples](examples). Pulse retains only in-flight attempts, failure backoff, and round-robin cursors in memory; no controller database is introduced.
 
-Configuration is one YAML document selected from an explicit `-config` file, then `PULSE_CONFIG` containing inline YAML, then `./pulse.yaml`. Sources are not merged; a selected invalid source fails startup. Simple container deployments use `PULSE_CONFIG` by default in deployment guidance. Pulse reads configuration once at startup, preserves literal values, and reports only the redacted parsed configuration through HTTP.
-
-Configuration includes a polling interval, cooldown `X`, default executor, named launch services with numeric priorities, a maximum batch size, and a small limit on simultaneous batch calls. Each launch-service name selects a configured provider instance; multiple services can use the same adapter with different accounts, regions, or runner pools. For illustration, polling every 5 seconds with a 60-second cooldown is a starting configuration; tune `X` to cover observed time from submission through c2j startup and lease acquisition.
-
-Use an in-memory key:
-
-```text
-(jobdb instance ID, tenant ID, job ID)
-```
-
-For each polling pass:
-
-1. Query the c2j listing library for each configured target/cell pair with explicit readiness filters and retrieve all pages. Decode typed routes and execution views, and deduplicate by job identity. c2j retains the authoritative lease and cancellation checks.
-2. Skip unsupported routes and malformed/unsupported demand, and report a bounded diagnostic. Do not use compatibility filtering against the default allocation.
-3. Collect a fair, bounded batch of jobs sharing the same launch-service configuration. Atomically reserve each eligible job in memory and record its attempt time, excluding keys already in flight or within cooldown. Give each job its own launch ID.
-4. Apply defaults to omitted demand fields. Visit priority tiers from lowest number to highest, rotating the first service within each tier for each batch. Build each targeted process and environment from the requested resources, then call the selected service's `Submit` once with the complete items.
-5. Remove accepted, rejected, and uncertain items from further consideration. Pass only explicitly declined, fallback-eligible items to the next service in the same tier, preserving the same complete request and process environment. Try each service at most once per batch. Move remaining items to the next tier only after exhausting the current tier.
-6. Clear each job's in-flight marker after its batch attempt finishes. Keep its cooldown whether accepted, declined by every service, failed, or uncertain. Log per-item decisions with their launch IDs; native references are available through active instance listing.
-7. Expire entries after `X` when no longer in flight. Bound provider calls and the overall batch attempt so jobs cannot stay stuck indefinitely.
-
-One attempt includes traversal of all eligible priority tiers. Falling back within that attempt does not wait for another cooldown or reset its start time. Each later attempt starts again in the highest-priority tier, using its next round-robin starting service. The cursors are held only in memory; resetting them on restart is harmless. Pulse keeps no persisted capacity counts or provider history.
-
-The cooldown applies to the whole job, including when its ordinal, typed route, client-payload revision, or execution requirements change. The job becomes eligible again after `X` only if c2j still reports it as runnable. Seeing a job disappear briefly from discovery must not clear its unexpired cooldown. Repeat full discovery passes rather than using a creation-time watermark, since old jobs can become runnable again.
-
-This deliberately accepts the following behavior:
-
-- A restart loses the cooldown and can cause an extra launch.
-- Startup taking longer than `X`, a lost provider response, or overlapping Pulse processes can cause duplicates.
-- A persistent provisioning failure is attempted at most once per `X` per job in a continuously running process.
-- A job that quickly yields and becomes runnable again can wait for the remaining cooldown, up to `X`. This is an accepted tradeoff for keeping Pulse simple.
-- The cooldown is not a distributed lock or an exactly-once guarantee. A competing executor can lose its targeted lease attempt and exit; lease expiry still requires ordinary application idempotency for external side effects.
-
-Pulse does not wait for containers to finish. c2j/jobdb determine subsequent demand. Container duration limits bound abandoned compute, and running executors do not depend on Pulse remaining available.
+Pulse does not wait for containers to finish or infer lease ownership from provider inventory. Lease expiry can still overlap external side effects, so applications retain their normal idempotency requirements. Duration limits bound abandoned compute.
 
 ## Generic compute interface
 
@@ -266,6 +223,7 @@ type Process struct {
     Command    []string
     Args       []string
     Env        map[string]string
+    Stdin      compute.SecretInput // optional sensitive finite input through a private pipe
     WorkingDir string // optional; empty uses the image's working directory
 }
 
@@ -297,15 +255,15 @@ Capacity is specific to the requested workload: a service may accept three jobs 
 | `unsupported` | Service cannot provide the requested image/platform/resources or another required launch option. Try the next service. |
 | `unavailable` | Service explicitly confirms it did not accept this request and is temporarily unavailable. Try the next service. |
 | `rejected` | Invalid request or configuration error requiring attention. Log the reason and stop this job's attempt. |
-| `unknown` | Submission may have been accepted. Stop this job's attempt and retain the cooldown. |
+| `unknown` | Submission may have been accepted. Stop this job's attempt and retain its lease until renewal, rescheduling, or expiry. |
 
 A non-accepted submission result other than `unknown` guarantees that no new execution is queued or can later start for that submission. Optional native duplicate detection must leave an existing launch unchanged when rejecting an ID conflict. For multi-step cloud APIs, a created parent alone is not acceptance; an accepted asynchronous start operation is sufficient. Native parent cleanup belongs to deployment tooling, separate from job recovery.
 
 Example: service A receives five launches and accepts three, returning `no_capacity` for two. Pulse submits just those two to the next service in the tier, or the next tier if no peers remain. It does not retry A separately for each declined job. Services process the batch together; adapters may internally use bounded individual calls when a cloud API lacks native batch support.
 
-A timeout or missing per-item submission result is `unknown`, not `no_capacity`. Preserve valid explicit results from a partial response; do not infer rejection of unreported items. Validate returned IDs and statuses. Pulse never immediately sends an uncertain item to another service, although the existing cooldown policy still permits a later retry and possible duplicate compute.
+A timeout or missing per-item submission result is `unknown`, not `no_capacity`. Preserve valid explicit results from a partial response; do not infer rejection of unreported items. Validate returned IDs and statuses. Pulse never immediately sends an uncertain item to another service, and does not release that lease. A later attempt requires a fresh lease from JobDB.
 
-Keep each job's launch ID across fallback within the attempt. Call each selected launch service once, without replaying POSTs or retrying ambiguous native starts. Use native idempotency safeguards where convenient, without requiring a replay cache or durable decision history. A later cooldown attempt gets a new launch ID if c2j still reports runnable work. Acceptance means admission or handoff, not a guarantee of eventual startup or completion. A provider need not recover lost queue entries or restart failed launches; c2j/JobDB readiness and Pulse polling drive fresh attempts. This policy limits submissions per attempt, not compute executions over the job's lifetime.
+Keep each job's launch ID across fallback within the attempt. Call each selected launch service once, without replaying POSTs or retrying ambiguous native starts. Use native idempotency safeguards where convenient, without requiring a replay cache or durable decision history. A later attempt acquires a fresh lease and gets a new launch ID. Acceptance means admission or handoff, not a guarantee of eventual startup or completion. A provider need not recover lost queue entries or restart failed launches; c2j/JobDB readiness and Pulse polling drive fresh attempts. This policy limits submissions per attempt, not compute executions over the job's lifetime.
 
 ### Standard remote provider protocol
 
@@ -324,7 +282,7 @@ Use one admission owner per local daemon, serialize batch reservations, and rebu
 
 ### Future provider: external runner service
 
-Prefer a separate runner service, reached through a normal compute adapter. It owns runner registration, advertised capabilities and available capacity, heartbeats, matching, and dispatch leases. Runners long-poll that service for assigned container launches. Pulse keeps its existing polling loop and in-memory cooldown.
+Prefer a separate runner service, reached through a normal compute adapter. It owns runner registration, advertised capabilities and available capacity, heartbeats, matching, and dispatch leases. Runners long-poll that service for assigned container launches. Pulse keeps polling and claims a lease before each submission.
 
 ```mermaid
 flowchart LR
@@ -343,7 +301,7 @@ Provider-contract details matter:
 
 - **Capacity and priority.** The runner service returns per-item acceptance or declines. To prefer fallback over waiting, configure it to return `no_capacity` when no suitable runner is available. If it accepts an item into a queue, Pulse considers that item placed and does not also submit it to a lower-priority service.
 - **Requested resource guarantees.** Each batch item contains resources and a complete process. The service must assign sufficient capacity and enforce the requested image/platform/resources before startup, while preserving the supplied environment exactly. Runner registration describes the pool; it does not establish an individual launch's allocation. If the service cannot honor the request, it declines before admission, or expires/fails an accepted launch without starting inadequate compute. Pulse does not negotiate with individual runners.
-- **Bounded waiting.** A queued job can remain runnable in c2j, so each cooldown can produce another submission. Each later attempt has a fresh launch ID; optional native deduplication does not combine these attempts. Start with immediate assignment or a short queue whose start deadline is no later than the end of that attempt's cooldown. The service expires unstarted requests even if Pulse disappears. This prevents an accumulating backlog; it does not eliminate the already-accepted possibility of duplicate running executors. Longer queues would need provider-owned coalescing of pending requests for the same workload, including replacement of stale requirements, before being enabled.
+- **Bounded waiting.** Queue delay consumes the supplied lease lifetime. Prefer immediate assignment or a short queue bounded by `start_before`, leaving time for startup and initial renewal. The service expires unstarted requests even if Pulse disappears; an expired capability cannot claim replacement work.
 
 Keep requests and results independent of cloud SDK types. Preserve the full correlation envelope on the service's launch record before assignment, and carry it to the runner/container. Active lists must map unassigned launches back to their jobs. Retained native metadata must preserve reverse lookup for failed launches, which are excluded from active lists. Runner credentials, allowed workloads, logs, and retention policy belong to the runner service's deployment. It must account for capacity that may still be in use but need not reassign an uncertain dispatch or recover lost launches.
 
@@ -409,7 +367,7 @@ Use a pinned c2j public listing library with explicit tenant/repository inputs a
 
 ### Delivery gates
 
-1. Build the polling loop, image/default selection, batch submission contract, and allocation injection against a fake provider and recorded list fixtures. Preserve the existing per-job cooldown and cell configuration.
+1. Build the polling loop, image/default selection, batch submission contract, and allocation injection against a fake provider and recorded list fixtures. Preserve cell configuration and use cooldown only for provisioning failures.
 2. Pin matching versions implementing the updated guide and verify the enriched list view, allocation inputs, and preflight/handoff path. Default/bootstrap executors receive the same allocation contract as requirement-selected executors. Unknown flags or missing schema support must fail visibly, not trigger a silent fallback.
 3. Verify that published demand from a c2j handoff produces a suitable replacement through the ordinary polling path. Requirement recording and recovery remain c2j responsibilities.
 4. Ensure every worker that can claim constrained jobs supports this contract. An old worker can obtain a lease because JobDB does not resource-match; adding a new Pulse launcher alone is insufficient to make a mixed fleet safe.
@@ -425,14 +383,14 @@ Use a pinned c2j public listing library with explicit tenant/repository inputs a
 - Discovery sees jobs requiring a different environment from the default. All configured cells/pages are covered; one failed or busy cell does not starve another; duplicate selectors share one cooldown.
 - A default executor resolves and pins the recipe, continues if sufficient, or yields before dependent work if insufficient. Subsequent attempts use published demand.
 - An insufficient runtime request yields, and the same job resumes with its cached results/artifacts in a suitable environment. Stale incompatible executors release promptly, and cancellation remains authoritative.
-- Same-job cooldown applies across requirement revisions and yields; another job can launch independently. Failed or ambiguous launches remain throttled; restart may duplicate launches without invalid job progress.
+- Definite non-starts release with backoff; accepted/ambiguous launches retain their lease. A successful yield has no old cooldown. Restart and competing controllers cannot claim a currently leased job.
 - Container outcomes distinguish successful handoff from failure without provider retry loops or a Pulse callback dependency.
 - Native metadata recovers the exact job identity after an image-pull failure or Pulse restart; active lists include queued and starting work but exclude terminal instances.
 - A future queued provider can accept a launch without immediate startup, enforce its start deadline, and retain correlation metadata before assignment. A fake provider can verify this without implementing a runner registry.
 - Lower numeric priorities are tried first. Equal-priority services rotate first choice across batches; remaining items visit every peer before a lower-priority tier. Concurrent batches advance cursors safely, and cursor loss on restart requires no recovery.
 - A service accepts part of a batch; only its explicit capacity/compatibility/availability declines reach the next service, with identical resource and process inputs. Accepted, rejected, and uncertain items do not fall through.
-- Partial responses, missing IDs, and timeouts preserve known results and treat uncertain submissions conservatively. One cooldown covers all services tried for a job; all-full batches retry after that cooldown. Batch size one uses the same API.
-- Remote request/response fixtures conform to the OpenAPI schema; provider conformance checks cover single-attempt submission, immutable requests, truthful declines, lost responses without retries, deadlines, and exact metadata in active instance lists. Lost accepted launches require no provider recovery; fresh attempts follow c2j readiness and cooldown.
+- Partial responses, missing IDs, and timeouts preserve known results and treat uncertain submissions conservatively. One lease covers all services tried for a job; all-full batches release with backoff. Batch size one uses the same API.
+- Remote request/response fixtures conform to the OpenAPI schema; provider conformance checks cover single-attempt submission, immutable requests, truthful declines, lost responses without retries, deadlines, and exact metadata in active instance lists. Lost accepted launches require no provider recovery; fresh attempts require a new JobDB lease.
 - Local Docker never admits more than its committed CPU/memory/slot budgets across concurrent batches or controller restart. Resource limits include scratch memory, and uncertain starts retain their charges.
 
 These are implementation acceptance criteria. Availability statements come from the updated guide; this document update does not independently test the c2j implementation or implement any cloud adapter.

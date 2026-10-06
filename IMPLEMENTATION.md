@@ -20,7 +20,7 @@ Implementation commits use `colony2.com <col2bot@colony2.com>` as requested.
 
 ## Public listing API migration
 
-The controller uses `github.com/colony-2/c2j/pkg/joblist` for all discovery. The dependency is pinned to a remotely resolvable pseudo-version containing the new API; Go 1.26 is now required. Images include Pulse and its supervisor. The external listing adapter, its configuration, downloader, and optional image target have been removed.
+The controller uses `github.com/colony-2/c2j/pkg/joblist` for all discovery. The dependency is pinned to a published release containing the public API; Go 1.26 is now required. Images include Pulse and its supervisor. The external listing adapter, its configuration, downloader, and optional image target have been removed.
 
 ## Single-operation provider v1
 
@@ -42,4 +42,10 @@ Continuous mode serves public read-only HTTP endpoints for status, redacted conf
 
 ## Single-attempt submission contract
 
-Provider documentation now specifies one submission per selected service per attempt, with no replay after an uncertain response and no provider retries of ambiguous starts. Acceptance reports admission or handoff, not guaranteed execution. Required durable journals, replay handling, stored declines, terminal retention periods, and lost-launch recovery have been removed from the contract. c2j/JobDB readiness and Pulse's cooldown drive new attempts. Native duplicate safeguards and existing Docker capacity reconstruction remain valid implementation choices. Queueing is optional; deliberate provider-owned queues require `start_before`, while prompt native handoff may omit it. Supplied startup deadlines and execution timeouts retain their existing meanings. This is a documentation update; wire fields and runtime behavior are unchanged.
+Provider documentation now specifies one submission per selected service per attempt, with no replay after an uncertain response and no provider retries of ambiguous starts. Acceptance reports admission or handoff, not guaranteed execution. Required durable journals, replay handling, stored declines, terminal retention periods, and lost-launch recovery have been removed from the contract. This earlier policy has been superseded by pre-launch lease handoff below. Native duplicate safeguards and existing Docker capacity reconstruction remain valid implementation choices. Queueing is optional; deliberate provider-owned queues require `start_before`, while prompt native handoff may omit it. Supplied startup deadlines and execution timeouts retain their existing meanings. This is a documentation update; wire fields and runtime behavior are unchanged.
+
+## Pre-launch lease handoff
+
+Pulse now acquires an ordinary JobDB lease before submitting compute and runs `c2j run with-lease`. The controller pins c2j v0.0.62 and JobDB v0.0.26, refreshes demand from the leased payload, and exports through the public capability API. Providers carry opaque sensitive stdin; native adapters use the updated `pulse-exec` helper. Remote protocol 1.1.0 adds optional `process.stdin`.
+
+Accepted and uncertain starts retain the lease without a Pulse heartbeat or cooldown. Definite non-starts release it with JobDB-backed retry delay; local cooldown is failure backoff only. There is no activation phase. Tests cover exact remote lease import/renewal, ownership exclusion, authoritative demand, conservative cleanup, cancellation, transport, and redaction. See [configuration](docs/configuration.md) and [provider deployment requirements](docs/providers.md).

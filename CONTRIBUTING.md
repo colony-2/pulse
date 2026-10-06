@@ -13,13 +13,13 @@ make vet
 make test-packaging # npm installer tests
 ```
 
-Job discovery uses `github.com/colony-2/c2j/pkg/joblist`, pinned in `go.mod`. No c2j executable is needed to build or run the controller. Executor job images still need c2j. The initial public API integration uses the published pseudo-version `v0.0.53-0.20260922032206-ef65f0001972`; there is no local module replacement.
+Job discovery uses `github.com/colony-2/c2j/pkg/joblist`, pinned in `go.mod`. No c2j executable is needed to build or run the controller. Executor job images still need c2j. The supplied-lease integration pins c2j `v0.0.62` and JobDB `v0.0.26`; there is no local module replacement.
 
 When updating c2j, verify the public listing projection and execution compatibility against the new dependency. Keep the dependency pinned and run `go mod tidy -diff` to check module tidiness.
 
 ## Tests and validation
 
-The Go suite covers scheduler concurrency/fallback, per-job cooldowns, provider state filtering and pagination, Docker accounting/recovery, cloud requests/authentication, HTTP diagnostics, and configuration precedence. The library adapter talks to a test server implementing the real JobDB HTTP protocol, exercising cancellation, tenant isolation, pagination, and execution demand projection.
+The Go suite covers scheduler concurrency/fallback, supplied-lease handoff and failure cleanup, provisioning backoff, provider state filtering and pagination, Docker accounting/recovery, cloud requests/authentication, HTTP diagnostics, and configuration precedence. The library adapter talks to a test server implementing the real JobDB HTTP protocol, exercising cancellation, tenant isolation, pagination, and execution demand projection.
 
 CLI integration tests exercise file and inline configuration with an empty `PATH`, discover a job through JobDB, and submit it through the remote protocol. Continuous-mode tests verify public HTTP access and graceful shutdown.
 

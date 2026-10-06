@@ -2,7 +2,7 @@
 
 **Run c2j jobs on cloud compute or your own runners.**
 
-Pulse watches configured repository cells, finds jobs that need an executor, and starts a container for each selected job. It uses c2j's public Go library for discovery and tags each launch with its JobDB identity. The controller needs no separate c2j executable; **executor images must contain c2j and the tools their recipes need**.
+Pulse watches configured repository cells, finds jobs that need an executor, acquires a JobDB lease for each selected job, and passes it to the container. It uses c2j's public Go library for discovery and tags each launch with its JobDB identity. The controller needs no separate c2j executable; **executor images must contain c2j and the tools their recipes need**.
 
 [Install](#install) · [Quick start](#quick-start) · [Run in a container](#run-in-a-container) · [Configuration](#configuration) · [Providers](#providers) · [HTTP API](#http-api)
 
@@ -19,13 +19,13 @@ Requires Node.js 22+, `tar`, enabled install scripts, and HTTPS access to GitHub
 
 ### Native executable
 
-Download your platform's archive from [GitHub Releases](https://github.com/colony-2/pulse/releases), verify it against `checksums.txt`, and put `pulse` on your `PATH`. Native executables need no Node.js. Linux archives also contain the `pulse-exec` helper used by Docker and ECS.
+Download your platform's archive from [GitHub Releases](https://github.com/colony-2/pulse/releases), verify it against `checksums.txt`, and put `pulse` on your `PATH`. Native executables need no Node.js. Linux archives also contain the `pulse-exec` helper used by Docker and the cloud providers.
 
 Linux and macOS are supported on AMD64 and ARM64. Container images support Linux AMD64 and ARM64. The local Docker provider requires a Linux controller.
 
 ## Quick start
 
-1. Choose an executor image containing c2j and your recipe dependencies.
+1. Choose an executor image containing c2j with `run with-lease` support and your recipe dependencies. Cloud images also need the updated `pulse-exec` helper; see [provider requirements](docs/providers.md). Use JobDB v0.0.22 or later with supplied-lease renewal support.
 2. Copy a configuration example: [remote runners](examples/remote.yaml), [local Docker](examples/docker.yaml), or [cloud providers](examples/clouds.yaml).
 3. Save it as `pulse.yaml` and fill in the JobDB tenant URL, repository cells, default executor image, and provider settings.
 
@@ -93,9 +93,9 @@ targets:
       - {name: cloud_overflow, priority: 2}
 ```
 
-Define these service names under `providers` and supply `JOBDB_TOKEN` for authenticated JobDB access. Omit `jobdb_token_env` for an unauthenticated deployment. Provider authentication is configured separately.
+Define these service names under `providers` and supply `JOBDB_TOKEN` for authenticated JobDB discovery and lease acquisition. Pulse never passes this broad credential to the executor. Omit `jobdb_token_env` for an unauthenticated deployment. Provider authentication is configured separately.
 
-Defaults are a 5-second poll interval, a 60-second per-job cooldown, and batches of at most 100 jobs. Pulse stores cooldowns and rotation in memory. A restart or uncertain launch can result in duplicate compute; c2j/JobDB leases govern job ownership. See [configuration details](docs/configuration.md) and the complete [examples](examples).
+Defaults are a 5-second poll interval, a 5-minute lease duration, 60-second provisioning-failure backoff, and batches of at most 100 jobs. Claims run with up to 8 concurrent calls and a 5-second claim window; configure these with `claim_concurrency`, `claim_timeout`, and `batch_size`. Pulse acquires the lease before submission and does not renew it; c2j renews the supplied lease on startup. Accepted or uncertain starts rely on lease expiry for recovery. Definite non-starts release the lease with backoff. In-memory cooldowns suppress failures only; JobDB ownership survives controller restarts. See [configuration details](docs/configuration.md) and the complete [examples](examples).
 
 ## Providers
 

@@ -14,7 +14,7 @@ func request(id string) compute.Request {
 	return compute.Request{LaunchID: id, Allocation: compute.Allocation{CPUMillis: 1500, MemoryBytes: 3 * Gi, ScratchBytes: Gi, Image: "registry.example/runner@sha256:" + strings.Repeat("a", 64), Platform: "linux/amd64"}, TimeoutSeconds: 60, Metadata: map[string]string{"pulse_job_id": "job", "pulse_launch_id": id}}
 }
 func launch(r compute.Request) compute.Launch {
-	return compute.Launch{Request: r, Process: compute.Process{Command: []string{"c2j"}, Args: []string{"run"}, Env: map[string]string{"TEST": "literal $value", "C2J_EXECUTION_CPU": "1500m"}}}
+	return compute.Launch{Request: r, Process: compute.Process{Command: []string{"c2j"}, Args: []string{"run", "with-lease", "--lease-file", "-"}, Stdin: "test-capability", Env: map[string]string{"TEST": "literal $value", "C2J_EXECUTION_CPU": "1500m"}}}
 }
 func TestCloudRunNativeRequestAndAcceptance(t *testing.T) {
 	p, e := New(Config{Kind: "cloudrun", Project: "project", Region: "region"})
@@ -41,6 +41,7 @@ func TestCloudRunNativeRequestAndAcceptance(t *testing.T) {
 		if task["maxRetries"] != float64(0) || task["timeout"] != "60s" {
 			t.Fatal(task)
 		}
+		assertStdinContainer(t, task["containers"].([]any)[0].(map[string]any), "command", "env")
 		limits := task["containers"].([]any)[0].(map[string]any)["resources"].(map[string]any)["limits"].(map[string]any)
 		if limits["cpu"] != "2" || limits["memory"] != "4096Mi" {
 			t.Fatal(limits)
@@ -113,6 +114,7 @@ func TestECSNativeTaskAndFailure(t *testing.T) {
 			calls++
 			w.Header().Set("Content-Type", "application/x-amz-json-1.1")
 			if strings.HasSuffix(r.Header.Get("X-Amz-Target"), "RegisterTaskDefinition") {
+				assertStdinContainer(t, body["containerDefinitions"].([]any)[0].(map[string]any), "entryPoint", "environment")
 				if body["cpu"] != "2048" || body["memory"] != "4096" {
 					t.Error(body)
 				}
@@ -162,6 +164,7 @@ func TestAzureCreateBeforeStart(t *testing.T) {
 			var body map[string]any
 			json.NewDecoder(r.Body).Decode(&body)
 			props := body["properties"].(map[string]any)
+			assertStdinContainer(t, props["template"].(map[string]any)["containers"].([]any)[0].(map[string]any), "command", "env")
 			if props["environmentId"] != "environment" {
 				t.Fatal(body)
 			}
@@ -180,6 +183,23 @@ func TestAzureCreateBeforeStart(t *testing.T) {
 	out, e := p.Submit(context.Background(), []compute.Launch{launch(req)})
 	if e != nil || out[0].Status != compute.Accepted {
 		t.Fatal(out, e)
+	}
+}
+
+func assertStdinContainer(t *testing.T, c map[string]any, command, env string) {
+	t.Helper()
+	if c[command].([]any)[0] != "/usr/local/bin/pulse-exec" {
+		t.Error("stdin launch did not use supervisor")
+	}
+	found := false
+	for _, entry := range c[env].([]any) {
+		kv := entry.(map[string]any)
+		if kv["name"] == compute.StdinEnv {
+			found = kv["value"] == "test-capability"
+		}
+	}
+	if !found {
+		t.Error("stdin transport missing")
 	}
 }
 func TestUnsupportedScratchEvidence(t *testing.T) {

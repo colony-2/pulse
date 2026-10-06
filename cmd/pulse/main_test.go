@@ -7,6 +7,7 @@ import (
 	"github.com/colony-2/c2j/pkg/joblist"
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	jobremote "github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
+	"github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
 	"github.com/colony-2/pulse/pkg/compute"
 	"gopkg.in/yaml.v3"
 	"net/http"
@@ -37,12 +38,17 @@ func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
 	}
 	job := page.Jobs[0]
 	metadata, _ := json.Marshal(map[string]any{"execution": job.Execution.Demand})
-	db := httptest.NewServer(jobremote.NewServer(listOnlyRuntime{list: func(context.Context, jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
-		return jobdb.ListJobsResponse{Jobs: []jobdb.JobSummary{{JobKey: jobdb.JobKey{TenantId: job.TenantID, JobId: job.JobID}, Status: job.Status, JobType: "recipe", NextRoute: job.NextRoute, Metadata: metadata}}}, nil
-	}}))
-	defer db.Close()
 	for _, source := range []string{"file", "environment"} {
 		t.Run(source, func(t *testing.T) {
+			backend := toy.New()
+			_, err := backend.SubmitJob(context.Background(), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: job.TenantID, JobID: job.JobID, JobType: "recipe", Metadata: metadata, Data: jobdb.NewTaskDataOrPanic(1)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			db := httptest.NewServer(jobremote.NewServer(leasedListRuntime{Runtime: backend, list: func(context.Context, jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
+				return jobdb.ListJobsResponse{Jobs: []jobdb.JobSummary{{JobKey: jobdb.JobKey{TenantId: job.TenantID, JobId: job.JobID}, Status: job.Status, JobType: "recipe", NextRoute: job.NextRoute, Metadata: metadata}}}, nil
+			}}))
+			defer db.Close()
 			var mu sync.Mutex
 			submitted := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +70,25 @@ func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
 				}
 				results := []map[string]any{}
 				for _, item := range in.Items {
+					capability, err := jobremote.DecodeLeaseCapability([]byte(item.Process.Stdin))
+					if err != nil {
+						t.Error("missing lease capability")
+						return
+					}
+					runtime, err := jobremote.New(db.URL, db.Client())
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					lease, err := runtime.ImportLease(context.Background(), capability)
+					if err != nil || lease.Job().JobKey.JobId != job.JobID {
+						t.Error("invalid handed-off lease", err)
+						return
+					}
+					args := strings.Join(item.Process.Args, " ")
+					if !strings.Contains(args, "run with-lease") || !strings.Contains(args, "--lease-file -") || strings.Contains(args, "--worker-id") || strings.Contains(args, "--on-not-ready") {
+						t.Error("incorrect lease command", args)
+					}
 					if item.CPUMillis != 1000 || item.Image == "" || item.Metadata["pulse_job_id"] == "" || item.Process.Env["C2J_EXECUTION_CPU"] != "1000m" || item.Process.Env["PULSE_JOB_ID"] == "" || item.Process.Env["PULSE_CONFIG"] != "" {
 						t.Error(item)
 					}
@@ -103,6 +128,15 @@ func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
 			}
 		})
 	}
+}
+
+type leasedListRuntime struct {
+	*toy.Runtime
+	list func(context.Context, jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error)
+}
+
+func (r leasedListRuntime) ListJobs(ctx context.Context, req jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
+	return r.list(ctx, req)
 }
 
 type listOnlyRuntime struct {

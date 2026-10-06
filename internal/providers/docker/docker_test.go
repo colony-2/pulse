@@ -202,6 +202,7 @@ func TestRoundingPreservesRequestedEnvironment(t *testing.T) {
 	rs[0].CPUMillis = 1001
 	ls := launches(rs)
 	ls[0].Process.Env = map[string]string{"C2J_EXECUTION_CPU": "1001m", "PULSE_SCRATCH_DIR": "/custom", "TMPDIR": "/custom/tmp", "LITERAL": "$HOME"}
+	ls[0].Process.Stdin = "private-capability"
 	out, err := p.Submit(context.Background(), ls)
 	if err != nil || out[0].Status != compute.Accepted {
 		t.Fatal(out, err)
@@ -222,5 +223,8 @@ func TestRoundingPreservesRequestedEnvironment(t *testing.T) {
 		if seen[k] != v {
 			t.Fatal(k, seen[k], v)
 		}
+	}
+	if seen[compute.StdinEnv] != "private-capability" {
+		t.Fatal("stdin transport missing")
 	}
 }

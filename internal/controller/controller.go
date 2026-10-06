@@ -18,9 +18,13 @@ import (
 type Lister interface {
 	List(context.Context, string, string, string) (c2j.Page, error)
 }
+type Claimer interface {
+	Claim(context.Context, string, c2j.Job, string, time.Duration) (*c2j.Claimed, error)
+}
 type Controller struct {
 	Config    *config.Config
 	Lister    Lister
+	Claimer   Claimer
 	Scheduler *scheduler.Scheduler
 	Providers map[string]compute.Provider
 	Log       *slog.Logger
@@ -114,12 +118,41 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 					req.StartBefore = &deadline
 				}
 
-				process, e := c2j.Process(t.JobDB, j.ID, id, req.Allocation, c.Config.Defaults.Env, metadata)
+				process, e := c2j.Process(t.JobDB, j.ID, req.Allocation, c.Config.Defaults.Env, metadata)
 				if e != nil {
 					errs = append(errs, e)
 					continue
 				}
-				jobs = append(jobs, scheduler.Job{Key: k, Request: req, Process: process})
+				jobs = append(jobs, scheduler.Job{Key: k, Request: req, Process: process, Prepare: func(ctx context.Context, request compute.Request) (compute.Launch, func(context.Context) error, error) {
+					if c.Claimer == nil {
+						return compute.Launch{}, nil, errors.New("JobDB lease client is required")
+					}
+					claimed, err := c.Claimer.Claim(ctx, t.JobDB, j, request.LaunchID, c.Config.Lease)
+					var release func(context.Context) error
+					if claimed != nil {
+						release = func(ctx context.Context) error { return claimed.Release(ctx, c.Config.Cool) }
+					}
+					if err != nil {
+						return compute.Launch{}, release, err
+					}
+					if claimed == nil {
+						return compute.Launch{}, nil, scheduler.ErrNotEligible
+					}
+					allocation, err := claimed.Job.Allocation(c.Config.Allocation)
+					if err != nil {
+						return compute.Launch{}, release, err
+					}
+					request.Allocation = allocation
+					process, err := c2j.Process(t.JobDB, j.ID, allocation, c.Config.Defaults.Env, request.Metadata)
+					if err != nil {
+						return compute.Launch{}, release, err
+					}
+					process.Stdin = compute.SecretInput(claimed.Encoded)
+					if process.Stdin == "" {
+						return compute.Launch{}, release, errors.New("empty exported lease")
+					}
+					return compute.Launch{Request: request, Process: process}, release, nil
+				}})
 				selected[k] = true
 				if len(jobs) >= c.Config.PerCell {
 					break
@@ -147,7 +180,8 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 				errs = append(errs, e)
 			}
 			for _, r := range results {
-				c.Log.Info("launch result", "instance", r.Key.Instance, "tenant", r.Key.Tenant, "job", r.Key.Job, "launch_id", r.Submission.LaunchID, "service", r.Service, "status", r.Submission.Status, "reason", r.Submission.Reason)
+				// Provider diagnostics may echo credential-bearing request bodies.
+				c.Log.Info("launch result", "instance", r.Key.Instance, "tenant", r.Key.Tenant, "job", r.Key.Job, "launch_id", r.Submission.LaunchID, "service", r.Service, "status", r.Submission.Status)
 			}
 		}
 	}

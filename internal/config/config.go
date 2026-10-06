@@ -67,14 +67,17 @@ type Config struct {
 	HTTP struct {
 		Listen string `yaml:"listen"`
 	} `yaml:"http"`
-	PollInterval string `yaml:"poll_interval"`
-	Cooldown     string `yaml:"cooldown"`
-	CallTimeout  string `yaml:"call_timeout"`
-	BatchTimeout string `yaml:"batch_timeout"`
-	BatchSize    int    `yaml:"batch_size"`
-	PerCell      int    `yaml:"max_jobs_per_cell"`
-	MaxPages     int    `yaml:"max_pages_per_cell"`
-	Defaults     struct {
+	PollInterval     string `yaml:"poll_interval"`
+	Cooldown         string `yaml:"cooldown"`
+	LeaseDuration    string `yaml:"lease_duration"`
+	CallTimeout      string `yaml:"call_timeout"`
+	BatchTimeout     string `yaml:"batch_timeout"`
+	ClaimTimeout     string `yaml:"claim_timeout"`
+	ClaimConcurrency int    `yaml:"claim_concurrency"`
+	BatchSize        int    `yaml:"batch_size"`
+	PerCell          int    `yaml:"max_jobs_per_cell"`
+	MaxPages         int    `yaml:"max_pages_per_cell"`
+	Defaults         struct {
 		Image       string            `yaml:"image"`
 		Platform    string            `yaml:"platform"`
 		CPU         string            `yaml:"cpu"`
@@ -89,6 +92,8 @@ type Config struct {
 	Targets                                                []Target            `yaml:"targets"`
 	Allocation                                             compute.Allocation  `yaml:"-"`
 	Poll, Cool, Call, Batch, ExecutionTimeout, StartWindow time.Duration       `yaml:"-"`
+	Claim                                                  time.Duration       `yaml:"-"`
+	Lease                                                  time.Duration       `yaml:"-"`
 }
 
 func Load(path string) (*Config, error) {
@@ -147,8 +152,25 @@ func Parse(b []byte) (*Config, error) {
 	if c.Cooldown == "" {
 		c.Cooldown = "60s"
 	}
+	if c.LeaseDuration == "" {
+		c.LeaseDuration = "5m"
+	}
+	var leaseErr error
+	c.Lease, leaseErr = time.ParseDuration(c.LeaseDuration)
+	if leaseErr != nil || c.Lease < time.Second || c.Lease > 24*time.Hour {
+		return nil, fmt.Errorf("lease_duration must be between 1s and 24h")
+	}
 	if c.CallTimeout == "" {
 		c.CallTimeout = "30s"
+	}
+	if c.ClaimTimeout == "" {
+		c.ClaimTimeout = "5s"
+	}
+	if c.ClaimConcurrency == 0 {
+		c.ClaimConcurrency = 8
+	}
+	if c.ClaimConcurrency < 1 || c.ClaimConcurrency > compute.MaxBatch {
+		return nil, fmt.Errorf("claim_concurrency must be between 1 and 100")
 	}
 	if c.BatchTimeout == "" {
 		c.BatchTimeout = "2m"
@@ -159,7 +181,7 @@ func Parse(b []byte) (*Config, error) {
 	for _, v := range []struct {
 		s   string
 		dst *time.Duration
-	}{{c.PollInterval, &c.Poll}, {c.Cooldown, &c.Cool}, {c.CallTimeout, &c.Call}, {c.BatchTimeout, &c.Batch}, {c.Defaults.Timeout, &c.ExecutionTimeout}} {
+	}{{c.PollInterval, &c.Poll}, {c.Cooldown, &c.Cool}, {c.CallTimeout, &c.Call}, {c.BatchTimeout, &c.Batch}, {c.ClaimTimeout, &c.Claim}, {c.Defaults.Timeout, &c.ExecutionTimeout}} {
 		n, e := time.ParseDuration(v.s)
 		if e != nil || n <= 0 || n > 365*24*time.Hour {
 			return nil, fmt.Errorf("invalid positive duration %q", v.s)
@@ -171,8 +193,8 @@ func Parse(b []byte) (*Config, error) {
 	}
 	if c.Defaults.StartWindow != "" {
 		n, e := time.ParseDuration(c.Defaults.StartWindow)
-		if e != nil || n <= 0 || n > c.Cool {
-			return nil, fmt.Errorf("start_window must be positive and no longer than cooldown")
+		if e != nil || n <= 0 || n > c.Lease {
+			return nil, fmt.Errorf("start_window must be positive and no longer than lease_duration")
 		}
 		c.StartWindow = n
 	}
@@ -209,7 +231,7 @@ func Parse(b []byte) (*Config, error) {
 		return nil, e
 	}
 	c.Allocation = a
-	if _, e = c2j.Process("db", "job", "launch", a, c.Defaults.Env, nil); e != nil {
+	if _, e = c2j.Process("db", "job", a, c.Defaults.Env, nil); e != nil {
 		return nil, e
 	}
 	if len(c.Defaults.Routes) == 0 {

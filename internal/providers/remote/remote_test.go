@@ -19,6 +19,8 @@ func launch(id string) compute.Launch {
 
 func TestWireAndPartialAcceptance(t *testing.T) {
 	launches := []compute.Launch{launch("a"), launch("b")}
+	launches[0].Process.Stdin = "private-lease-a"
+	launches[1].Process.Stdin = "private-lease-b"
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++

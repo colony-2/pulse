@@ -9,8 +9,8 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.47.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.5
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.99.0
-	github.com/colony-2/c2j v0.0.53-0.20260922032206-ef65f0001972
-	github.com/colony-2/jobdb v0.0.19-0.20260919034646-71b6668a65db
+	github.com/colony-2/c2j v0.0.62
+	github.com/colony-2/jobdb v0.0.26
 	github.com/distribution/reference v0.6.0
 	github.com/opencontainers/go-digest v1.0.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -48,6 +48,8 @@ require (
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/oapi-codegen/runtime v1.4.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+	github.com/segmentio/ksuid v1.0.4 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	golang.org/x/crypto v0.55.0 // indirect

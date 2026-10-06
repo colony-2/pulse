@@ -50,6 +50,9 @@ func New(c Config) (*Provider, error) {
 	if c.Region == "" {
 		return nil, fmt.Errorf("cloud region required")
 	}
+	if c.SupervisorPath == "" && c.Kind != "ecs" {
+		c.SupervisorPath = "/usr/local/bin/pulse-exec"
+	}
 	switch c.Kind {
 	case "cloudrun":
 		if c.Project == "" {
@@ -190,6 +193,9 @@ func envList(process compute.Process, metadata map[string]string) []map[string]s
 	for k, v := range process.Env {
 		env[k] = v
 	}
+	if process.Stdin != "" {
+		env[compute.StdinEnv] = string(process.Stdin)
+	}
 	for k, v := range metadata {
 		if _, supplied := env[strings.ToUpper(k)]; !supplied {
 			env[strings.ToUpper(k)] = v
@@ -215,6 +221,18 @@ func envList(process compute.Process, metadata map[string]string) []map[string]s
 func nameFor(id string) string {
 	h := sha256.Sum256([]byte(id))
 	return "pulse-" + hex.EncodeToString(h[:12])
+}
+
+// Cloud Run and Azure supply stdin through the image's pulse-exec helper.
+func (p *Provider) withStdinHelper(container map[string]any, l compute.Launch) {
+	if l.Process.Stdin == "" {
+		return
+	}
+	args := []string{"--timeout", fmt.Sprintf("%ds", l.TimeoutSeconds), "--"}
+	args = append(args, l.Process.Command...)
+	args = append(args, l.Process.Args...)
+	container["command"] = []string{p.cfg.SupervisorPath}
+	container["args"] = args
 }
 func (p *Provider) request(ctx context.Context, token, method, path string, body any) (map[string]json.RawMessage, int, error) {
 	var b []byte
@@ -343,6 +361,7 @@ func (p *Provider) submitGoogle(ctx context.Context, token string, l compute.Lau
 	resource := parent + "/jobs/" + name
 	a := pl.Allocation
 	container := map[string]any{"image": a.Image, "command": l.Process.Command, "args": l.Process.Args, "env": envList(l.Process, pl.Request.Metadata), "resources": map[string]any{"limits": map[string]string{"cpu": strconv.FormatInt(a.CPUMillis/1000, 10), "memory": fmt.Sprintf("%dMi", pl.TotalMemory/Mi)}}, "volumeMounts": []map[string]string{{"name": "scratch", "mountPath": "/scratch"}}}
+	p.withStdinHelper(container, l)
 	task := map[string]any{"containers": []any{container}, "maxRetries": 0, "timeout": fmt.Sprintf("%ds", pl.Request.TimeoutSeconds), "volumes": []any{map[string]any{"name": "scratch", "emptyDir": map[string]string{"medium": "MEMORY", "sizeLimit": fmt.Sprintf("%d", a.ScratchBytes)}}}}
 	if p.cfg.ServiceAccount != "" {
 		task["serviceAccount"] = p.cfg.ServiceAccount
@@ -398,6 +417,7 @@ func (p *Provider) submitAzure(ctx context.Context, token string, l compute.Laun
 	}
 	a := pl.Allocation
 	container := map[string]any{"name": "executor", "image": a.Image, "command": l.Process.Command, "args": l.Process.Args, "env": envList(l.Process, pl.Request.Metadata), "resources": map[string]any{"cpu": float64(a.CPUMillis) / 1000, "memory": fmt.Sprintf("%gGi", float64(a.MemoryBytes)/float64(Gi))}, "volumeMounts": []map[string]string{{"volumeName": "scratch", "mountPath": "/scratch"}}}
+	p.withStdinHelper(container, l)
 	body := map[string]any{"location": p.cfg.Region, "tags": pl.Request.Metadata, "properties": map[string]any{"environmentId": p.cfg.EnvironmentID, "configuration": map[string]any{"triggerType": "Manual", "replicaTimeout": pl.Request.TimeoutSeconds, "replicaRetryLimit": 0, "manualTriggerConfig": map[string]int{"parallelism": 1, "replicaCompletionCount": 1}}, "template": map[string]any{"containers": []any{container}, "volumes": []any{map[string]string{"name": "scratch", "storageType": "EmptyDir"}}}}}
 	_, code, err = p.request(ctx, token, "PUT", path, body)
 	if err != nil {

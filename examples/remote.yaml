@@ -2,6 +2,8 @@ poll_interval: 5s
 cooldown: 60s
 call_timeout: 30s
 batch_timeout: 2m
+claim_concurrency: 8
+claim_timeout: 5s
 batch_size: 100
 max_jobs_per_cell: 100
 defaults:

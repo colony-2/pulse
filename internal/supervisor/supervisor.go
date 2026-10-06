@@ -3,8 +3,10 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"github.com/colony-2/pulse/pkg/compute"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -19,6 +21,20 @@ func Run(ctx context.Context, argv []string, timeout time.Duration, startBefore 
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin = os.Stdin
+	// Native container APIs cannot supply finite stdin directly. The private
+	// helper transport is converted to a pipe and excluded from the child env.
+	if input, ok := os.LookupEnv(compute.StdinEnv); ok {
+		if len(input) > compute.MaxStdin {
+			return 125
+		}
+		cmd.Stdin = strings.NewReader(input)
+	}
+	cmd.Env = []string{}
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, compute.StdinEnv+"=") {
+			cmd.Env = append(cmd.Env, entry)
+		}
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

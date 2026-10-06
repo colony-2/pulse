@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: Pulse Remote Compute Provider Protocol
-  version: 1.0.0
+  version: 1.1.0
   description: Batch-only compute provider contract. Each submission contains resources, process, deadlines, and
     metadata. Providers preserve supplied environment values, including when rounding resource capacity upward.
     See REMOTE_PROVIDER_PROTOCOL.md for single-attempt submission, recovery, and fallback semantics. Providers do
@@ -23,7 +23,7 @@ paths:
         runtime, not guaranteed startup or completion. Providers need no durable submission journal, replay support,
         stored decline decisions, fixed terminal retention, or recovery loop for lost launches. Native idempotency
         safeguards are optional. Definite declines authorize fallback; missing or unknown outcomes do not.
-        Outstanding work is rediscovered through c2j; a later Pulse attempt after cooldown has a new launch ID.
+        Outstanding work is rediscovered through c2j; a later Pulse attempt requires a fresh JobDB lease and has a new launch ID.
       requestBody:
         required: true
         content:
@@ -52,15 +52,15 @@ paths:
                   - c2j
                   args:
                   - run
+                  - with-lease
                   - --job-id
                   - job-123
-                  - --worker-id
-                  - launch-001
-                  - --on-not-ready
-                  - fail
+                  - --lease-file
+                  - "-"
                   - --ci
                   - --input-mode
                   - fail
+                  stdin: "<encoded lease capability; illustrative placeholder>"
                   env:
                     C2J_JOBDB: https://jobdb.example/acme
                     C2J_EXECUTION_CPU: 1500m
@@ -94,15 +94,15 @@ paths:
                   - c2j
                   args:
                   - run
+                  - with-lease
                   - --job-id
                   - job-124
-                  - --worker-id
-                  - launch-002
-                  - --on-not-ready
-                  - fail
+                  - --lease-file
+                  - "-"
                   - --ci
                   - --input-mode
                   - fail
+                  stdin: "<encoded lease capability; illustrative placeholder>"
                   env:
                     C2J_JOBDB: https://jobdb.example/acme
                     C2J_EXECUTION_CPU: 1500m
@@ -302,6 +302,14 @@ components:
             type: string
           description: Literal supplied values override image and provider defaults. Preserve exact values; no substitution
             or changes based on provider sizing. Do not log secrets.
+        stdin:
+          type: string
+          maxLength: 1048576
+          writeOnly: true
+          pattern: '^[^\u0000]*$'
+          description: Optional sensitive UTF-8 input, at most 1 MiB encoded bytes and no NUL.
+            Deliver byte-for-byte to the process through a private stdin pipe, then EOF.
+            Never expose in argv, child environment, diagnostics, or listing. Reject unsupported delivery.
         working_dir:
           type: string
           minLength: 1

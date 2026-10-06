@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -15,7 +16,14 @@ type Job struct {
 	Key     Key
 	Request compute.Request
 	Process compute.Process
+	// Prepare runs after local admission, immediately before placement. The
+	// returned cleanup is called only when execution definitely cannot start.
+	// Prepare may run concurrently for different jobs and must honor cancellation.
+	Prepare func(context.Context, compute.Request) (compute.Launch, func(context.Context) error, error)
 }
+
+var ErrNotEligible = errors.New("job is no longer eligible for a lease")
+
 type Service struct {
 	Name     string
 	Priority int
@@ -31,17 +39,19 @@ type entry struct {
 	flight bool
 }
 type Scheduler struct {
-	mu          sync.Mutex
-	entries     map[Key]entry
-	cursors     map[string]uint64
-	tiers       map[string]RoundRobinEntry
-	Cooldown    time.Duration
-	CallTimeout time.Duration
-	Now         func() time.Time
+	mu               sync.Mutex
+	entries          map[Key]entry
+	cursors          map[string]uint64
+	tiers            map[string]RoundRobinEntry
+	Cooldown         time.Duration
+	CallTimeout      time.Duration
+	ClaimConcurrency int
+	ClaimTimeout     time.Duration
+	Now              func() time.Time
 }
 
 func New(cooldown, callTimeout time.Duration) *Scheduler {
-	return &Scheduler{entries: map[Key]entry{}, cursors: map[string]uint64{}, tiers: map[string]RoundRobinEntry{}, Cooldown: cooldown, CallTimeout: callTimeout, Now: time.Now}
+	return &Scheduler{entries: map[Key]entry{}, cursors: map[string]uint64{}, tiers: map[string]RoundRobinEntry{}, Cooldown: cooldown, CallTimeout: callTimeout, ClaimConcurrency: 8, ClaimTimeout: 5 * time.Second, Now: time.Now}
 }
 func (s *Scheduler) order(scope string, services []Service) ([]Service, error) {
 	tiers := map[int][]Service{}
@@ -72,6 +82,9 @@ func (s *Scheduler) order(scope string, services []Service) ([]Service, error) {
 
 // Run performs one bounded batch attempt. Unknown outcomes never fall through.
 func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, jobs []Job) ([]Result, error) {
+	if s.ClaimConcurrency < 1 || s.ClaimConcurrency > compute.MaxBatch || s.ClaimTimeout <= 0 {
+		return nil, errors.New("invalid claim limits")
+	}
 	if len(jobs) > compute.MaxBatch {
 		return nil, fmt.Errorf("batch too large")
 	}
@@ -100,23 +113,37 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 	}
 	s.mu.Unlock()
 	reserved := append([]Job{}, pending...)
+	results := map[Key]Result{}
+	notEligible := map[Key]bool{}
+	deferred := map[Key]bool{}
 	defer func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		for _, j := range reserved {
+			status := results[j.Key].Submission.Status
+			if status == compute.Accepted || status == compute.Unknown || notEligible[j.Key] || deferred[j.Key] {
+				delete(s.entries, j.Key)
+				continue
+			}
 			e := s.entries[j.Key]
 			e.flight = false
+			e.at = s.Now()
 			s.entries[j.Key] = e
 		}
 	}()
-	results := map[Key]Result{}
+	cleanup := map[Key]func(context.Context) error{}
 	validPending := []Job{}
-	for _, j := range pending {
-		err := j.Request.Validate()
-		if err == nil {
-			err = j.Process.Validate()
+	for _, prepared := range s.prepare(ctx, pending) {
+		j, err := prepared.job, prepared.err
+		if !prepared.started {
+			deferred[j.Key] = true
+			continue
+		}
+		if prepared.release != nil {
+			cleanup[j.Key] = prepared.release
 		}
 		if err != nil {
+			notEligible[j.Key] = errors.Is(err, ErrNotEligible)
 			results[j.Key] = Result{Key: j.Key, Submission: compute.Submission{LaunchID: j.Request.LaunchID, Status: compute.Rejected, Reason: err.Error()}}
 		} else {
 			validPending = append(validPending, j)
@@ -187,14 +214,85 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 		pending = next
 	}
 	out := []Result{}
+	var cleanupErrs []error
 	for _, j := range reserved {
+		if deferred[j.Key] {
+			continue
+		}
 		r, ok := results[j.Key]
 		if !ok {
 			r = Result{Key: j.Key, Submission: compute.Submission{LaunchID: j.Request.LaunchID, Status: compute.Rejected, Reason: "attempt cancelled before submission"}}
 		}
+		results[j.Key] = r
+		if release := cleanup[j.Key]; release != nil && r.Submission.Status != compute.Accepted && r.Submission.Status != compute.Unknown {
+			call, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.CallTimeout)
+			if err := release(call); err != nil {
+				cleanupErrs = append(cleanupErrs, errors.New("failed to release unused job lease"))
+			}
+			cancel()
+		}
 		out = append(out, r)
 	}
-	return out, ctx.Err()
+	return out, errors.Join(append(cleanupErrs, ctx.Err())...)
+}
+
+type preparedJob struct {
+	job     Job
+	started bool
+	release func(context.Context) error
+	err     error
+}
+
+// prepare bounds concurrency and how long we keep starting claims. In-flight
+// calls finish under their normal request timeout. Results retain input order.
+func (s *Scheduler) prepare(ctx context.Context, jobs []Job) []preparedJob {
+	claimUntil := s.Now().Add(s.ClaimTimeout)
+	out := make([]preparedJob, len(jobs))
+	for i, j := range jobs {
+		out[i].job = j
+	}
+	var mu sync.Mutex
+	next := 0
+	var workers sync.WaitGroup
+	for range min(s.ClaimConcurrency, len(jobs)) {
+		workers.Go(func() {
+			for {
+				mu.Lock()
+				if ctx.Err() != nil || next == len(jobs) || !s.Now().Before(claimUntil) {
+					mu.Unlock()
+					return
+				}
+				i := next
+				next++
+				mu.Unlock()
+				j := jobs[i]
+				result := preparedJob{job: j, started: true}
+				err := j.Request.Validate()
+				if err == nil {
+					err = j.Process.Validate()
+				}
+				if err == nil && j.Prepare != nil {
+					call, done := context.WithTimeout(ctx, s.CallTimeout)
+					launch, release, prepareErr := j.Prepare(call, j.Request)
+					done()
+					result.release = release
+					err = prepareErr
+					if err == nil {
+						if launch.LaunchID != j.Request.LaunchID {
+							err = errors.New("preparation changed launch identity")
+						} else {
+							result.job.Request, result.job.Process = launch.Request, launch.Process
+							err = launch.Validate()
+						}
+					}
+				}
+				result.err = err
+				out[i] = result
+			}
+		})
+	}
+	workers.Wait()
+	return out
 }
 
 // Eligible is a hint for filling bounded batches; Run reserves atomically again.

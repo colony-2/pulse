@@ -99,7 +99,7 @@ func (j Job) Allocation(defaults compute.Allocation) (compute.Allocation, error)
 	a.ImageID = ""
 	return a, a.Validate()
 }
-func Process(jobdb, job, launch string, a compute.Allocation, extra map[string]string, metadata map[string]string) (compute.Process, error) {
+func Process(jobdb, job string, a compute.Allocation, extra map[string]string, metadata map[string]string) (compute.Process, error) {
 	env := map[string]string{}
 	for k, v := range extra {
 		if strings.HasPrefix(k, "C2J_EXECUTION_") || k == "C2J_JOBDB" || strings.HasPrefix(k, "PULSE_") {
@@ -120,5 +120,5 @@ func Process(jobdb, job, launch string, a compute.Allocation, extra map[string]s
 	for k, v := range metadata {
 		env[strings.ToUpper(k)] = v
 	}
-	return compute.Process{Command: []string{"c2j"}, Args: []string{"run", "--jobdb", jobdb, "--job-id", job, "--worker-id", launch, "--on-not-ready", "fail", "--ci", "--input-mode", "fail"}, Env: env}, nil
+	return compute.Process{Command: []string{"c2j"}, Args: []string{"run", "with-lease", "--jobdb", jobdb, "--job-id", job, "--lease-file", "-", "--ci", "--input-mode", "fail"}, Env: env}, nil
 }

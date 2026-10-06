@@ -364,6 +364,9 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		for k, v := range l.Process.Env {
 			env = append(env, k+"="+v)
 		}
+		if l.Process.Stdin != "" {
+			env = append(env, compute.StdinEnv+"="+string(l.Process.Stdin))
+		}
 		if _, ok := l.Process.Env["TMPDIR"]; !ok {
 			env = append(env, "TMPDIR="+p.cfg.ScratchPath)
 		}

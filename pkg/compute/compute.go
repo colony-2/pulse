@@ -14,10 +14,22 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const MaxBatch = 100
 const MaxQuantity int64 = 9007199254740991
+const MaxStdin = 1 << 20
+
+// StdinEnv is the private transport from native container APIs to pulse-exec.
+// It is removed before starting the child and must never be set by a caller.
+const StdinEnv = "PULSE_EXEC_STDIN"
+
+// SecretInput is serialized deliberately for submission, but redacted in diagnostics.
+type SecretInput string
+
+func (SecretInput) String() string     { return "[REDACTED]" }
+func (s SecretInput) GoString() string { return s.String() }
 
 type Status string
 
@@ -115,9 +127,16 @@ type Process struct {
 	Args       []string          `json:"args"`
 	Env        map[string]string `json:"env"`
 	WorkingDir string            `json:"working_dir,omitempty"`
+	Stdin      SecretInput       `json:"stdin,omitempty"`
 }
 
 func (p Process) Validate() error {
+	if !utf8.ValidString(string(p.Stdin)) || len(p.Stdin) > MaxStdin || strings.ContainsRune(string(p.Stdin), 0) {
+		return errors.New("invalid process stdin")
+	}
+	if _, exists := p.Env[StdinEnv]; exists {
+		return errors.New("reserved stdin transport environment key")
+	}
 	if len(p.Command) == 0 || p.Command[0] == "" {
 		return errors.New("explicit command required")
 	}

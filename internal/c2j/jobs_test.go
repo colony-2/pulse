@@ -36,11 +36,11 @@ func TestDemandAndRoute(t *testing.T) {
 	}
 }
 func TestAllocationProcess(t *testing.T) {
-	p, e := Process("https://db/t", "job", "launch", compute.Allocation{CPUMillis: 1500, MemoryBytes: 1025, ScratchBytes: 2048, Image: "runner:1", Platform: "linux/amd64"}, nil, map[string]string{"pulse_job_id": "job"})
+	p, e := Process("https://db/t", "job", compute.Allocation{CPUMillis: 1500, MemoryBytes: 1025, ScratchBytes: 2048, Image: "runner:1", Platform: "linux/amd64"}, nil, map[string]string{"pulse_job_id": "job"})
 	if e != nil || p.Env["C2J_EXECUTION_CPU"] != "1500m" || p.Env["PULSE_JOB_ID"] != "job" {
 		t.Fatal(p, e)
 	}
-	_, e = Process("", "", "", compute.Allocation{}, map[string]string{"C2J_EXECUTION_MEMORY": "1Gi"}, nil)
+	_, e = Process("", "", compute.Allocation{}, map[string]string{"C2J_EXECUTION_MEMORY": "1Gi"}, nil)
 	if e == nil {
 		t.Fatal("allocation override accepted")
 	}
@@ -67,7 +67,7 @@ func TestRequestedPinnedImagePassesC2JCompatibility(t *testing.T) {
 	image := "registry.example/runner@" + digest
 	for _, ref := range []string{image, "registry.example/runner:1"} {
 		a := compute.Allocation{CPUMillis: 1500, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Image: ref, Platform: "linux/amd64", ImageDigest: "sha256:" + strings.Repeat("b", 64), ImageID: "diagnostic"}
-		p, err := Process("https://db/t", "job", "launch", a, nil, nil)
+		p, err := Process("https://db/t", "job", a, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -18,7 +18,7 @@ def check(name, value, valid=True):
 
 
 assert set(spec["paths"]) == {"/v1/submit", "/v1/launches"}
-assert spec["info"]["version"] == "1.0.0"
+assert spec["info"]["version"] == "1.1.0"
 for operations in spec["paths"].values():
     for op in operations.values():
         bodies = [op["requestBody"]] if "requestBody" in op else []
@@ -36,6 +36,13 @@ for name, example in examples:
     check(name, json.loads(example))
 
 request = spec["paths"]["/v1/submit"]["post"]["requestBody"]["content"]["application/json"]["example"]
+legacy = copy.deepcopy(request)
+legacy["items"][0]["process"].pop("stdin")
+check("SubmitRequest", legacy)
+for value in (123, "x" * (1048576 + 1), "bad\u0000input"):
+    bad = copy.deepcopy(request)
+    bad["items"][0]["process"]["stdin"] = value
+    check("SubmitRequest", bad, False)
 check("SubmitRequest", {"items": []}, False)
 check("SubmitRequest", {"items": [request["items"][0]] * 101}, False)
 for field, value in (("cpu_millis", 0), ("memory_bytes", 1.5), ("scratch_bytes", 9007199254740992), ("timeout_seconds", 31536001)):

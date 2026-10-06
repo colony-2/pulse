@@ -8,12 +8,12 @@ The [v1 OpenAPI contract](../api/provider.openapi.yaml) defines the wire format.
 
 | Pulse owns | Your provider owns | c2j owns |
 | --- | --- | --- |
-| Finding runnable jobs and selecting one to launch | Matching the requested image, platform, and resources to compute | Claiming the selected job and managing its lease |
+| Finding runnable jobs, claiming a lease, and exporting it | Matching the requested image, platform, and resources to compute | Validating and renewing the supplied lease |
 | Priority tiers, batch placement, and fallback | Capacity admission, optional queueing, and starting the supplied process | Execution, replay, and runtime requirement changes |
 | Building the process and environment from requested/defaulted resources | Resource enforcement, execution deadlines, and active instance listing | JobDB state transitions |
-| In-memory per-job cooldown | Prompt native handoff or optional bounded runner queues | Determining whether its reported allocation remains sufficient |
+| Provisioning-failure backoff | Prompt native handoff or optional bounded runner queues | Determining whether its reported allocation remains sufficient |
 
-Treat the process and correlation metadata as opaque inputs. Your service does not query JobDB, resolve recipes, or construct c2j arguments. Runner registration, heartbeats, authentication, and long polling are internal to the service.
+Treat the process, sensitive stdin, and correlation metadata as opaque inputs. Deliver `process.stdin` byte-for-byte through a private pipe, then EOF; never put it in argv, the child environment, logs, errors, or list responses. Reject unsupported delivery before side effects. See the [stdin contract](../REMOTE_PROVIDER_PROTOCOL.md#complete-launch-requests). Your service does not query JobDB, resolve recipes, or construct c2j arguments. Runner registration, heartbeats, authentication, and long polling are internal to the service.
 
 Start with immediate admission: commit compatible capacity or return `no_capacity`. Add a queue only if the deployment needs it.
 
@@ -60,11 +60,11 @@ Accepted results contain only `launch_id` and `status`. Every other status also 
 
 Definite declines guarantee no delayed execution from that submission. Creating an inert parent resource alone is insufficient for acceptance; an accepted asynchronous start operation can be sufficient. Native parent cleanup is a deployment concern, separate from job recovery.
 
-A lost response after calling a native launch API is usually `unknown`. Do not map generic HTTP `429`, `5xx`, or transport failures to safe fallback. If you know the pool is full, return HTTP `200` with per-item `no_capacity`. Pulse stops uncertain items for this attempt; it can retry the job with a fresh ID after cooldown.
+A lost response after calling a native launch API is usually `unknown`. Do not map generic HTTP `429`, `5xx`, or transport failures to safe fallback. If you know the pool is full, return HTTP `200` with per-item `no_capacity`. Pulse stops uncertain items for this attempt; it leaves the supplied lease alone until c2j releases it or JobDB expires it.
 
 ## Make one submission attempt
 
-Pulse submits each launch once to a selected service. It can try a different service after a definite fallback-eligible decline, preserving the launch ID. It does not replay a submission after a timeout or lost response. If work remains runnable after cooldown, Pulse creates a new attempt with a new ID. This limits submissions per attempt, not the number of attempts over a job's lifetime.
+Pulse submits each launch once to a selected service. It can try a different service after a definite fallback-eligible decline, preserving the launch ID. It does not replay a submission after a timeout or lost response. A new attempt requires acquiring a fresh JobDB lease and uses a new ID. Definite non-starts release the old lease with backoff; accepted or uncertain starts retain it. This limits submissions per attempt, not the number of attempts over a job's lifetime.
 
 A simple provider flow is:
 
@@ -78,11 +78,11 @@ Disable automatic POST retries in clients/proxies and launch retries in SDKs. Cr
 
 There is no requirement to persist submission decisions, record declines, compare replayed inputs, retain terminal records for a fixed period, or reconcile unknown outcomes into a retry. A provider backed by a reliable runtime can submit to it and derive active lists from its resources. Native metadata must remain available while those resources are exposed, but an additional database is unnecessary. Caller replays are outside the contract.
 
-`accepted` reports an admission or handoff that occurred; it is not a promise of eventual execution. A crash that loses an accepted queue entry requires no provider recovery. Work that was never claimed remains visible through c2j; claimed work follows c2j/JobDB lease recovery before another attempt becomes eligible. Resource enforcement and safe accounting for compute that might still be running remain provider responsibilities.
+`accepted` reports an admission or handoff that occurred; it is not a promise of eventual execution. A crash that loses an accepted queue entry requires no provider recovery. Pulse has already claimed the job before submission. Its lease expires if the launch is lost, allowing another attempt through normal JobDB recovery. Resource enforcement and safe accounting for compute that might still be running remain provider responsibilities.
 
 ## Handoff and optional bounded queues
 
-Prefer immediate handoff to the underlying runtime. Native image pulls and scheduling delays do not create a requirement for your service to store a durable queue or enforce a universal startup deadline. A late native start still goes through c2j's readiness, lease, and resource checks; overlapping attempts can waste compute.
+Prefer immediate handoff to the underlying runtime. Native image pulls and scheduling delays do not create a requirement for your service to store a durable queue or enforce a universal startup deadline. A late native start validates the supplied lease and checks resource compatibility. An expired or superseded lease fails without claiming replacement work; startup can still consume compute.
 
 If your service deliberately queues work for external runners, require `start_before`. Without it, dispatch directly or return `unsupported` if only provider-owned queueing is available. Enforce the deadline at actual startup, including on the runner; admission-time checking alone is insufficient. Expire an entry that misses its deadline without starting it. No durable expiry history is required.
 
@@ -91,7 +91,7 @@ If your service deliberately queues work for external runners, require `start_be
 | `start_before`, when supplied | Prevent actual container startup at or after this timestamp. Return `unsupported` if this cannot be enforced, even when handoff itself would be timely. |
 | `timeout_seconds` | Terminate execution when its duration after startup reaches the limit, independently of Pulse. |
 
-Pulse supplies startup deadlines when `defaults.start_window` is configured. It must be positive and no longer than `cooldown`; cloud handoff may leave it unset. An HTTP request timeout is not an execution or startup deadline.
+Pulse supplies startup deadlines when `defaults.start_window` is configured. It must be positive and no longer than `lease_duration`; cloud handoff may leave it unset. An HTTP request timeout is not an execution or startup deadline.
 
 ## Preserve reverse lookup and list active instances
 
@@ -126,7 +126,7 @@ Terminal record retention is a deployment choice. Preserve correlation on any na
 
 A missed heartbeat does not prove execution stopped or make its capacity safe to reuse. Do not reassign an uncertain dispatch as a retry; let c2j and Pulse determine when a fresh attempt is needed. Runner dispatch leases and c2j job leases have separate responsibilities.
 
-Prefer immediate assignment or a short queue bounded by `start_before`. Accepted queued work can remain runnable in c2j, producing fresh launch IDs after cooldown; these are separate attempts, so optional native deduplication by launch ID does not combine them. Longer queues require provider-owned handling of repeated/stale pending work before enabling them. Pulse needs no registry, long-poll API, or persistent state.
+Prefer immediate assignment or a short queue bounded by `start_before`. Accepted queued work retains its JobDB lease until expiry. Queue delay consumes that lease lifetime; after expiry, a delayed runner cannot use the stale capability. Prefer queues short enough to leave time for startup and initial renewal. Pulse needs no registry, long-poll API, or persistent state.
 
 ## Connect and verify
 

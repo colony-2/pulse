@@ -86,6 +86,6 @@ Files must be readable by the image's UID/GID `65532:65532`; environment file pa
 
 For Google and Azure, existing `providers.<name>.token_env` remains an explicit access-token override. If set, it bypasses SDK credential discovery. The supplied token must be nonempty and valid; Pulse cannot refresh a raw access token. Omit this setting to use automatic SDK authentication. ECS uses AWS credentials and signing, not bearer `token_env`.
 
-`pulse -check` validates configuration and initializes providers, but cloud credentials are acquired lazily on submission. Use `-once` with a runnable test job to verify authentication and launch permissions. Authentication failures before launching return `unavailable`; uncertain start responses retain the scheduler's normal cooldown behavior.
+`pulse -check` validates configuration and initializes providers, but cloud credentials are acquired lazily on submission. Use `-once` with a runnable test job to verify authentication and launch permissions. Authentication failures before launching return `unavailable`; uncertain start responses retain the supplied job lease until executor renewal or expiry.
 
 The Pulse image is the controller. Executor images selected by `defaults.image` or job demand still need c2j and recipe dependencies. Running this controller image unchanged does not install those dependencies in arbitrary executor images.

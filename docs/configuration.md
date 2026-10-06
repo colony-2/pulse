@@ -20,6 +20,39 @@ Configuration is read once at startup. Restart or deploy a new revision after ch
 
 Discovery always uses c2j's public Go listing API. Each target must name explicit repository identities, such as `github.com/acme/app` or `file:///absolute/repository/path`, matching job metadata. Local checkout discovery and aliases are not supported. Remove the old top-level `c2j` section, including `mode: embedded`, when upgrading; those obsolete settings are rejected by configuration validation. Use `jobdb_token_env` on each target for authenticated JobDB access. Executor images still provide the c2j command used to run jobs.
 
+## Lease handoff and recovery
+
+Pulse acquires an ordinary JobDB lease for the selected job before asking a provider to start compute. It exports the capability using JobDB's public API and supplies it to `c2j run with-lease --job-id … --lease-file -`. c2j validates and renews that exact lease before running work. It cannot claim a replacement job. Pulse does not heartbeat after acquisition, including during provisioning.
+
+```yaml
+poll_interval: 5s
+lease_duration: 5m
+claim_concurrency: 8
+claim_timeout: 5s
+batch_size: 100
+cooldown: 60s
+call_timeout: 10s
+batch_timeout: 1m
+```
+
+`lease_duration` defaults to `5m` and accepts `1s` through `24h`. Allow enough time for lease acquisition of the batch, provider fallback, scheduling, image pulls, and c2j startup. A longer duration also delays recovery after a lost launch or runner crash; c2j renews with the inherited duration. `defaults.start_window`, when present, must be positive and no longer than `lease_duration`. It constrains actual startup; it does not extend the lease.
+
+Claims run concurrently before provider submission, with these controls:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `claim_concurrency` | `8` | Maximum simultaneous claim/preparation calls per batch; range 1–100. Actual concurrency is also bounded by the candidate count. |
+| `claim_timeout` | `5s` | How long to keep starting claims for a batch. In-flight calls finish normally under `call_timeout` and the remaining `batch_timeout`. |
+| `batch_size` | `100` | Maximum candidate claim attempts and therefore maximum acquired leases per provider batch; range 1–100. Failed or unavailable claims count toward this limit. |
+
+Pulse submits as soon as every candidate has been processed, without waiting out the window. Once the time or count limit is met, it stops starting claims, lets outstanding calls finish, and submits the successful subset. Unstarted candidates remain eligible for a later poll and receive no failure cooldown. Attempted claims that fail follow normal backoff; a timed-out claim whose capability was never returned recovers through JobDB lease expiry. A returned but unusable lease is released safely. Fallback reuses the already acquired leases.
+
+Leave room in `batch_timeout` for provider submission after the claim phase, and in `lease_duration` for claiming plus container startup. Increasing the count or concurrency raises instantaneous JobDB load; increasing the claim window consumes more of the earliest acquired leases' lifetime. The claim window does not cancel requests, so the claim phase can extend beyond it while in-flight calls finish.
+
+`cooldown` is provisioning-failure backoff. After definite non-start, Pulse releases the unused lease by rescheduling the same route with a wait deadline, preserving task coordinates and client payload. JobDB persists that wait across controller restarts. Pulse also keeps local failure backoff, including claim/preparation failures. Accepted and uncertain submissions have no local cooldown: they retain their lease until c2j releases it or it expires. A successful executor yield can therefore be scheduled on the next poll without waiting for an old cooldown.
+
+The configured `jobdb_token_env` authorizes discovery and claiming on the controller. It is not copied into the job container. Use JobDB v0.0.22 or later with authoritative supplied-lease renewal, a c2j image supporting `run with-lease`, and a provider supporting sensitive stdin. No activation API or lease transfer transaction is required. See [provider image and transport requirements](providers.md).
+
 ## Docker or a native executable
 
 Copy [container.yaml](../examples/container.yaml), edit the deployment settings, then load its contents on the host:

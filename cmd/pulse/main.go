@@ -75,7 +75,9 @@ func run() error {
 		fmt.Println("configuration, listing backend, and providers are valid")
 		return nil
 	}
-	c := &controller.Controller{Config: cfg, Lister: lister, Scheduler: scheduler.New(cfg.Cool, cfg.Call), Providers: instances, Log: slog.New(slog.NewJSONHandler(os.Stderr, nil))}
+	sched := scheduler.New(cfg.Cool, cfg.Call)
+	sched.ClaimConcurrency, sched.ClaimTimeout = cfg.ClaimConcurrency, cfg.Claim
+	c := &controller.Controller{Config: cfg, Lister: lister, Claimer: lister, Scheduler: sched, Providers: instances, Log: slog.New(slog.NewJSONHandler(os.Stderr, nil))}
 	if *once {
 		return c.Once(ctx)
 	}

@@ -1,6 +1,6 @@
 # Remote compute provider protocol v1
 
-Pulse uses **one batch submission operation** to send complete container launches. The [OpenAPI contract](api/provider.openapi.yaml) specifies v1 (`1.0.0`) in place; no earlier protocol has been deployed. Built-in adapters use the same submission model in-process. See [Implementing a remote provider](docs/implementing-a-remote-provider.md) for server guidance.
+Pulse uses **one batch submission operation** to send complete container launches. The [OpenAPI contract](api/provider.openapi.yaml) specifies v1 (`1.1.0`), including optional sensitive stdin. Built-in adapters use the same submission model in-process. See [Implementing a remote provider](docs/implementing-a-remote-provider.md) for server guidance.
 
 ## Operations
 
@@ -22,7 +22,7 @@ Each item contains:
 - Positive integer `cpu_millis`, `memory_bytes`, and `scratch_bytes`. One CPU is 1000 millicores; the maximum integer is `9007199254740991`.
 - `timeout_seconds`, a positive execution limit of at most 31536000 seconds, and optional `start_before` in RFC 3339 format.
 - Opaque string-valued `metadata` for reverse lookup.
-- `process`: explicit `command`, `args`, literal `env`, and optional absolute `working_dir`. Empty arguments/environment use `[]` and `{}`, not `null`.
+- `process`: explicit `command`, `args`, literal `env`, optional sensitive `stdin`, and optional absolute `working_dir`. Empty arguments/environment use `[]` and `{}`, not `null`.
 
 Pulse fills omitted resource requirements from deployment defaults, then builds the process environment from those requested values. The provider must guarantee at least the requested usable CPU, memory, and scratch simultaneously. It may round capacities upward or account for overhead internally. That sizing **must not change any supplied environment value**. For a 1500m request provisioned with 2 CPUs, `C2J_EXECUTION_CPU` remains `1500m`. The same complete launch is sent unchanged on fallback.
 
@@ -30,9 +30,13 @@ This reports a conservative guaranteed allocation to c2j: extra capacity from pr
 
 Providers execute the supplied process without interpreting c2j options, expanding environment placeholders, or adding shell interpretation. Supplied values override image/provider defaults; defaults may fill absent keys. Preserve image and platform constraints. If an option cannot be honored, return `unsupported` before accepting work. For a digest-pinned image, Pulse also sets `C2J_EXECUTION_IMAGE_DIGEST` to the requested digest because c2j requires it for compatibility; the provider must enforce that pin before startup. Tag requests omit this field. Listing does not negotiate allocation or feed values back into the submitted environment.
 
+`process.stdin`, when supplied, is finite UTF-8 input (at most 1 MiB encoded bytes, no NUL). Deliver it byte-for-byte over a private pipe to the process, then close the pipe. Never place it in argv, the child environment, diagnostic logs, error bodies, or instance lists. Protect any queued or native transport copy as a credential. A provider unable to deliver stdin must reject the request before side effects; older implementations must not silently ignore the new field. Absent stdin preserves the provider's existing noninteractive input behavior.
+
+Pulse uses stdin for the exported JobDB lease. The provider treats those bytes as opaque and forwards them unchanged on dispatch. Pulse acquires the lease before submission; c2j validates and renews that exact lease before executing. Pulse's JobDB discovery/claim credential is not included in the launch.
+
 ### Example: submit two launches
 
-Send `POST /v1/submit` with `Authorization: Bearer <token>` and `Content-Type: application/json`. This example requests 1500m CPU, 4 GiB application memory, and 1 GiB scratch per launch. The c2j quantity strings describe those same capacities.
+Send `POST /v1/submit` with `Authorization: Bearer <token>` and `Content-Type: application/json`. This example requests 1500m CPU, 4 GiB application memory, and 1 GiB scratch per launch. The c2j quantity strings describe those same capacities. The stdin strings are illustrative placeholders, not valid capabilities.
 
 <!-- schema: SubmitRequest -->
 ```json
@@ -61,16 +65,16 @@ Send `POST /v1/submit` with `Authorization: Bearer <token>` and `Content-Type: a
         ],
         "args": [
           "run",
+          "with-lease",
           "--job-id",
           "job-123",
-          "--worker-id",
-          "launch-001",
-          "--on-not-ready",
-          "fail",
+          "--lease-file",
+          "-",
           "--ci",
           "--input-mode",
           "fail"
         ],
+        "stdin": "<encoded lease capability; illustrative placeholder>",
         "env": {
           "C2J_JOBDB": "https://jobdb.example/acme",
           "C2J_EXECUTION_CPU": "1500m",
@@ -110,16 +114,16 @@ Send `POST /v1/submit` with `Authorization: Bearer <token>` and `Content-Type: a
         ],
         "args": [
           "run",
+          "with-lease",
           "--job-id",
           "job-124",
-          "--worker-id",
-          "launch-002",
-          "--on-not-ready",
-          "fail",
+          "--lease-file",
+          "-",
           "--ci",
           "--input-mode",
           "fail"
         ],
+        "stdin": "<encoded lease capability; illustrative placeholder>",
         "env": {
           "C2J_JOBDB": "https://jobdb.example/acme",
           "C2J_EXECUTION_CPU": "1500m",
@@ -180,7 +184,7 @@ All definite declines guarantee that execution cannot later start from that subm
 
 Report `accepted` after admission or handoff has occurred, not merely after validating the request or creating an inert cloud parent. An accepted asynchronous native start operation is sufficient. The provider need not guarantee delivery after a crash, recover lost queue entries, or restart failed launches. Once execution starts, resource limits and `timeout_seconds` must be enforced independently of Pulse.
 
-Batches are not transactions. Preserve valid explicit results in a complete response when another item is missing or malformed. Unaccounted-for IDs, duplicate results, unknown statuses, truncated JSON, timeouts, and transport failures imply uncertainty. Pulse never immediately falls back an uncertain item. A later per-job cooldown attempt can still launch fresh compute with a new ID.
+Batches are not transactions. Preserve valid explicit results in a complete response when another item is missing or malformed. Unaccounted-for IDs, duplicate results, unknown statuses, truncated JSON, timeouts, and transport failures imply uncertainty. Pulse never immediately falls back an uncertain item. Pulse leaves that lease alone; a new attempt requires JobDB to grant a fresh lease after expiry or executor rescheduling.
 
 HTTP `400`, `401`, `403`, `413`, and `422` are whole-request rejections **before processing any items**. They stop the attempt. A generic `429`, gateway failure, or `5xx` is not proof of non-acceptance; use HTTP `200` with explicit per-item `no_capacity` or `unavailable` when fallback is safe. Do not blindly retry submission POSTs in middleware.
 
@@ -198,15 +202,15 @@ HTTP `400 Bad Request` for duplicate IDs; no item was processed:
 
 ## Submission attempts and recovery
 
-A `launch_id` identifies one attempt, not the JobDB job's lifetime. Pulse calls each selected launch service at most once for that attempt. After a definite fallback-eligible decline it may submit the same complete item and ID to the next service. It does not retry a timed-out or failed POST, or immediately fall back after an uncertain outcome. A later attempt after the per-job cooldown uses a new launch ID if c2j still reports runnable work.
+A `launch_id` identifies one attempt, not the JobDB job's lifetime. Pulse calls each selected launch service at most once for that attempt. After a definite fallback-eligible decline it may submit the same complete item and ID to the next service. It does not retry a timed-out or failed POST, or immediately fall back after an uncertain outcome. A later attempt uses a new launch ID and must acquire a fresh lease from JobDB. Definite non-starts release the unused lease with provisioning backoff; accepted and uncertain starts do not.
 
 Clients must not replay a submission to the same provider, including after a lost response. Disable automatic submission retries in HTTP clients, proxies, middleware, and native launch SDKs. A provider makes one attempt to initiate execution for each item; this can require multiple distinct native operations, such as creating a parent and then starting it. It must not retry an ambiguous start, reassign an uncertain dispatch, or run a recovery loop to resubmit failed launches. Reads used for sizing, listing, or awaiting native provisioning are not launch retries.
 
 Providers need no durable submission journal, stored decline decisions, replay cache, or fixed retention period. Native idempotency keys or deterministic resource names may be used as an additional safeguard, but the protocol does not require duplicate detection, comparison of old inputs, or replay of previous results. Duplicate caller submissions are outside this contract.
 
-If an accepted launch is lost or fails to start, c2j/JobDB remains authoritative about outstanding work. Pulse discovers the still-runnable job and can make a fresh attempt after cooldown. If an executor claimed work and then failed, subsequent readiness depends on c2j/JobDB's lease and recovery rules. Providers do not query JobDB or repair jobs, and Pulse does not infer recovery from instance lists.
+If an accepted launch is lost or fails to start, c2j/JobDB remains authoritative about outstanding work. Pulse waits for the supplied lease to expire before acquiring a replacement. If c2j starts, it renews and owns that lease until completion, rescheduling, or loss. Providers do not query JobDB or repair jobs, and Pulse does not infer recovery from instance lists.
 
-This is an at-most-once **submission-attempt policy**, not an exactly-once execution guarantee. A runtime may start an earlier attempt late, or Pulse may restart and lose its cooldown. c2j checks readiness, leases, and resource compatibility when a container starts; overlapping attempts can still consume additional compute.
+This is an at-most-once **submission-attempt policy**, not an exactly-once execution guarantee. A runtime may start an earlier attempt late. c2j rejects an expired or superseded supplied lease and never claims replacement work. Late containers can consume startup compute, and lease loss still requires application idempotency for external side effects. Controller restarts do not erase JobDB ownership.
 
 ### Handoff, queues, and deadlines
 
@@ -214,7 +218,7 @@ Prefer prompt handoff to the underlying runtime, without a separate provider bac
 
 A provider that deliberately holds its own queue for runners must require `start_before` and prevent container startup at or after that timestamp. Expire missed queue entries without launching them; no retained terminal record is required. Without a deadline, dispatch directly or return `unsupported` if provider-owned queueing is the only option. Queueing is optional; return `no_capacity` when fallback is preferable.
 
-`start_before`, when supplied, always constrains actual container startup, not just handoff to another system. A provider that cannot enforce it must return `unsupported`. Native cloud handoff can omit it. Pulse sets it through `defaults.start_window`, which must be positive and no longer than `cooldown`. No universal startup deadline is imposed when it is absent. `timeout_seconds` remains a separate limit measured after startup; an HTTP call timeout is neither of these deadlines.
+`start_before`, when supplied, always constrains actual container startup, not just handoff to another system. A provider that cannot enforce it must return `unsupported`. Native cloud handoff can omit it. Pulse sets it through `defaults.start_window`, which must be positive and no longer than `lease_duration`. No universal startup deadline is imposed when it is absent. `timeout_seconds` remains a separate limit measured after startup; an HTTP call timeout is neither of these deadlines.
 
 ## Active instance listing
 

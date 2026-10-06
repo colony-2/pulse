@@ -54,16 +54,19 @@ func TestPartialFallbackPreservesRequestAndProcess(t *testing.T) {
 		return []compute.Submission{{LaunchID: ls[0].LaunchID, Status: compute.Accepted}}, nil
 	}}
 	s := New(time.Minute, time.Second)
-	r, e := s.Run(context.Background(), "scope", []Service{{"a", 1, a}, {"b", 2, b}}, jobs(2))
+	batch := jobs(2)
+	for i := range batch {
+		batch[i].Process.Stdin = compute.SecretInput("lease-secret-" + batch[i].Key.Job)
+	}
+	r, e := s.Run(context.Background(), "scope", []Service{{"a", 1, a}, {"b", 2, b}}, batch)
 	if e != nil || len(r) != 2 {
 		t.Fatal(r, e)
 	}
 	if !reflect.DeepEqual(calls, [][]string{{"a", "a", "b"}, {"b", "b"}}) {
 		t.Fatal(calls)
 	}
-	r, e = s.Run(context.Background(), "scope", []Service{{"a", 1, a}}, jobs(2))
-	if e != nil || len(r) != 0 {
-		t.Fatal("cooldown", r, e)
+	if !s.Eligible(batch[0].Key) || len(s.Cooldowns()) != 0 {
+		t.Fatal("accepted launch retained cooldown")
 	}
 }
 func TestUnknownPartialAndDuplicateResultsDoNotFallThrough(t *testing.T) {
@@ -199,7 +202,10 @@ func TestCooldownInspectionDoesNotChangeEligibility(t *testing.T) {
 	now := time.Now()
 	s.Now = func() time.Time { return now }
 	calls := [][]string{}
-	if _, err := s.Run(context.Background(), "scope", []Service{{"p", 1, &fake{calls: &calls, name: "p"}}}, jobs(1)); err != nil {
+	decline := &fake{calls: &calls, name: "p", submit: func(ls []compute.Launch) ([]compute.Submission, error) {
+		return []compute.Submission{{LaunchID: ls[0].LaunchID, Status: compute.NoCapacity}}, nil
+	}}
+	if _, err := s.Run(context.Background(), "scope", []Service{{"p", 1, decline}}, jobs(1)); err != nil {
 		t.Fatal(err)
 	}
 	before := s.Cooldowns()
@@ -217,5 +223,219 @@ func TestCooldownInspectionDoesNotChangeEligibility(t *testing.T) {
 	}
 	if len(s.entries) != 1 {
 		t.Fatal("inspection pruned storage")
+	}
+}
+
+func TestCancellationBeforeSubmissionReleasesWithLiveContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batch := jobs(1)
+	released := false
+	batch[0].Prepare = func(_ context.Context, r compute.Request) (compute.Launch, func(context.Context) error, error) {
+		cancel()
+		return compute.Launch{Request: r, Process: batch[0].Process}, func(cleanup context.Context) error {
+			released = true
+			if cleanup.Err() != nil {
+				t.Fatal("cleanup inherited cancelled context")
+			}
+			if _, ok := cleanup.Deadline(); !ok {
+				t.Fatal("cleanup missing deadline")
+			}
+			return nil
+		}, nil
+	}
+	calls := [][]string{}
+	_, err := New(time.Minute, time.Second).Run(ctx, "scope", []Service{{"p", 1, &fake{calls: &calls}}}, batch)
+	if !errors.Is(err, context.Canceled) || !released || len(calls) != 0 {
+		t.Fatal("incorrect cancelled handoff", err, released, calls)
+	}
+}
+
+func TestNoLeaseSkipsSubmissionAndCooldown(t *testing.T) {
+	batch := jobs(1)
+	batch[0].Prepare = func(context.Context, compute.Request) (compute.Launch, func(context.Context) error, error) {
+		return compute.Launch{}, nil, ErrNotEligible
+	}
+	calls := [][]string{}
+	s := New(time.Minute, time.Second)
+	_, err := s.Run(context.Background(), "scope", []Service{{"p", 1, &fake{calls: &calls}}}, batch)
+	if err != nil || len(calls) != 0 || !s.Eligible(batch[0].Key) {
+		t.Fatal("stale listing submitted or backed off", err, calls)
+	}
+}
+
+func TestLeaseCleanupOnlyAfterDefiniteNonStart(t *testing.T) {
+	for _, status := range []compute.Status{compute.Accepted, compute.Unknown, compute.NoCapacity, compute.Rejected, compute.Unsupported, compute.Unavailable} {
+		t.Run(string(status), func(t *testing.T) {
+			calls := [][]string{}
+			prepared, released := 0, 0
+			batch := jobs(1)
+			batch[0].Prepare = func(ctx context.Context, r compute.Request) (compute.Launch, func(context.Context) error, error) {
+				prepared++
+				return compute.Launch{Request: r, Process: batch[0].Process}, func(ctx context.Context) error { released++; return ctx.Err() }, nil
+			}
+			p := &fake{calls: &calls, name: "p", submit: func(ls []compute.Launch) ([]compute.Submission, error) {
+				if prepared != 1 {
+					t.Fatal("submitted before acquiring lease")
+				}
+				return []compute.Submission{{LaunchID: ls[0].LaunchID, Status: status}}, nil
+			}}
+			s := New(time.Minute, time.Second)
+			if _, err := s.Run(context.Background(), "scope", []Service{{"p", 1, p}}, batch); err != nil {
+				t.Fatal(err)
+			}
+			definite := status != compute.Accepted && status != compute.Unknown
+			if (released == 1) != definite || s.Eligible(batch[0].Key) == definite {
+				t.Fatal("incorrect release or backoff", released, status)
+			}
+		})
+	}
+}
+
+func TestCancelledSubmissionRetainsLease(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	calls := [][]string{}
+	released := false
+	batch := jobs(1)
+	batch[0].Prepare = func(ctx context.Context, r compute.Request) (compute.Launch, func(context.Context) error, error) {
+		return compute.Launch{Request: r, Process: batch[0].Process}, func(context.Context) error { released = true; return nil }, nil
+	}
+	p := &fake{calls: &calls, submit: func([]compute.Launch) ([]compute.Submission, error) { cancel(); return nil, ctx.Err() }}
+	r, _ := New(time.Minute, time.Second).Run(ctx, "scope", []Service{{"p", 1, p}}, batch)
+	if released || r[0].Submission.Status != compute.Unknown {
+		t.Fatal("released potentially used lease")
+	}
+}
+
+func TestPreparationFailureReleasesWithoutSubmitting(t *testing.T) {
+	calls := [][]string{}
+	batch := jobs(1)
+	released := false
+	batch[0].Prepare = func(ctx context.Context, r compute.Request) (compute.Launch, func(context.Context) error, error) {
+		return compute.Launch{}, func(context.Context) error { released = true; return nil }, errors.New("invalid leased allocation")
+	}
+	_, err := New(time.Minute, time.Second).Run(context.Background(), "scope", []Service{{"p", 1, &fake{calls: &calls}}}, batch)
+	if err != nil || !released || len(calls) != 0 {
+		t.Fatal("unsafe preparation failure", err)
+	}
+}
+
+func TestClaimsRunConcurrentlyWithinLimit(t *testing.T) {
+	s := New(time.Minute, time.Second)
+	s.ClaimConcurrency = 2
+	batch := jobs(6)
+	entered := make(chan string, len(batch))
+	permits := make(chan struct{})
+	for i := range batch {
+		job := batch[i]
+		batch[i].Prepare = func(ctx context.Context, r compute.Request) (compute.Launch, func(context.Context) error, error) {
+			entered <- job.Key.Job
+			select {
+			case <-permits:
+				return compute.Launch{Request: r, Process: job.Process}, nil, nil
+			case <-ctx.Done():
+				return compute.Launch{}, nil, ctx.Err()
+			}
+		}
+	}
+	calls := [][]string{}
+	p := &fake{calls: &calls, submit: func(ls []compute.Launch) ([]compute.Submission, error) {
+		if len(ls) != len(batch) {
+			t.Error("batch was split", len(ls))
+		}
+		out := make([]compute.Submission, len(ls))
+		for i, l := range ls {
+			if l.Metadata["job"] != batch[i].Key.Job {
+				t.Error("completion order changed placement order")
+			}
+			out[i] = compute.Submission{LaunchID: l.LaunchID, Status: compute.Accepted}
+		}
+		return out, nil
+	}}
+	done := make(chan error, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	go func() { _, err := s.Run(ctx, "scope", []Service{{"p", 1, p}}, batch); done <- err }()
+	awaitClaim := func() {
+		t.Helper()
+		select {
+		case <-entered:
+		case <-ctx.Done():
+			t.Fatal("claims did not run concurrently")
+		}
+	}
+	awaitClaim()
+	awaitClaim()
+	select {
+	case <-entered:
+		t.Fatal("exceeded concurrency cap")
+	case <-time.After(20 * time.Millisecond):
+	}
+	permits <- struct{}{}
+	awaitClaim() // A completed claim opens exactly one slot.
+	close(permits)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 {
+		t.Fatal("expected one provider batch", calls)
+	}
+}
+
+func TestClaimWindowLetsInflightClaimsFinish(t *testing.T) {
+	s := New(time.Minute, time.Second)
+	s.ClaimConcurrency = 1
+	s.ClaimTimeout = 100 * time.Millisecond
+	now := time.Now()
+	s.Now = func() time.Time { return now }
+	batch := jobs(4)
+	claims := 0
+	for i := range batch {
+		job := batch[i]
+		batch[i].Prepare = func(ctx context.Context, r compute.Request) (compute.Launch, func(context.Context) error, error) {
+			claims++
+			if job.Key == batch[1].Key {
+				// The window closes while this claim is in flight. It still has its
+				// normal per-call timeout and its successful lease must be submitted.
+				now = now.Add(s.ClaimTimeout)
+				deadline, ok := ctx.Deadline()
+				if !ok || time.Until(deadline) < s.CallTimeout/2 || ctx.Err() != nil {
+					t.Error("claim window shortened an in-flight request")
+				}
+			}
+			return compute.Launch{Request: r, Process: job.Process}, func(context.Context) error { t.Error("released submitted lease"); return nil }, nil
+		}
+	}
+	calls := [][]string{}
+	p := &fake{calls: &calls, submit: func(ls []compute.Launch) ([]compute.Submission, error) {
+		if len(ls) != 2 || ls[0].Metadata["job"] != "a" || ls[1].Metadata["job"] != "b" {
+			t.Fatal("incorrect partial claim batch", ls)
+		}
+		return []compute.Submission{{LaunchID: ls[0].LaunchID, Status: compute.Accepted}, {LaunchID: ls[1].LaunchID, Status: compute.Accepted}}, nil
+	}}
+	results, err := s.Run(context.Background(), "scope", []Service{{"p", 1, p}}, batch)
+	if err != nil || claims != 2 || len(results) != 2 || len(calls) != 1 {
+		t.Fatal(err, claims, results, calls)
+	}
+	for _, j := range batch[2:] {
+		if !s.Eligible(j.Key) {
+			t.Fatal("untouched job incorrectly backed off")
+		}
+	}
+}
+
+func TestOversizedBatchNeverClaims(t *testing.T) {
+	batch := jobs(compute.MaxBatch + 1)
+	for i := range batch {
+		batch[i].Prepare = func(context.Context, compute.Request) (compute.Launch, func(context.Context) error, error) {
+			t.Fatal("oversized batch claimed")
+			return compute.Launch{}, nil, nil
+		}
+	}
+	calls := [][]string{}
+	_, err := New(time.Minute, time.Second).Run(context.Background(), "scope", []Service{{"p", 1, &fake{calls: &calls}}}, batch)
+	if err == nil || len(calls) != 0 {
+		t.Fatal("oversized batch accepted", err)
 	}
 }

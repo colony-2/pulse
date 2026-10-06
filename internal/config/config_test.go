@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const valid = `defaults:
@@ -152,5 +153,55 @@ func TestConfigurationSourceSelection(t *testing.T) {
 	}
 	if cfg.Defaults.Env["LITERAL"] != "${SHOULD_NOT_EXPAND}" {
 		t.Fatal("configuration was expanded")
+	}
+}
+
+func TestLeaseDurationAndStartWindow(t *testing.T) {
+	for _, tc := range []struct {
+		lease, window string
+		valid         bool
+	}{
+		{"", "", true}, {"1s", "1s", true}, {"24h", "2m", true},
+		{"5m", "2m", true}, {"5m", "6m", false}, {"0s", "", false},
+		{"500ms", "", false}, {"25h", "", false}, {"invalid", "", false},
+	} {
+		t.Run(tc.lease+"/"+tc.window, func(t *testing.T) {
+			data := valid
+			if tc.lease != "" {
+				data += "lease_duration: " + tc.lease + "\n"
+			}
+			if tc.window != "" {
+				data = strings.Replace(data, "defaults:\n", "defaults:\n  start_window: "+tc.window+"\n", 1)
+			}
+			cfg, err := Parse([]byte(data))
+			if (err == nil) != tc.valid {
+				t.Fatal(err)
+			}
+			if err == nil && tc.lease == "" && cfg.Lease != 5*time.Minute {
+				t.Fatal("incorrect lease default")
+			}
+		})
+	}
+}
+
+func TestClaimBatchLimits(t *testing.T) {
+	cfg, err := Parse([]byte(valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ClaimConcurrency != 8 || cfg.Claim != 5*time.Second || cfg.BatchSize != 100 {
+		t.Fatal("wrong claim defaults")
+	}
+	cfg, err = Parse([]byte(valid + "claim_concurrency: 3\nclaim_timeout: 250ms\nbatch_size: 12\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ClaimConcurrency != 3 || cfg.Claim != 250*time.Millisecond || cfg.BatchSize != 12 {
+		t.Fatal("claim settings ignored")
+	}
+	for _, extra := range []string{"claim_concurrency: -1\n", "claim_concurrency: 101\n", "claim_timeout: 0s\n", "claim_timeout: -1s\n", "claim_timeout: invalid\n", "batch_size: 101\n"} {
+		if _, err := Parse([]byte(valid + extra)); err == nil {
+			t.Fatal("invalid limit accepted", extra)
+		}
 	}
 }

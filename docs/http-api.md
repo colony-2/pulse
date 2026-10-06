@@ -171,7 +171,7 @@ Each HTTP listing request has a total deadline of `call_timeout`. Pulse permits 
 }
 ```
 
-Expired entries are hidden unless an attempt is still in flight. `eligible_at` is the cooldown deadline; an in-flight attempt still prevents another submission after that time. Reading does not prune or clear scheduler entries. Cooldowns reset on process restart.
+Expired entries are hidden unless an attempt is still in flight. `eligible_at` is the cooldown deadline; an in-flight attempt still prevents another submission after that time. Reading does not prune or clear scheduler entries. Failure cooldowns reset on process restart. Accepted/uncertain launches have no cooldown entry after submission; JobDB holds their lease ownership. Definite non-starts also persist backoff when releasing the lease. This endpoint is not a list of active JobDB leases.
 
 ### Round-robin state
 
