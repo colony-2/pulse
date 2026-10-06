@@ -19,9 +19,9 @@ Requires Node.js 22+, `tar`, enabled install scripts, and HTTPS access to GitHub
 
 ### Native executable
 
-Download your platform's archive from [GitHub Releases](https://github.com/colony-2/pulse/releases), verify it against `checksums.txt`, and put `pulse` on your `PATH`. Native executables need no Node.js. Linux archives also contain the `pulse-exec` helper used by Docker and the cloud providers.
+Download your platform's archive from [GitHub Releases](https://github.com/colony-2/pulse/releases), verify it against `checksums.txt`, and put `pulse` on your `PATH`. Native executables need no Node.js. All archives also contain a Linux `pulse-exec` helper for containers; keep it beside `pulse` when using local Docker.
 
-Linux and macOS are supported on AMD64 and ARM64. Container images support Linux AMD64 and ARM64. The local Docker provider requires a Linux controller.
+Linux and macOS are supported on AMD64 and ARM64. Container images support Linux AMD64 and ARM64. The local Docker provider supports Linux servers and Docker Desktop on macOS, using Pulse's automatic Docker socket/context discovery.
 
 ## Quick start
 
@@ -95,7 +95,7 @@ targets:
 
 Define these service names under `providers` and supply `JOBDB_TOKEN` for authenticated JobDB discovery and lease acquisition. Pulse never passes this broad credential to the executor. Omit `jobdb_token_env` for an unauthenticated deployment. Provider authentication is configured separately.
 
-When `providers` is omitted or empty, Pulse defaults to a local provider named `docker`; targets without `launch_services` use it at priority 1. The default pool runs one job at a time, with a budget sized for the default job plus 256 MiB memory overhead. Install `pulse-exec` beside `pulse` or on `PATH`, and provide access to the local Linux Docker socket. See [Docker defaults and overrides](docs/providers.md#local-docker-capacity).
+When `providers` is omitted or empty, Pulse defaults to a local provider named `docker`; targets without `launch_services` use it at priority 1. The default pool runs one job at a time, with a budget sized for the default job plus 256 MiB memory overhead. Install the Linux `pulse-exec` helper beside `pulse` or on `PATH`, and start Docker Engine or Docker Desktop. See [Docker defaults and overrides](docs/providers.md#local-docker-capacity).
 
 Defaults are a 5-second poll interval, a 5-minute lease duration, 60-second provisioning-failure backoff, and batches of at most 100 jobs. Claims run with up to 8 concurrent calls and a 5-second claim window; configure these with `claim_concurrency`, `claim_timeout`, and `batch_size`. Pulse acquires the lease before submission and does not renew it; c2j renews the supplied lease on startup. Accepted or uncertain starts rely on lease expiry for recovery. Definite non-starts release the lease with backoff. In-memory cooldowns suppress failures only; JobDB ownership survives controller restarts. See [configuration details](docs/configuration.md) and the complete [examples](examples).
 

@@ -2,7 +2,7 @@
 build:
 	mkdir -p bin
 	go build -o bin/pulse ./cmd/pulse
-	CGO_ENABLED=0 go build -o bin/pulse-exec ./cmd/pulse-exec
+	CGO_ENABLED=0 GOOS=linux go build -o bin/pulse-exec ./cmd/pulse-exec
 
 test:
 	go test -race ./...

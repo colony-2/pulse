@@ -9,39 +9,46 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/providers"
+	dockerprovider "github.com/colony-2/pulse/internal/providers/docker"
 	"github.com/colony-2/pulse/pkg/compute"
 )
 
-// This test requires a real, local Linux daemon and fails if containers cannot
-// execute. It runs in the ordinary Go suite on every platform the provider supports.
+// This test uses Pulse's default Docker discovery and requires real containers.
+// Docker Desktop on macOS and local Linux daemons run the same test, without opt-in.
 func TestDockerIntegration(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("the local Docker provider requires Linux")
+	socket, err := dockerprovider.ResolveSocket("")
+	if err != nil {
+		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	docker := func(t *testing.T, args ...string) string {
 		t.Helper()
-		// Match the provider's default socket, regardless of CLI context settings.
-		cmd := exec.CommandContext(ctx, "docker", append([]string{"--host", "unix:///var/run/docker.sock"}, args...)...)
+		// Inspection and cleanup use the endpoint selected by Pulse itself.
+		cmd := exec.CommandContext(ctx, "docker", append([]string{"--host", socket}, args...)...)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("docker %v: %v\n%s", args, err, out)
 		}
 		return strings.TrimSpace(string(out))
 	}
-	docker(t, "info")
+	platform := docker(t, "info", "--format", "{{.OSType}}/{{.Architecture}}")
+	platform = strings.ReplaceAll(strings.ReplaceAll(platform, "aarch64", "arm64"), "x86_64", "amd64")
+	goos, arch, ok := strings.Cut(platform, "/")
+	if !ok || goos != "linux" || (arch != "amd64" && arch != "arm64") {
+		t.Fatalf("unsupported Docker daemon platform: %s", platform)
+	}
+	t.Logf("running real container jobs through Pulse defaults: %s (%s)", socket, platform)
 	dir := t.TempDir()
 	helper := filepath.Join(dir, "pulse-exec")
 	build := exec.CommandContext(ctx, "go", "build", "-o", helper, "../../cmd/pulse-exec")
-	build.Env = append(os.Environ(), "CGO_ENABLED=0")
+	build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build supervisor: %v\n%s", err, out)
 	}
@@ -50,7 +57,7 @@ func TestDockerIntegration(t *testing.T) {
 	// construction, helper discovery, and image pull path used by Pulse.
 	data := fmt.Sprintf(`defaults:
   image: alpine:3.21
-  platform: linux/%s
+  platform: %s
   cpu: "100m"
   memory: 32Mi
   scratch: 8Mi
@@ -58,7 +65,7 @@ targets:
   - instance_id: docker-integration
     jobdb: http://localhost/acme
     cells: [github.com/acme/app]
-`, runtime.GOARCH)
+`, platform)
 	cfg, err := config.Parse([]byte(data))
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +79,7 @@ targets:
 		}
 		cmd := exec.CommandContext(ctx, binary, "-check")
 		cmd.Dir = dir
-		cmd.Env = []string{"PULSE_CONFIG=" + data, "PATH=" + t.TempDir()}
+		cmd.Env = append(os.Environ(), "PULSE_CONFIG="+data, "PATH="+t.TempDir())
 		out, err := cmd.CombinedOutput()
 		if err != nil || !strings.Contains(string(out), "providers are valid") {
 			t.Fatalf("default Docker CLI initialization: %v\n%s", err, out)
@@ -99,11 +106,11 @@ targets:
 			cleanupCtx, stop := context.WithTimeout(context.Background(), 15*time.Second)
 			defer stop()
 			if t.Failed() {
-				cmd := exec.CommandContext(cleanupCtx, "docker", "--host", "unix:///var/run/docker.sock", "inspect", "--format", "{{json .State}}", name)
+				cmd := exec.CommandContext(cleanupCtx, "docker", "--host", socket, "inspect", "--format", "{{json .State}}", name)
 				out, _ := cmd.CombinedOutput()
 				t.Logf("container state: %s", out)
 			}
-			cmd := exec.CommandContext(cleanupCtx, "docker", "--host", "unix:///var/run/docker.sock", "rm", "-f", name)
+			cmd := exec.CommandContext(cleanupCtx, "docker", "--host", socket, "rm", "-f", name)
 			out, err := cmd.CombinedOutput()
 			if err != nil && !strings.Contains(string(out), "No such container") {
 				t.Errorf("cleanup %s: %v: %s", name, err, out)

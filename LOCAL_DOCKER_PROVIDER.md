@@ -6,7 +6,7 @@ Status: design for the built-in `docker` adapter. See [README.md](README.md) for
 
 Docker containers have no resource constraints by default; CPU and memory limits bound individual containers. Our admission policy must also bound the sum of their allocations. Use a configured pool budget rather than admitting work based on low instantaneous utilization. See [Docker resource constraints](https://docs.docker.com/engine/containers/resource_constraints/).
 
-Initial scope: a local Linux Docker Engine. CPU, memory, and swap limits are applied when available. If the daemon cannot enforce them, Pulse warns at startup and runs without those limits while retaining admission accounting, bounded tmpfs, and execution deadlines. One Pulse process owns admission to that daemon. Configure an explicit budget after leaving headroom for the host, Docker, image operations, and other workloads:
+Initial scope: a Linux Docker Engine on a local server or in Docker Desktop on macOS. Pulse discovers the local socket through its core Docker context/environment handling; see [provider setup](docs/providers.md#local-docker-capacity). CPU, memory, and swap limits are applied when available. If the daemon cannot enforce them, Pulse warns at startup and runs without those limits while retaining admission accounting, bounded tmpfs, and execution deadlines. One Pulse process owns admission to that daemon. Configure an explicit budget after leaving headroom for the host, Docker, image operations, and other workloads:
 
 ```yaml
 providers:

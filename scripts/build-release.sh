@@ -9,8 +9,7 @@ for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
   mkdir -p "$out"
   CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -buildvcs=false \
     -ldflags "-s -w -X main.version=$version" -o "$out/pulse" ./cmd/pulse
-  if [[ "$goos" == linux ]]; then
-    CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath -buildvcs=false \
-      -ldflags '-s -w' -o "$out/pulse-exec" ./cmd/pulse-exec
-  fi
+  # The helper executes inside Linux containers, including with Docker Desktop.
+  CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" go build -trimpath -buildvcs=false \
+    -ldflags '-s -w' -o "$out/pulse-exec" ./cmd/pulse-exec
 done

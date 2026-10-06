@@ -4,7 +4,7 @@ See the [README](README.md) for installation and use. This guide covers building
 
 ## Development setup
 
-Use Go 1.26 or newer. Packaging checks also require Node.js 22+, Python 3, and standard Unix archive tools. Docker with Buildx is needed for container smoke checks.
+Use Go 1.26 or newer and a running Docker Engine on Linux or Docker Desktop on macOS. Packaging checks also require Node.js 22+, Python 3, and standard Unix archive tools. Docker with Buildx is needed for container smoke checks.
 
 ```sh
 make build          # bin/pulse and bin/pulse-exec
@@ -31,15 +31,15 @@ python3 -m venv /tmp/pulse-protocol-venv
 /tmp/pulse-protocol-venv/bin/python scripts/validate_protocol.py
 ```
 
-Cloud adapter tests use HTTP doubles for native APIs and credential endpoints. Docker unit tests use a fake daemon API. On Linux, ordinary `go test ./...` also runs real Docker integration tests by default. To run just that test:
+Cloud adapter tests use HTTP doubles for native APIs and credential endpoints. Docker unit tests use a fake daemon API. On Linux and macOS, ordinary `go test ./...` also runs real Docker integration tests by default. To confirm container execution with uncached, verbose output:
 
 ```sh
 go test -race -count=1 -timeout=5m -run '^TestDockerIntegration$' -v ./internal/providers
 ```
 
-This builds the static supervisor and submits real containers through the default Docker provider. It checks process output, stdin and environment delivery, working directory, tmpfs and resource configuration, nonzero exits, timeout enforcement, restart accounting, capacity reuse, and active-instance listing. Resource assertions check either enforced limits or the startup warning and recorded fallback mode, depending on daemon capabilities. Unit tests cover both modes, probe failures, cleanup, and recovery across capability changes. The integration test requires a local Linux daemon at `/var/run/docker.sock`, permission to use it, daemon access to the test's temporary helper path, and access to pull `alpine:3.21`. It removes its containers and temporary probe images. Missing or unusable Docker fails the Linux suite; non-Linux platforms skip this test because the local provider supports only Linux. Live cloud IAM, networking, image access, resource enforcement, and workload execution require deployment acceptance checks; report which checks you actually ran.
+This uses Pulse's core socket/context discovery and default provider configuration, builds a static Linux supervisor for the daemon's architecture, and submits real containers. No socket override or opt-in flag is required. Verbose output reports the selected socket/platform and a `PASS` for each execution subtest. It checks process output, stdin and environment delivery, working directory, tmpfs and resource configuration, nonzero exits, timeout enforcement, restart accounting, capacity reuse, and active-instance listing. Resource assertions check either enforced limits or the startup warning and recorded fallback mode, depending on daemon capabilities. Unit tests cover both modes, socket/context selection, probe failures, cleanup, and recovery across capability changes. The integration test requires the Docker CLI for inspection and cleanup, permission to use the daemon, daemon access to the test's temporary helper path, and access to pull `alpine:3.21`. It removes its containers and temporary probe images. Missing or unusable Docker fails the suite, including on macOS. Live cloud IAM, networking, image access, resource enforcement, and workload execution require deployment acceptance checks; report which checks you actually ran.
 
-CI runs Go checks on Linux AMD64, Linux ARM64, and macOS, executes Docker jobs on both Linux architectures, cross-compiles all four release executables, tests npm installation, and smoke-tests both container architectures. See [the test workflow](.github/workflows/test.yaml).
+CI runs Go checks and real Docker jobs on Linux AMD64, Linux ARM64, and macOS Intel (using Colima for the CI daemon), cross-compiles all four release executables, tests npm installation, and smoke-tests both container architectures. See [the test workflow](.github/workflows/test.yaml).
 
 ## Build container images
 

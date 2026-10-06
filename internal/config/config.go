@@ -263,9 +263,6 @@ func Parse(b []byte) (*Config, error) {
 			return nil, fmt.Errorf("unknown provider type %q", p.Type)
 		}
 		if p.Type == "docker" {
-			if p.Socket == "" {
-				p.Socket = "unix:///var/run/docker.sock"
-			}
 			if p.Overhead == "" {
 				p.Overhead = "256Mi"
 			}

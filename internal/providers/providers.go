@@ -50,6 +50,10 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]compute.Provider
 			}
 			out[name] = c
 		case "docker":
+			socket, e := docker.ResolveSocket(p.Socket)
+			if e != nil {
+				return fail(e)
+			}
 			cpu, e := quantity.Parse(p.Capacity.CPU, true)
 			if e != nil {
 				return fail(e)
@@ -65,8 +69,8 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]compute.Provider
 					return fail(e)
 				}
 			}
-			dc := docker.Config{Socket: p.Socket, Helper: p.Helper, LockDir: p.LockDir, ScratchPath: p.ScratchPath, RegistryAuth: os.Getenv(p.RegistryAuthEnv), CPUMillis: cpu, MemoryBytes: mem, Overhead: overhead, MaxContainers: p.Capacity.MaxContainers}
-			if prior, ok := locals[p.Socket]; ok {
+			dc := docker.Config{Socket: socket, Helper: p.Helper, LockDir: p.LockDir, ScratchPath: p.ScratchPath, RegistryAuth: os.Getenv(p.RegistryAuthEnv), CPUMillis: cpu, MemoryBytes: mem, Overhead: overhead, MaxContainers: p.Capacity.MaxContainers}
+			if prior, ok := locals[socket]; ok {
 				if prior.config != dc {
 					return fail(fmt.Errorf("Docker aliases must share an identical budget/configuration"))
 				}
@@ -78,7 +82,7 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]compute.Provider
 				return fail(e)
 			}
 			out[name] = c
-			locals[p.Socket] = local{dc, c}
+			locals[socket] = local{dc, c}
 			closers = append(closers, c.Close)
 		default:
 			bounds := map[string]int64{}

@@ -14,12 +14,11 @@ for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
   cp dist/build/"$goos-$goarch"/* "$stage/$target/"
   cp README.md LICENSE "$stage/$target/"
   cp -R examples "$stage/$target/"
-  entries=(pulse README.md LICENSE examples)
+  entries=(pulse pulse-exec README.md LICENSE examples)
   if [[ -d docs ]]; then
     cp -R docs "$stage/$target/"
     entries+=(docs)
   fi
-  if [[ "$goos" == linux ]]; then entries+=(pulse-exec); fi
   # Name the binary explicitly for the npm installer, not ./pulse.
   tar -C "$stage/$target" -czf "dist/release/pulse_${version}_${os_name}_${arch_name}.tar.gz" "${entries[@]}"
 done

@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -80,9 +79,11 @@ type container struct {
 }
 
 func New(ctx context.Context, cfg Config) (*Provider, error) {
-	if runtime.GOOS != "linux" || !strings.HasPrefix(cfg.Socket, "unix:///") {
-		return nil, fmt.Errorf("local Docker requires Linux and a Unix socket")
+	socket, err := ResolveSocket(cfg.Socket)
+	if err != nil {
+		return nil, err
 	}
+	cfg.Socket = socket
 	if cfg.Helper == "" {
 		// Release archives and the container image install both binaries together.
 		if executable, err := os.Executable(); err == nil {
@@ -108,6 +109,11 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 	stat, err := os.Stat(cfg.Helper)
 	if err != nil || stat.IsDir() || stat.Mode()&0111 == 0 {
 		return nil, fmt.Errorf("Docker helper is missing or not executable")
+	}
+	// Docker Desktop shares canonical host paths with its Linux VM.
+	cfg.Helper, err = filepath.EvalSymlinks(cfg.Helper)
+	if err != nil {
+		return nil, err
 	}
 	e := newEngine(cfg.Socket)
 	e.registryAuth = cfg.RegistryAuth

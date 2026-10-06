@@ -10,8 +10,8 @@ For `vX.Y.Z`:
 | --- | --- |
 | Linux AMD64 executable and supervisor | `pulse_X.Y.Z_Linux_x86_64.tar.gz` |
 | Linux ARM64 executable and supervisor | `pulse_X.Y.Z_Linux_arm64.tar.gz` |
-| macOS Intel executable | `pulse_X.Y.Z_Darwin_x86_64.tar.gz` |
-| macOS Apple Silicon executable | `pulse_X.Y.Z_Darwin_arm64.tar.gz` |
+| macOS Intel executable and Linux supervisor | `pulse_X.Y.Z_Darwin_x86_64.tar.gz` |
+| macOS Apple Silicon executable and Linux supervisor | `pulse_X.Y.Z_Darwin_arm64.tar.gz` |
 | npm package | `colony2-pulse-X.Y.Z.tgz`, also published as `@colony2/pulse@X.Y.Z` |
 | Multi-architecture image | `ghcr.io/colony-2/pulse:vX.Y.Z` |
 | Architecture-specific images | `ghcr.io/colony-2/pulse:vX.Y.Z-amd64` and `:vX.Y.Z-arm64` |

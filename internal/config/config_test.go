@@ -218,7 +218,7 @@ func TestDefaultDockerProvider(t *testing.T) {
 				t.Fatal(err)
 			}
 			p := cfg.Providers["docker"]
-			if len(cfg.Providers) != 1 || p.Type != "docker" || p.Socket != "unix:///var/run/docker.sock" || p.Capacity.CPU != "1000m" || p.Capacity.Memory != "2359296Ki" || p.Capacity.MaxContainers != 1 || p.Overhead != "256Mi" {
+			if len(cfg.Providers) != 1 || p.Type != "docker" || p.Socket != "" || p.Capacity.CPU != "1000m" || p.Capacity.Memory != "2359296Ki" || p.Capacity.MaxContainers != 1 || p.Overhead != "256Mi" {
 				t.Fatalf("unexpected Docker defaults: %+v", p)
 			}
 			if services := cfg.Targets[0].Services; len(services) != 1 || services[0] != (Service{Name: "docker", Priority: 1}) {
