@@ -75,7 +75,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 		t.Fatalf("build Pulse: %v\n%s", err, out)
 	}
 
-	for _, scenario := range []string{"success and heartbeat", "host gateway connectivity", "recipe failure", "recipe timeout", "lease import transport failure", "heartbeat transport failure"} {
+	for _, scenario := range []string{"success and heartbeat", "host gateway connectivity", "localhost JobDB", "recipe failure", "recipe timeout", "lease import transport failure", "heartbeat transport failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newDockerJobDB(t, ctx, docker)
 			run := "test \"$(cat README)\" = fixture; echo saved > result.txt; echo container-result"
@@ -134,7 +134,15 @@ func TestDockerC2JIntegration(t *testing.T) {
 					cmd.Env = append(cmd.Env, entry)
 				}
 			}
-			cmd.Env = append(cmd.Env, "C2J_JOBDB="+f.url+"/docker-test")
+			jobDB := f.url + "/docker-test"
+			if scenario == "localhost JobDB" {
+				_, port, err := net.SplitHostPort(strings.TrimPrefix(f.url, "http://"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				jobDB = "http://localhost:" + port + "/docker-test"
+			}
+			cmd.Env = append(cmd.Env, "C2J_JOBDB="+jobDB)
 			var out []byte
 			// Register before launch so an uncertain/failed submission is cleaned up too.
 			t.Cleanup(func() {
@@ -184,7 +192,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 				t.Fatal("executor continued after losing authority")
 			}
 			switch scenario {
-			case "success and heartbeat", "host gateway connectivity":
+			case "success and heartbeat", "host gateway connectivity", "localhost JobDB":
 				minimumRenewals := int32(2) // Import and runner validation.
 				if scenario == "success and heartbeat" {
 					minimumRenewals = 3 // Also require a background renewal.
@@ -269,6 +277,12 @@ func TestDockerC2JIntegration(t *testing.T) {
 				t.Fatalf("inspect: %v", err)
 			}
 			c := inspected[0]
+			if scenario == "localhost JobDB" {
+				want := strings.Replace(jobDB, "localhost", "host.docker.internal", 1)
+				if !strings.Contains(strings.Join(c.Config.Cmd, " "), "--jobdb "+want) || !strings.Contains(string(out), "worker_jobdb") {
+					t.Fatal("loopback JobDB endpoint was not adapted and logged", c.Config.Cmd, string(out))
+				}
+			}
 			if !c.HostConfig.AutoRemove || c.Config.Image != imageID || strings.Join(c.Config.Entrypoint, " ") != "c2j" || !strings.Contains(strings.Join(c.Config.Cmd, " "), "run with-lease") || len(c.HostConfig.Binds) != 0 || !strings.Contains(strings.Join(c.Config.Env, "\n"), "C2J_EXECUTION_IMAGE="+c2jIntegrationImage) {
 				t.Fatal("executor did not use the unmodified default image and direct c2j entrypoint")
 			}

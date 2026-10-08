@@ -66,7 +66,8 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 		scopeKey, _ := json.Marshal(serviceCfg)
 		services := []scheduler.Service{}
 		for _, s := range serviceCfg {
-			services = append(services, scheduler.Service{Name: s.Name, Priority: s.Priority, Provider: c.Providers[s.Name]})
+			provider := dockerJobDBEndpoint(c.Config.Providers[s.Name].Type, c.Providers[s.Name], t.JobDB, c.Log)
+			services = append(services, scheduler.Service{Name: s.Name, Priority: s.Priority, Provider: provider})
 		}
 		jobs := []scheduler.Job{}
 		token := ""
