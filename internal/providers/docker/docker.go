@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -48,6 +49,7 @@ type Provider struct {
 	lock       *os.File
 	closeOnce  sync.Once
 	unenforced bool
+	extraHosts []string
 }
 type nativePlan struct {
 	Request    compute.Request
@@ -123,6 +125,7 @@ func open(ctx context.Context, cfg Config, e *engine, locking bool) (*Provider, 
 		NCPU                                        int
 		MemTotal                                    int64
 		OSType, Architecture                        string
+		OperatingSystem, Name                       string
 		MemoryLimit, SwapLimit, CPUSet, CPUCfsQuota bool
 	}
 	if err := e.call(ctx, "GET", "/info", nil, &info); err != nil {
@@ -142,6 +145,7 @@ func open(ctx context.Context, cfg Config, e *engine, locking bool) (*Provider, 
 		return nil, fmt.Errorf("Docker budget exceeds daemon resources")
 	}
 	p := &Provider{cfg: cfg, e: e, platform: info.OSType + "/" + arch, gate: make(chan struct{}, 1), uncertain: map[string]charge{}}
+	p.extraHosts = hostGatewayMapping(runtime.GOOS, info.OperatingSystem, info.Name)
 	if !info.MemoryLimit || !info.SwapLimit || !info.CPUCfsQuota {
 		p.disableLimits("Docker reports CPU, memory, or swap limits unavailable")
 	}
@@ -407,6 +411,9 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 			cpu, memory = 0, 0
 		}
 		body := map[string]any{"Image": plan.ImageID, "Entrypoint": l.Process.Command, "Cmd": l.Process.Args, "OpenStdin": l.Process.Stdin != "", "StdinOnce": true, "AttachStdin": l.Process.Stdin != "", "Env": env, "Labels": labels, "WorkingDir": l.Process.WorkingDir, "HostConfig": map[string]any{"NanoCpus": cpu, "Memory": memory, "MemorySwap": memory, "RestartPolicy": map[string]any{"Name": "no"}, "AutoRemove": false, "Tmpfs": map[string]string{p.cfg.ScratchPath: fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes)}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "3"}}}}
+		if len(p.extraHosts) != 0 {
+			body["HostConfig"].(map[string]any)["ExtraHosts"] = p.extraHosts
+		}
 		sum := sha256.Sum256([]byte(l.LaunchID))
 		name := "pulse-" + hex.EncodeToString(sum[:16])
 		var created struct {

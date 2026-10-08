@@ -65,7 +65,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 		t.Fatalf("build Pulse: %v\n%s", err, out)
 	}
 
-	for _, scenario := range []string{"success and heartbeat", "recipe failure", "recipe timeout", "lease import transport failure", "heartbeat transport failure"} {
+	for _, scenario := range []string{"success and heartbeat", "host gateway connectivity", "recipe failure", "recipe timeout", "lease import transport failure", "heartbeat transport failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newDockerJobDB(t, ctx, docker)
 			run := "test \"$(cat README)\" = fixture; echo saved > result.txt; echo container-result"
@@ -75,6 +75,13 @@ func TestDockerC2JIntegration(t *testing.T) {
 				// Wait for a real background renewal before allowing the command to
 				// complete. There is no sleep-based assumption about VM startup speed.
 				run = "curl --fail --silent '" + f.url + "/gate'; " + run
+			case "host gateway connectivity":
+				_, port, err := net.SplitHostPort(strings.TrimPrefix(f.url, "http://"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				gateway := "http://" + net.JoinHostPort("host.docker.internal", port)
+				run = "test \"$(curl --fail --silent '" + gateway + "/healthz')\" = pulse-jobdb-fixture; " + run
 			case "recipe failure":
 				run = "echo intentional-recipe-failure >&2; exit 23"
 			case "recipe timeout":
@@ -87,6 +94,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 				f.dropHeartbeat.Store(true)
 				run = "curl --fail --silent '" + f.url + "/gate'; curl --fail '" + f.url + "/forbidden'"
 			}
+			run = "set -eu; " + run
 			rec, err := recipe.LoadRecipeFromString([]byte("id: docker-executor\n" + extra + "op: command_execution\ninputs:\n  run: " + fmt.Sprintf("%q", run) + "\noutputs:\n  result: '${{ op.outputs.stdout }}'\n"))
 			if err != nil {
 				t.Fatal(err)
@@ -164,8 +172,12 @@ func TestDockerC2JIntegration(t *testing.T) {
 				t.Fatal("executor continued after losing authority")
 			}
 			switch scenario {
-			case "success and heartbeat":
-				if code != "0" || resultErr != nil || info.Status != jobdb.JobStatusCompleted || !strings.Contains(string(data), "container-result") || f.renewals.Load() < 3 {
+			case "success and heartbeat", "host gateway connectivity":
+				minimumRenewals := int32(2) // Import and runner validation.
+				if scenario == "success and heartbeat" {
+					minimumRenewals = 3 // Also require a background renewal.
+				}
+				if code != "0" || resultErr != nil || info.Status != jobdb.JobStatusCompleted || !strings.Contains(string(data), "container-result") || f.renewals.Load() < minimumRenewals {
 					t.Fatalf("job did not complete through the supplied lease: exit=%s status=%s data=%s\n%s", code, info.Status, data, logs)
 				}
 				chapters, err := f.backend.ListChapters(ctx, jobdb.ListChaptersRequest{JobKey: key})
