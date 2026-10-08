@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.5
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.99.0
 	github.com/colony-2/c2j v0.0.63-0.20261006024550-6709c8de92f6
-	github.com/colony-2/jobdb v0.0.26
+	github.com/colony-2/jobdb v0.0.27
 	github.com/distribution/reference v0.6.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/spf13/cobra v1.10.2
