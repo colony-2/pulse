@@ -153,7 +153,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 						logs, _ := exec.CommandContext(cleanup, "docker", "--host", socket, "logs", id).CombinedOutput()
 						t.Logf("c2j container logs:\n%s", logs)
 					}
-					if output, err := exec.CommandContext(cleanup, "docker", "--host", socket, "rm", "-f", id).CombinedOutput(); err != nil {
+					if output, err := exec.CommandContext(cleanup, "docker", "--host", socket, "rm", "-f", id).CombinedOutput(); err != nil && !strings.Contains(string(output), "No such container") {
 						t.Errorf("cleanup: %v\n%s", err, output)
 					}
 				}
@@ -167,8 +167,10 @@ func TestDockerC2JIntegration(t *testing.T) {
 				t.Fatalf("expected one launched c2j container, got %v\nPulse: %s", ids, out)
 			}
 			id := ids[0]
-			code := docker(t, "wait", id)
-			logs := docker(t, "logs", id)
+			observation := observeDocker(t, ctx, socket, id)
+			close(f.observed)
+			code, logs := observation.finish(t, ctx)
+			t.Logf("c2j container logs:\n%s", logs)
 			info, err := f.backend.GetJob(ctx, key)
 			if err != nil {
 				t.Fatal(err)
@@ -229,7 +231,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 				if output, err := again.CombinedOutput(); err != nil {
 					t.Fatalf("second Pulse pass: %v\n%s", err, output)
 				}
-				if ids := strings.Fields(docker(t, "ps", "-aq", "--filter", "label=pulse_job_id="+key.JobId)); len(ids) != 1 || f.claims.Load() != 1 {
+				if ids := strings.Fields(docker(t, "ps", "-aq", "--filter", "label=pulse_job_id="+key.JobId)); len(ids) != 0 || f.claims.Load() != 1 {
 					t.Fatal("completed job was claimed or launched again")
 				}
 			case "recipe failure", "recipe timeout":
@@ -258,13 +260,16 @@ func TestDockerC2JIntegration(t *testing.T) {
 					Image                string
 					Entrypoint, Cmd, Env []string
 				}
-				HostConfig struct{ Binds []string }
+				HostConfig struct {
+					Binds      []string
+					AutoRemove bool
+				}
 			}
-			if err := json.Unmarshal([]byte(docker(t, "inspect", id)), &inspected); err != nil || len(inspected) != 1 {
+			if err := json.Unmarshal([]byte("["+string(observation.inspection)+"]"), &inspected); err != nil || len(inspected) != 1 {
 				t.Fatalf("inspect: %v", err)
 			}
 			c := inspected[0]
-			if c.Config.Image != imageID || strings.Join(c.Config.Entrypoint, " ") != "c2j" || !strings.Contains(strings.Join(c.Config.Cmd, " "), "run with-lease") || len(c.HostConfig.Binds) != 0 || !strings.Contains(strings.Join(c.Config.Env, "\n"), "C2J_EXECUTION_IMAGE="+c2jIntegrationImage) {
+			if !c.HostConfig.AutoRemove || c.Config.Image != imageID || strings.Join(c.Config.Entrypoint, " ") != "c2j" || !strings.Contains(strings.Join(c.Config.Cmd, " "), "run with-lease") || len(c.HostConfig.Binds) != 0 || !strings.Contains(strings.Join(c.Config.Env, "\n"), "C2J_EXECUTION_IMAGE="+c2jIntegrationImage) {
 				t.Fatal("executor did not use the unmodified default image and direct c2j entrypoint")
 			}
 			if strings.Contains(strings.Join(c.Config.Env, "\n")+strings.Join(c.Config.Cmd, " "), "leaseToken") {
@@ -280,6 +285,7 @@ type dockerJobDB struct {
 	claims, renewals, forbidden atomic.Int32
 	dropImport, dropHeartbeat   atomic.Bool
 	gate                        chan struct{}
+	observed                    chan struct{}
 	release                     sync.Once
 }
 
@@ -294,7 +300,7 @@ func newDockerJobDB(t *testing.T, ctx context.Context, docker func(*testing.T, .
 			t.Error(err)
 		}
 	})
-	f := &dockerJobDB{backend: backend, gate: make(chan struct{})}
+	f := &dockerJobDB{backend: backend, gate: make(chan struct{}), observed: make(chan struct{})}
 	t.Cleanup(func() { f.release.Do(func() { close(f.gate) }) })
 	repo := t.TempDir()
 	git := func(args ...string) string {
@@ -339,6 +345,17 @@ func newDockerJobDB(t *testing.T, ctx context.Context, docker func(*testing.T, .
 		}
 		if strings.HasSuffix(r.URL.Path, "/keepalive") {
 			n := f.renewals.Add(1)
+			// Keep even immediate import failures alive until the test has
+			// subscribed to logs and removal. No wrapper is added to c2j.
+			if n == 1 {
+				select {
+				case <-f.observed:
+				case <-r.Context().Done():
+					return
+				case <-ctx.Done():
+					return
+				}
+			}
 			if f.dropImport.Load() || (f.dropHeartbeat.Load() && n >= 3) {
 				// Drop the TCP connection, producing the reported HTTP-status-0 failure
 				// from the real c2j binary, rather than substituting an HTTP error code.

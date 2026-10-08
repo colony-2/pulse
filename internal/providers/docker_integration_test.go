@@ -116,7 +116,7 @@ targets:
 		})
 		return compute.Launch{
 			Request: compute.Request{LaunchID: id, Allocation: cfg.Allocation, Metadata: map[string]string{"pulse_job_id": id}},
-			Process: compute.Process{Command: []string{"/bin/sh"}, Args: []string{"-ec", script}, Env: map[string]string{}},
+			Process: compute.Process{Command: []string{"/bin/sh"}, Args: []string{"-ec", "cat > /scratch/test-input\nmkfifo /scratch/test-release\nread -r signal < /scratch/test-release\n{\n" + script + "\n} < /scratch/test-input"}, Env: map[string]string{}},
 		}, name
 	}
 	submit := func(t *testing.T, l compute.Launch, want compute.Status) {
@@ -126,12 +126,20 @@ targets:
 			t.Fatalf("submit: got %+v, %v; want %s", results, err, want)
 		}
 	}
+	observations := map[string]*dockerObservation{}
+	observe := func(t *testing.T, name string) {
+		t.Helper()
+		docker(t, "exec", name, "/bin/sh", "-ec", "until [ -p /scratch/test-release ]; do sleep 0.1; done")
+		observations[name] = observeDocker(t, ctx, socket, name)
+		docker(t, "exec", name, "/bin/sh", "-ec", "printf 'release\\n' > /scratch/test-release")
+	}
 	wait := func(t *testing.T, name, code string) string {
 		t.Helper()
-		if got := docker(t, "wait", name); got != code {
-			t.Fatalf("container exit: got %s, want %s; logs: %s", got, code, docker(t, "logs", name))
+		got, logs := observations[name].finish(t, ctx)
+		if got != code {
+			t.Fatalf("container exit: got %s, want %s; logs: %s", got, code, logs)
 		}
-		return docker(t, "logs", name)
+		return logs
 	}
 
 	t.Run("process contract and limits", func(t *testing.T) {
@@ -148,6 +156,13 @@ cat "$TMPDIR/result"`)
 		l.Process.Env["LITERAL"] = "$HOME"
 		l.Process.WorkingDir = "/scratch"
 		submit(t, l, compute.Accepted)
+		// A repeated submission while the container exists must not restart it.
+		started := docker(t, "inspect", "--format", "{{.State.StartedAt}}", name)
+		submit(t, l, compute.Accepted)
+		if got := docker(t, "inspect", "--format", "{{.State.StartedAt}}", name); got != started {
+			t.Fatal("running job restarted")
+		}
+		observe(t, name)
 		if out := wait(t, name, "0"); out != "scratch works" {
 			t.Fatalf("unexpected job output: %q", out)
 		}
@@ -158,13 +173,14 @@ cat "$TMPDIR/result"`)
 				Env        []string
 			}
 			HostConfig struct {
+				AutoRemove                   bool
 				NanoCPUs, Memory, MemorySwap int64
 				Binds                        []string
 				Tmpfs                        map[string]string
 				RestartPolicy                struct{ Name string }
 			}
 		}
-		if err := json.Unmarshal([]byte(docker(t, "inspect", name)), &inspected); err != nil || len(inspected) != 1 {
+		if err := json.Unmarshal([]byte("["+string(observations[name].inspection)+"]"), &inspected); err != nil || len(inspected) != 1 {
 			t.Fatalf("inspect: %v", err)
 		}
 		h := inspected[0].HostConfig
@@ -180,19 +196,15 @@ cat "$TMPDIR/result"`)
 		if unenforced {
 			cpu, memory, mode = 0, 0, "disabled"
 		}
-		if h.NanoCPUs != cpu || h.Memory != memory || h.MemorySwap != memory || inspected[0].Config.Labels["pulse_docker_limits"] != mode || h.Tmpfs["/scratch"] != "rw,size=8388608,mode=1777" || h.RestartPolicy.Name != "no" {
+		if !h.AutoRemove || h.NanoCPUs != cpu || h.Memory != memory || h.MemorySwap != memory || inspected[0].Config.Labels["pulse_docker_limits"] != mode || h.Tmpfs["/scratch"] != "rw,size=8388608,mode=1777" || h.RestartPolicy.Name != "no" {
 			t.Fatalf("incorrect resource enforcement: %+v", h)
 		}
-		// Retrying a completed launch must not execute the process a second time.
-		started := docker(t, "inspect", "--format", "{{.State.StartedAt}}", name)
-		submit(t, l, compute.Accepted)
-		if got := docker(t, "inspect", "--format", "{{.State.StartedAt}}", name); got != started {
-			t.Fatal("completed job restarted")
-		}
+
 	})
 	t.Run("job failure", func(t *testing.T) {
 		l, name := newLaunch(t, "echo failed >&2; exit 23")
 		submit(t, l, compute.Accepted)
+		observe(t, name)
 		if out := wait(t, name, "23"); out != "failed" {
 			t.Fatalf("stderr not preserved: %q", out)
 		}
@@ -215,6 +227,7 @@ read -r signal < /scratch/release
 test "$signal" = release
 echo completed`)
 		submit(t, l, compute.Accepted)
+		observe(t, name)
 		docker(t, "exec", name, "/bin/sh", "-ec", "until [ -p /scratch/release ]; do sleep 0.1; done")
 		closeProviders()
 		instances, closeAgain, err := providers.Build(ctx, cfg)
@@ -238,6 +251,7 @@ echo completed`)
 			t.Fatalf("terminal job still active: %+v, %v", listed, err)
 		}
 		submit(t, blocked, compute.Accepted)
+		observe(t, nextName)
 		if out := wait(t, nextName, "0"); out != "next-job" {
 			t.Fatalf("capacity not reusable: %q", out)
 		}

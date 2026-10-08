@@ -57,6 +57,7 @@ type nativePlan struct {
 	Allocation compute.Allocation
 }
 type hostConfig struct {
+	AutoRemove    bool  `json:"AutoRemove"`
 	NanoCPUs      int64 `json:"NanoCpus"`
 	Memory        int64 `json:"Memory"`
 	MemorySwap    int64 `json:"MemorySwap"`
@@ -215,6 +216,11 @@ func (p *Provider) usage(ctx context.Context) (charge, map[string]container, err
 	for _, item := range list {
 		var c container
 		if err := p.e.call(ctx, "GET", "/containers/"+url.PathEscape(item.ID)+"/json", nil, &c); err != nil {
+			var api *apiError
+			if errors.As(err, &api) && api.code == 404 {
+				// An auto-removed container can disappear after the list response.
+				continue
+			}
 			return charge{}, nil, err
 		}
 		id := c.Config.Labels["pulse_launch_id"]
@@ -410,7 +416,7 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		if p.unenforced {
 			cpu, memory = 0, 0
 		}
-		body := map[string]any{"Image": plan.ImageID, "Entrypoint": l.Process.Command, "Cmd": l.Process.Args, "OpenStdin": l.Process.Stdin != "", "StdinOnce": true, "AttachStdin": l.Process.Stdin != "", "Env": env, "Labels": labels, "WorkingDir": l.Process.WorkingDir, "HostConfig": map[string]any{"NanoCpus": cpu, "Memory": memory, "MemorySwap": memory, "RestartPolicy": map[string]any{"Name": "no"}, "AutoRemove": false, "Tmpfs": map[string]string{p.cfg.ScratchPath: fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes)}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "3"}}}}
+		body := map[string]any{"Image": plan.ImageID, "Entrypoint": l.Process.Command, "Cmd": l.Process.Args, "OpenStdin": l.Process.Stdin != "", "StdinOnce": true, "AttachStdin": l.Process.Stdin != "", "Env": env, "Labels": labels, "WorkingDir": l.Process.WorkingDir, "HostConfig": map[string]any{"NanoCpus": cpu, "Memory": memory, "MemorySwap": memory, "RestartPolicy": map[string]any{"Name": "no"}, "AutoRemove": true, "Tmpfs": map[string]string{p.cfg.ScratchPath: fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes)}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "3"}}}}
 		if len(p.extraHosts) != 0 {
 			body["HostConfig"].(map[string]any)["ExtraHosts"] = p.extraHosts
 		}
@@ -452,7 +458,7 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 			continue
 		}
 		var inspected container
-		if err = p.e.call(ctx, "GET", "/containers/"+url.PathEscape(created.ID)+"/json", nil, &inspected); err != nil || inspected.HostConfig.NanoCPUs != cpu || inspected.HostConfig.Memory != memory || inspected.HostConfig.MemorySwap != memory || inspected.HostConfig.RestartPolicy.Name != "no" || inspected.HostConfig.Tmpfs[p.cfg.ScratchPath] != fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes) {
+		if err = p.e.call(ctx, "GET", "/containers/"+url.PathEscape(created.ID)+"/json", nil, &inspected); err != nil || !inspected.HostConfig.AutoRemove || inspected.HostConfig.NanoCPUs != cpu || inspected.HostConfig.Memory != memory || inspected.HostConfig.MemorySwap != memory || inspected.HostConfig.RestartPolicy.Name != "no" || inspected.HostConfig.Tmpfs[p.cfg.ScratchPath] != fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes) {
 			r.Status = compute.Unknown
 			r.Reason = "Docker configuration verification failed; container not started"
 			out = append(out, r)

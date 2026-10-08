@@ -14,13 +14,14 @@ import (
 )
 
 type daemon struct {
-	mu          sync.Mutex
-	containers  map[string]container
-	creates     []map[string]any
-	startError  bool
-	createError bool
-	noLimits    bool
-	stdin       map[string]string
+	mu           sync.Mutex
+	containers   map[string]container
+	creates      []map[string]any
+	startError   bool
+	createError  bool
+	noLimits     bool
+	inspectError int
+	stdin        map[string]string
 }
 
 func TestExplicitInfrastructureDeadlinesAreNotSilentlyIgnored(t *testing.T) {
@@ -107,6 +108,13 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	case strings.HasSuffix(path, "/json"):
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "/containers/"), "/json")
+		if id == "a" && d.inspectError != 0 {
+			if d.inspectError == http.StatusNotFound {
+				delete(d.containers, id)
+			}
+			w.WriteHeader(d.inspectError)
+			return
+		}
 		enc.Encode(d.containers[id])
 	default:
 		w.WriteHeader(404)
@@ -167,7 +175,7 @@ func TestConcurrentBatchesAndRestart(t *testing.T) {
 	}
 	for _, body := range d.creates {
 		h := body["HostConfig"].(map[string]any)
-		if h["Memory"] != float64(2<<30) || h["MemorySwap"] != float64(2<<30) {
+		if h["AutoRemove"] != true || h["Memory"] != float64(2<<30) || h["MemorySwap"] != float64(2<<30) {
 			t.Fatal(h)
 		}
 	}
@@ -204,7 +212,7 @@ func TestUnknownCreateRetainsCharge(t *testing.T) {
 		t.Fatal(plans, e)
 	}
 }
-func TestRetriedLaunchDoesNotRestart(t *testing.T) {
+func TestRetriedActiveLaunchDoesNotRestart(t *testing.T) {
 	d := &daemon{containers: map[string]container{}}
 	p, s := testProvider(t, d)
 	defer s.Close()
@@ -215,7 +223,7 @@ func TestRetriedLaunchDoesNotRestart(t *testing.T) {
 	}
 	d.mu.Lock()
 	c := d.containers["a"]
-	c.State.Status = "exited"
+	c.State.Status = "running"
 	d.containers["a"] = c
 	d.mu.Unlock()
 	r, _ = p.Submit(context.Background(), ls)
@@ -261,5 +269,30 @@ func TestRoundingPreservesRequestedEnvironment(t *testing.T) {
 	}
 	if seen[compute.StdinEnv] != "" || body["OpenStdin"] != true || body["StdinOnce"] != true || body["HostConfig"].(map[string]any)["Binds"] != nil || body["Entrypoint"].([]any)[0] != "c2j" {
 		t.Fatal("expected direct executor, native stdin, and no host mounts", body)
+	}
+}
+
+func TestRemovalDuringAccounting(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusForbidden, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			d := &daemon{containers: map[string]container{}}
+			p, server := testProvider(t, d)
+			defer server.Close()
+			results, err := p.Submit(context.Background(), launches(requests("a")))
+			if err != nil || results[0].Status != compute.Accepted {
+				t.Fatal(results, err)
+			}
+			d.mu.Lock()
+			d.inspectError = status
+			d.mu.Unlock()
+			results, err = p.Submit(context.Background(), launches(requests("b")))
+			if status == http.StatusNotFound {
+				if err != nil || results[0].Status != compute.Accepted {
+					t.Fatal("removed container still consumes capacity", results, err)
+				}
+			} else if err == nil || results[0].Status != compute.Unavailable {
+				t.Fatal("non-removal inspection errors must fail closed", results, err)
+			}
+		})
 	}
 }
