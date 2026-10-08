@@ -28,7 +28,12 @@ jobs:
         with:
           lima: v1.2.1
           colima: v0.9.1
-      - run: go test -race -count=1 ./...
+      # Keep cold image download/unpacking out of the execution phase, and
+      # show Docker's progress directly in CI instead of buffering it in Go.
+      - name: Prepare c2j integration image
+        timeout-minutes: 30
+        run: docker pull ghcr.io/colony-2/shai-mega:latest
+      - run: go test -race -count=1 -timeout=45m ./...
       - run: make vet build
       - run: node --test scripts/npm.test.js
       - uses: actions/setup-python@v5

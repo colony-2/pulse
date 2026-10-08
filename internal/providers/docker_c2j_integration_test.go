@@ -40,12 +40,25 @@ const c2jIntegrationImage = "ghcr.io/colony-2/shai-mega:latest"
 // ordinary go test ./..., on both Docker Desktop and local Linux daemons.
 func TestDockerC2JIntegration(t *testing.T) {
 	ops.Register(commandop.GetOp())
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
-	defer cancel()
 	socket, err := dockerprovider.ResolveSocket("")
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A cold pull includes downloading and unpacking a large development image.
+	// Give preparation its own budget so slow registry/VM I/O cannot consume
+	// the time reserved for executing the actual jobs.
+	pullCtx, stopPull := context.WithTimeout(t.Context(), 30*time.Minute)
+	started := time.Now()
+	t.Logf("pulling %s (image preparation timeout: 30m)", c2jIntegrationImage)
+	pullOutput, pullErr := exec.CommandContext(pullCtx, "docker", "--host", socket, "pull", c2jIntegrationImage).CombinedOutput()
+	pullContextErr := pullCtx.Err()
+	stopPull()
+	if pullErr != nil {
+		t.Fatalf("prepare executor image after %s: %v (context: %v)\n%s", time.Since(started), pullErr, pullContextErr, pullOutput)
+	}
+	t.Logf("executor image ready after %s; starting 8m execution budget", time.Since(started))
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	defer cancel()
 	docker := func(t *testing.T, args ...string) string {
 		t.Helper()
 		out, err := exec.CommandContext(ctx, "docker", append([]string{"--host", socket}, args...)...).CombinedOutput()
@@ -54,9 +67,6 @@ func TestDockerC2JIntegration(t *testing.T) {
 		}
 		return strings.TrimSpace(string(out))
 	}
-	// Refresh the moving production tag: a locally rebuilt c2j must never mask a
-	// broken installation in the image distributed to users.
-	docker(t, "pull", c2jIntegrationImage)
 	imageID := docker(t, "image", "inspect", "--format", "{{.Id}}", c2jIntegrationImage)
 	t.Logf("executor image: %s", docker(t, "image", "inspect", "--format", "{{json .RepoDigests}}", c2jIntegrationImage))
 	t.Log(docker(t, "run", "--rm", "--entrypoint", "c2j", c2jIntegrationImage, "version"))
