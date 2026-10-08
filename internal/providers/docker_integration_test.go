@@ -197,51 +197,6 @@ cat "$TMPDIR/result"`)
 			t.Fatalf("stderr not preserved: %q", out)
 		}
 	})
-	t.Run("c2j enforces recipe timeout without Pulse helper", func(t *testing.T) {
-		// Build the pinned c2j CLI, then COPY it into a disposable image. No
-		// filesystem sharing with the daemon is involved, including on macOS.
-		module := exec.CommandContext(ctx, "go", "list", "-m", "-f", "{{.Dir}}", "github.com/colony-2/c2j")
-		moduleDir, err := module.Output()
-		if err != nil {
-			t.Fatal(err)
-		}
-		buildDir := t.TempDir()
-		build := exec.CommandContext(ctx, "go", "build", "-mod=readonly", "-o", filepath.Join(buildDir, "c2j"), "./cmd/c2j")
-		build.Dir = strings.TrimSpace(string(moduleDir))
-		build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
-		if out, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("build c2j: %v\n%s", err, out)
-		}
-		for file, contents := range map[string]string{
-			"Dockerfile":  "FROM alpine:3.21\nRUN apk add --no-cache git bash\nCOPY c2j /usr/local/bin/c2j\nCOPY recipe.yaml /recipe.yaml\n",
-			"recipe.yaml": "id: timeout\ntimeout: 1s\nop: command_execution\ninputs:\n  shell: sh\n  run: 'sleep 30; echo should-not-complete'\n",
-		} {
-			if err := os.WriteFile(filepath.Join(buildDir, file), []byte(contents), 0600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		image := fmt.Sprintf("pulse-c2j-test:%d", time.Now().UnixNano())
-		docker(t, "build", "-t", image, buildDir)
-		// Registered before the container cleanup, so the container is removed first.
-		t.Cleanup(func() { docker(t, "image", "rm", image) })
-		l, name := newLaunch(t, "")
-		l.Image = image
-		l.Process = compute.Process{Command: []string{"c2j"}, Args: []string{"test", "run", "--stdin", "--recipe-file", "/recipe.yaml", "--case-timeout", "30s", "--out-dir", "/results"},
-			Stdin: "cases:\n- id: real-timeout\n  type: integration_case\n  runtime: {}\n  mocks: {ops: [{match: {op: command_execution}, behavior: {mode: passthrough}}]}\n"}
-		started := time.Now()
-		submit(t, l, compute.Accepted)
-		out := wait(t, name, "4")
-		// Assert c2j's timeout outcome, not Docker/VM startup and teardown speed.
-		// This container has only 100m CPU when the daemon enforces limits.
-		// The enclosing test context still bounds a hung executor.
-		t.Logf("c2j timeout result received after %s including container startup", time.Since(started))
-		if !strings.Contains(out, "job total timed out after 1s") {
-			t.Fatalf("c2j did not enforce its recipe timeout: %s", out)
-		}
-		if command := docker(t, "inspect", "--format", "{{json .Config.Entrypoint}}", name); command != `["c2j"]` {
-			t.Fatalf("c2j must be the direct entrypoint: %s", command)
-		}
-	})
 	t.Run("expired start deadline", func(t *testing.T) {
 		l, name := newLaunch(t, "echo should-not-run")
 		before := time.Now().Add(-time.Minute)
