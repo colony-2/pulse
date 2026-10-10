@@ -524,22 +524,21 @@ still checking admission budgets.
 
 Validation after updating to c2j v0.0.65:
 
-- `go test -race -count=1 -timeout=45m ./...` ran the full suite. The real Docker
-  cache integration (cold/warm/concurrent/restart/retirement), basic Docker
-  integration, and all unit tests passed. `TestDockerC2JIntegration` was the sole
-  failure: containers timed out reaching either host interface for the JobDB
-  fixture on this nested daemon, before worker launch.
+- `go test -race -count=1 -timeout=45m ./...` passed the full suite, including
+  supplied-lease execution, heartbeat renewal and transport failure, peer and
+  host-gateway connectivity, localhost translation, dependency caches, and unit
+  tests. The JobDB/Git fixture now runs in a separate Docker container with
+  distinct published and peer URLs, supporting native and containerized runners.
 - `make vet build`, `node --test scripts/npm.test.js` (four tests), and
   `git diff --check` passed.
 - The refreshed base image's version manifest records `C2J_VERSION: 0.0.65`,
   matching its installed binary and Pulse's pinned module. Existing Docker hosts
   should pull the updated image; Pulse pulls only when the requested image is
   absent locally. New image content automatically selects a separate cache pair.
-- After that image refresh, the race-enabled Docker integration tests were rerun.
-  `TestDockerDependencyCacheIntegration` and `TestDockerIntegration` passed;
-  `TestDockerC2JIntegration` still failed at the container-to-host fixture
-  connection check, before launching a worker.
+- Endpoint-selection and localhost-forwarding tests also cover the peer-runner
+  fallback when the Docker host's published port is not on the runner's loopback.
+  Initial lease failure assertions use c2j 0.0.65's diagnostic and verify that no
+  execution chapters were persisted.
 
 All cache-test containers, volumes, and derived images were cleaned up. The base
-image remains cached locally. Supplied-lease validation on a host with working
-container-to-host networking and cross-platform CI remain release checks.
+image remains cached locally. Cross-platform CI remains a release check.

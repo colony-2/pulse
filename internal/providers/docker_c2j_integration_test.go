@@ -7,16 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
-	"net/http/cgi"
-	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,8 +24,6 @@ import (
 	"github.com/colony-2/c2j/pkg/worker/commandop"
 	"github.com/colony-2/c2j/pkg/workflowctl"
 	"github.com/colony-2/jobdb/pkg/jobdb"
-	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
-	"github.com/colony-2/jobdb/pkg/jobdb/runtime/sqlite"
 	jobworkflow "github.com/colony-2/jobdb/pkg/workflow"
 	dockerprovider "github.com/colony-2/pulse/internal/providers/docker"
 )
@@ -76,9 +70,11 @@ func TestDockerC2JIntegration(t *testing.T) {
 		t.Fatalf("build Pulse: %v\n%s", err, out)
 	}
 
-	for _, scenario := range []string{"success and heartbeat", "host gateway connectivity", "localhost JobDB", "recipe failure", "recipe timeout", "lease import transport failure", "heartbeat transport failure"} {
+	fixtureBinary := buildDockerJobDBFixture(t, ctx, docker)
+
+	for _, scenario := range []string{"success and heartbeat", "peer connectivity", "host gateway connectivity", "localhost JobDB", "recipe failure", "recipe timeout", "lease import transport failure", "heartbeat transport failure"} {
 		t.Run(scenario, func(t *testing.T) {
-			f := newDockerJobDB(t, ctx, docker)
+			f := newDockerJobDB(t, ctx, docker, socket, fixtureBinary)
 			run := "test \"$(cat README)\" = fixture; echo saved > result.txt; echo container-result"
 			extra := ""
 			switch scenario {
@@ -86,8 +82,10 @@ func TestDockerC2JIntegration(t *testing.T) {
 				// Wait for a real background renewal before allowing the command to
 				// complete. There is no sleep-based assumption about VM startup speed.
 				run = pythonHTTPGet(f.url+"/gate") + "; " + run
+			case "peer connectivity":
+				run = "test \"$(" + pythonHTTPGet(f.url+"/healthz") + ")\" = pulse-jobdb-fixture; " + run
 			case "host gateway connectivity":
-				_, port, err := net.SplitHostPort(strings.TrimPrefix(f.url, "http://"))
+				_, port, err := net.SplitHostPort(strings.TrimPrefix(f.controllerURL, "http://"))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -99,10 +97,10 @@ func TestDockerC2JIntegration(t *testing.T) {
 				extra = "timeout: 1s\n"
 				run = "sleep 300; echo must-not-complete"
 			case "lease import transport failure":
-				f.dropImport.Store(true)
+				f.control(t, "drop-import")
 				run = pythonHTTPGet(f.url + "/forbidden")
 			case "heartbeat transport failure":
-				f.dropHeartbeat.Store(true)
+				f.control(t, "drop-heartbeat")
 				run = pythonHTTPGet(f.url+"/gate") + "; " + pythonHTTPGet(f.url+"/forbidden")
 			}
 			run = "set -eu; " + run
@@ -131,19 +129,17 @@ func TestDockerC2JIntegration(t *testing.T) {
 			cmd.Dir = t.TempDir()
 			for _, entry := range os.Environ() {
 				name, _, _ := strings.Cut(entry, "=")
-				if name != "PULSE_CONFIG" && name != "C2J_JOBDB" {
+				if name != "PULSE_CONFIG" && name != "C2J_JOBDB" && name != "NO_PROXY" && name != "no_proxy" {
 					cmd.Env = append(cmd.Env, entry)
 				}
 			}
-			jobDB := f.url + "/docker-test"
+			jobDB := f.controllerURL + "/docker-test"
 			if scenario == "localhost JobDB" {
-				_, port, err := net.SplitHostPort(strings.TrimPrefix(f.url, "http://"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				jobDB = "http://localhost:" + port + "/docker-test"
+				jobDB = f.localhostURL(t) + "/docker-test"
 			}
 			cmd.Env = append(cmd.Env, "C2J_JOBDB="+jobDB)
+			endpoint, _ := url.Parse(jobDB)
+			cmd.Env = append(cmd.Env, "NO_PROXY="+os.Getenv("NO_PROXY")+","+os.Getenv("no_proxy")+","+endpoint.Hostname())
 			var out []byte
 			// Register before launch so an uncertain/failed submission is cleaned up too.
 			t.Cleanup(func() {
@@ -190,7 +186,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 			}
 			id := ids[0]
 			observation := observeDocker(t, ctx, socket, id)
-			close(f.observed)
+			f.control(t, "observed")
 			code, logs := observation.finish(t, ctx)
 			t.Logf("c2j container logs:\n%s", logs)
 			info, err := f.backend.GetJob(ctx, key)
@@ -198,20 +194,20 @@ func TestDockerC2JIntegration(t *testing.T) {
 				t.Fatal(err)
 			}
 			data, resultErr := info.Data.GetData()
-			t.Logf("c2j exit=%s job=%s claims=%d renewals=%d", code, info.Status, f.claims.Load(), f.renewals.Load())
-			if f.claims.Load() != 1 {
-				t.Fatalf("lease was not handed off exactly once: %d acquisitions", f.claims.Load())
+			t.Logf("c2j exit=%s job=%s claims=%d renewals=%d", code, info.Status, f.stats(t).Claims, f.stats(t).Renewals)
+			if f.stats(t).Claims != 1 {
+				t.Fatalf("lease was not handed off exactly once: %d acquisitions", f.stats(t).Claims)
 			}
-			if f.forbidden.Load() != 0 {
+			if f.stats(t).Forbidden != 0 {
 				t.Fatal("executor continued after losing authority")
 			}
 			switch scenario {
-			case "success and heartbeat", "host gateway connectivity", "localhost JobDB":
+			case "success and heartbeat", "peer connectivity", "host gateway connectivity", "localhost JobDB":
 				minimumRenewals := int32(2) // Import and runner validation.
 				if scenario == "success and heartbeat" {
 					minimumRenewals = 3 // Also require a background renewal.
 				}
-				if code != "0" || resultErr != nil || info.Status != jobdb.JobStatusCompleted || !strings.Contains(string(data), "container-result") || f.renewals.Load() < minimumRenewals {
+				if code != "0" || resultErr != nil || info.Status != jobdb.JobStatusCompleted || !strings.Contains(string(data), "container-result") || f.stats(t).Renewals < minimumRenewals {
 					t.Fatalf("job did not complete through the supplied lease: exit=%s status=%s data=%s\n%s", code, info.Status, data, logs)
 				}
 				chapters, err := f.backend.ListChapters(ctx, jobdb.ListChaptersRequest{JobKey: key})
@@ -253,7 +249,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 				if output, err := again.CombinedOutput(); err != nil {
 					t.Fatalf("second Pulse pass: %v\n%s", err, output)
 				}
-				if ids := strings.Fields(docker(t, "ps", "-aq", "--filter", "label=pulse_job_id="+key.JobId)); len(ids) != 0 || f.claims.Load() != 1 {
+				if ids := strings.Fields(docker(t, "ps", "-aq", "--filter", "label=pulse_job_id="+key.JobId)); len(ids) != 0 || f.stats(t).Claims != 1 {
 					t.Fatal("completed job was claimed or launched again")
 				}
 			case "recipe failure", "recipe timeout":
@@ -265,7 +261,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 					t.Fatalf("missing c2j failure outcome %q: exit=%s data=%s\n%s", want, code, data, logs)
 				}
 			case "lease import transport failure":
-				if code == "0" || info.Status == jobdb.JobStatusCompleted || !strings.Contains(logs, "import supplied lease: lease renewal transport failed (HTTP status 0)") {
+				if code == "0" || info.Status == jobdb.JobStatusCompleted || f.stats(t).Renewals != 1 || !strings.Contains(logs, "cannot validate supplied lease") || !strings.Contains(logs, "request failed (phase exchange)") || !strings.Contains(logs, "job execution has not started") {
 					t.Fatalf("missing lease import transport failure: exit=%s status=%s\n%s", code, info.Status, logs)
 				}
 				chapters, err := f.backend.ListChapters(ctx, jobdb.ListChaptersRequest{JobKey: key})
@@ -273,7 +269,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 					t.Fatalf("failed lease import must not execute recipe steps: chapters=%d error=%v", len(chapters), err)
 				}
 			case "heartbeat transport failure":
-				if code == "0" || info.Status == jobdb.JobStatusCompleted || f.renewals.Load() < 3 || !strings.Contains(logs, "lease renewal") {
+				if code == "0" || info.Status == jobdb.JobStatusCompleted || f.stats(t).Renewals < 3 || !strings.Contains(logs, "lease renewal") {
 					t.Fatalf("lost heartbeat did not stop execution: exit=%s status=%s\n%s", code, info.Status, logs)
 				}
 			}
@@ -305,149 +301,6 @@ func TestDockerC2JIntegration(t *testing.T) {
 			}
 		})
 	}
-}
-
-type dockerJobDB struct {
-	backend                     *sqlite.Runtime
-	url, hash                   string
-	claims, renewals, forbidden atomic.Int32
-	dropImport, dropHeartbeat   atomic.Bool
-	gate                        chan struct{}
-	observed                    chan struct{}
-	release                     sync.Once
-}
-
-func newDockerJobDB(t *testing.T, ctx context.Context, docker func(*testing.T, ...string) string) *dockerJobDB {
-	t.Helper()
-	backend, err := sqlite.NewFromConfig(ctx, sqlite.Config{DBPath: filepath.Join(t.TempDir(), "jobs.db")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := backend.Close(context.Background()); err != nil {
-			t.Error(err)
-		}
-	})
-	f := &dockerJobDB{backend: backend, gate: make(chan struct{}), observed: make(chan struct{})}
-	t.Cleanup(func() { f.release.Do(func() { close(f.gate) }) })
-	repo := t.TempDir()
-	git := func(args ...string) string {
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = repo
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git: %v\n%s", err, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-	git("init", "--initial-branch=main")
-	if err := os.WriteFile(filepath.Join(repo, "README"), []byte("fixture\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	git("add", "README")
-	git("-c", "user.name=Pulse Integration", "-c", "user.email=pulse@example.invalid", "-c", "commit.gpgsign=false", "commit", "-m", "fixture")
-	f.hash = git("rev-parse", "HEAD")
-	gitRoot := t.TempDir()
-	git("clone", "--bare", repo, filepath.Join(gitRoot, "repo.git"))
-	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
-	}
-	api := remote.NewServer(backend)
-	mux := http.NewServeMux()
-	// Serve Git's real smart HTTP protocol, including the shallow fetches c2j
-	// uses. A static .git directory would not support those fetches.
-	mux.Handle("/git/", &cgi.Handler{Path: gitPath, Args: []string{"http-backend"}, Root: "/git", Env: []string{"GIT_PROJECT_ROOT=" + gitRoot, "GIT_HTTP_EXPORT_ALL=1"}})
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { io.WriteString(w, "pulse-jobdb-fixture") })
-	mux.HandleFunc("/gate", func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-f.gate:
-		case <-r.Context().Done():
-		case <-ctx.Done():
-		}
-	})
-	mux.HandleFunc("/forbidden", func(w http.ResponseWriter, _ *http.Request) { f.forbidden.Add(1) })
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/lease") || r.URL.Path == "/v1/jobs/poll" {
-			f.claims.Add(1)
-		}
-		if strings.HasSuffix(r.URL.Path, "/keepalive") {
-			n := f.renewals.Add(1)
-			// Keep even immediate import failures alive until the test has
-			// subscribed to logs and removal. No wrapper is added to c2j.
-			if n == 1 {
-				select {
-				case <-f.observed:
-				case <-r.Context().Done():
-					return
-				case <-ctx.Done():
-					return
-				}
-			}
-			if f.dropImport.Load() || (f.dropHeartbeat.Load() && n >= 3) {
-				// Drop the TCP connection, producing the reported HTTP-status-0 failure
-				// from the real c2j binary, rather than substituting an HTTP error code.
-				conn, _, err := w.(http.Hijacker).Hijack()
-				if err == nil {
-					conn.Close()
-				}
-				return
-			}
-			api.ServeHTTP(w, r)
-			if n >= 3 {
-				f.release.Do(func() { close(f.gate) })
-			}
-			return
-		}
-		api.ServeHTTP(w, r)
-	})
-	listener, err := net.Listen("tcp4", "0.0.0.0:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := httptest.NewUnstartedServer(mux)
-	server.Listener.Close()
-	server.Listener = listener
-	server.Start()
-	t.Cleanup(func() {
-		f.release.Do(func() { close(f.gate) })
-		server.Close()
-	})
-	// A JobDB URI has to be reachable by both the native controller and the
-	// container. Select a host interface by probing from the actual image; do
-	// not assume localhost denotes the host inside a Docker VM. This also works
-	// with Colima and nested Linux Docker without hard-coded gateway addresses.
-	addresses, err := net.InterfaceAddrs()
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	var candidates []string
-	for _, address := range addresses {
-		ip, _, err := net.ParseCIDR(address.String())
-		if err == nil && ip.To4() != nil && !ip.IsLoopback() && ip.IsGlobalUnicast() {
-			candidates = append(candidates, fmt.Sprintf("http://%s:%d", ip, port))
-		}
-	}
-	if len(candidates) == 0 {
-		t.Fatal("no host IPv4 interface for the container's JobDB connection")
-	}
-	script := `import sys, urllib.request
-opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-failures = []
-for url in sys.argv[1:]:
-    try:
-        if opener.open(url + "/healthz", timeout=3).read() == b"pulse-jobdb-fixture":
-            print(url, end="")
-            sys.exit(0)
-    except Exception as error:
-        failures.append(url + ": " + str(error))
-print("\n".join(failures), file=sys.stderr)
-sys.exit(1)
-`
-	f.url = docker(t, append([]string{"run", "--rm", "--entrypoint", "python3", c2jIntegrationImage, "-c", script}, candidates...)...)
-	t.Logf("real JobDB HTTP endpoint: %s", f.url)
-	return f
 }
 
 // The base image deliberately supplies Python rather than the mega image's curl.
