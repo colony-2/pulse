@@ -57,8 +57,8 @@ and automatic volume retirement. It removes its containers, volumes, and derived
 image. The upstream base image remains cached. First runs require Python/npm/Nix
 registry access. This test validates storage and the tool manager; it does not
 replace the supplied-lease test of the image's installed c2j binary or test the
-full extension compiler/replay lifecycle. The reviewed base still ships c2j
-0.0.63, so addon execution needs an upstream image update. Its missing `sed` and
+full extension compiler/replay lifecycle. The verified base ships c2j
+0.0.65, matching the pinned library. Its missing `sed` and
 native Python wheel loader are documented in the [cache design](PROPOSAL_DOCKER_DEPENDENCY_CACHES.md).
 
 ## Build container images

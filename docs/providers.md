@@ -52,7 +52,7 @@ All cloud executor images need the updated `pulse-exec` helper to deliver lease 
 
 ## Lease transport
 
-Executor images must support `c2j run with-lease --lease-file -`. Pulse pins the integration API to c2j v0.0.65 and JobDB v0.0.28. Deploy a matching or compatible c2j binary and a JobDB server supporting authoritative supplied-lease renewal. Addon jobs require a worker with execution-tool support; the reviewed base image's c2j 0.0.63 predates it.
+Executor images must support `c2j run with-lease --lease-file -`. Pulse pins the integration API to c2j v0.0.65 and JobDB v0.0.28. Deploy a matching or compatible c2j binary and a JobDB server supporting authoritative supplied-lease renewal. The verified Colony base image includes c2j 0.0.65 with execution-tool support for addon jobs.
 
 Remote providers receive an optional sensitive `process.stdin` field and must pipe it to the child exactly, then EOF. Upgrade existing provider implementations before deploying this controller. Unsupported stdin must produce a definite decline before side effects; silently dropping it is invalid.
 

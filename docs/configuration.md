@@ -127,8 +127,8 @@ caching enabled and the same operator namespace. Volumes have no disk quota.
 Shared writable executable caches assume jobs within a tenant trust each other;
 disable sharing for mutually untrusted jobs. Workers must not run Nix GC or delete
 shared store contents. See the [cache design](../PROPOSAL_DOCKER_DEPENDENCY_CACHES.md)
-for failure recovery and image prerequisites. In particular, the reviewed base
-image's c2j `0.0.63` predates addons: addon jobs require a newer worker in that image.
+for failure recovery and image prerequisites. The verified base image includes
+c2j `0.0.65`, matching Pulse's pinned library and supporting declared addons.
 
 ## Docker or a native executable
 

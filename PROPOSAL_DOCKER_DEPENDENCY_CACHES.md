@@ -1,8 +1,8 @@
 # Proposal: shared dependency caches for the Docker provider
 
 Status: implemented in this checkout, including the default image switch to
-`ghcr.io/colony-2/base:latest`. The image still needs a published c2j version with
-addon support; see prerequisites and test coverage below.
+`ghcr.io/colony-2/base:latest`. The refreshed image includes c2j 0.0.65 with addon
+support; see prerequisites and test coverage below.
 
 ## Recommendation
 
@@ -107,19 +107,18 @@ The Nix configuration supplies signed public substituters and forbids local and
 remote builds, including a pre-build hook for `preferLocalBuild` derivations.
 Preserve that policy in each worker.
 
-The image refreshed after the v0.0.65 update on Linux ARM64 still reported:
+The refreshed image verified on Linux ARM64 reported:
 
 ```text
-ghcr.io/colony-2/base@sha256:1aea224ca71f5db527db80aa9f136caf42eb4d2c0b70c6e3ae71e8c6d0f9da4d
-c2j 0.0.63; Nix 2.35.2; uv 0.12.22; pnpm 12.9.0
+ghcr.io/colony-2/base@sha256:c5ac2acd9e1dda1f448c94997ec8a4f51cef9e87d59aaa77f9c750f7ee9993ea
+c2j 0.0.65; Nix 2.35.2; uv 0.12.22; pnpm 12.9.0
 Node v24.21.0; Python 3.14.7; UID/GID 0:0
 ```
 
-**The reviewed image is not yet the complete addon rollout.** Its c2j 0.0.63
-release predates the reviewed tool manager. Pulse now pins c2j
-`v0.0.65` and JobDB `v0.0.28` in [go.mod](go.mod),
-and tests package-bearing demand decoding and allocation projection. Before
-enabling addon jobs, publish a base image with a compatible new worker.
+The image's c2j binary and version manifest both identify 0.0.65, matching Pulse's
+`v0.0.65` pin and including the reviewed addon support. Pulse also pins JobDB
+`v0.0.28` in [go.mod](go.mod), and tests package-bearing demand decoding and
+allocation projection. The previous image's old-worker prerequisite is resolved.
 
 The tested image also lacks `sed` on PATH, which pnpm-generated launchers need,
 and a conventional Linux dynamic loader needed by native Python wheels such as
@@ -516,7 +515,7 @@ opt-out, interrupted initialization/removal, ownership checks, cancellation,
 and uncertain-create reservations.
 
 The integration test uses a test-only program linked to the pinned c2j tool
-manager in a derived base image. It does not validate the installed old c2j's
+manager in a derived base image. It does not validate the installed c2j binary's
 addon support, full extension compilation/replay, or AMD64/Docker Desktop behavior.
 The existing supplied-lease end-to-end test remains separate. Live GC is explicitly
 outside the supported lifecycle. Native limit enforcement could not run in this
@@ -532,9 +531,14 @@ Validation after updating to c2j v0.0.65:
   fixture on this nested daemon, before worker launch.
 - `make vet build`, `node --test scripts/npm.test.js` (four tests), and
   `git diff --check` passed.
-- The refreshed base image's version manifest still records `C2J_VERSION: 0.0.63`,
-  matching its installed binary. Updating Pulse's module does not replace that
-  image binary; the image needs a rebuild with c2j v0.0.65 for addon execution.
+- The refreshed base image's version manifest records `C2J_VERSION: 0.0.65`,
+  matching its installed binary and Pulse's pinned module. Existing Docker hosts
+  should pull the updated image; Pulse pulls only when the requested image is
+  absent locally. New image content automatically selects a separate cache pair.
+- After that image refresh, the race-enabled Docker integration tests were rerun.
+  `TestDockerDependencyCacheIntegration` and `TestDockerIntegration` passed;
+  `TestDockerC2JIntegration` still failed at the container-to-host fixture
+  connection check, before launching a worker.
 
 All cache-test containers, volumes, and derived images were cleaned up. The base
 image remains cached locally. Supplied-lease validation on a host with working
