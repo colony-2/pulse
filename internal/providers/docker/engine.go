@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 type engine struct {
@@ -30,10 +29,14 @@ func readAPIError(resp *http.Response) error {
 	_ = json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&body)
 	return &apiError{code: resp.StatusCode, message: body.Message}
 }
+
+// Requests use their caller's deadline, including slow image pulls and Nix
+// volume copy-up during container creation. A shorter transport deadline would
+// interrupt provisioning even when the configured call budget permits it.
 func newEngine(socket string) *engine {
 	return &engine{base: "http://docker", client: &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", strings.TrimPrefix(socket, "unix://"))
-	}, ResponseHeaderTimeout: 30 * time.Second}}}
+	}}}}
 }
 func (e *engine) call(ctx context.Context, method, path string, body any, out any) error {
 	var data []byte

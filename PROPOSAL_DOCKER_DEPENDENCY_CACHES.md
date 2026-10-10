@@ -289,7 +289,11 @@ Cache preparation must complete before the worker starts. Pulse performs cold
 namespace initialization automatically within submission and lease-start budgets;
 manual pre-creation is never a prerequisite. Pulse still does not renew the
 job's supplied lease. Never spend the worker's 30-minute setup allowance on a
-provider operation before c2j has started renewing ownership.
+provider operation before c2j has started renewing ownership. Default calls have
+a two-minute budget inside a three-minute batch, leaving headroom in the
+five-minute lease. Docker API requests use that deadline; a separate 30-second
+response-header timeout must not interrupt cold Nix volume copy-up. Explicit
+operator timeouts continue to bound initialization.
 
 There is no persistent helper process to charge or shut down. Keep the stopped
 initializer record and idle volumes, and reconstruct their worker references

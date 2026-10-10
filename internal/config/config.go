@@ -193,7 +193,8 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 		return nil, fmt.Errorf("lease_duration must be between 1s and 24h")
 	}
 	if c.CallTimeout == "" {
-		c.CallTimeout = "30s"
+		// Cold Docker volume copy-up can exceed 30s on VM-backed storage.
+		c.CallTimeout = "2m"
 	}
 	if c.ClaimTimeout == "" {
 		c.ClaimTimeout = "5s"
@@ -205,7 +206,7 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 		return nil, fmt.Errorf("claim_concurrency must be between 1 and 100")
 	}
 	if c.BatchTimeout == "" {
-		c.BatchTimeout = "2m"
+		c.BatchTimeout = "3m"
 	}
 	for _, v := range []struct {
 		s   string

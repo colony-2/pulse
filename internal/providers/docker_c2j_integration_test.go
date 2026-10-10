@@ -51,17 +51,20 @@ func TestDockerC2JIntegration(t *testing.T) {
 	if pullErr != nil {
 		t.Fatalf("prepare executor image after %s: %v (context: %v)\n%s", time.Since(started), pullErr, pullContextErr, pullOutput)
 	}
-	t.Logf("executor image ready after %s; starting 8m execution budget", time.Since(started))
-	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+	t.Logf("executor image ready after %s; starting integration scenarios (8m budget each)", time.Since(started))
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
-	docker := func(t *testing.T, args ...string) string {
-		t.Helper()
-		out, err := exec.CommandContext(ctx, "docker", append([]string{"--host", socket}, args...)...).CombinedOutput()
-		if err != nil {
-			t.Fatalf("docker %v: %v\n%s", args, err, out)
+	dockerFor := func(ctx context.Context) func(*testing.T, ...string) string {
+		return func(t *testing.T, args ...string) string {
+			t.Helper()
+			out, err := exec.CommandContext(ctx, "docker", append([]string{"--host", socket}, args...)...).CombinedOutput()
+			if err != nil {
+				t.Fatalf("docker %v: %v\n%s", args, err, out)
+			}
+			return strings.TrimSpace(string(out))
 		}
-		return strings.TrimSpace(string(out))
 	}
+	docker := dockerFor(ctx)
 	imageID := docker(t, "image", "inspect", "--format", "{{.Id}}", c2jIntegrationImage)
 	t.Logf("executor image: %s", docker(t, "image", "inspect", "--format", "{{json .RepoDigests}}", c2jIntegrationImage))
 	t.Log(docker(t, "run", "--rm", "--entrypoint", "c2j", c2jIntegrationImage, "version"))
@@ -74,6 +77,9 @@ func TestDockerC2JIntegration(t *testing.T) {
 
 	for _, scenario := range []string{"success and heartbeat", "peer connectivity", "host gateway connectivity", "localhost JobDB", "recipe failure", "recipe timeout", "lease import transport failure", "heartbeat transport failure"} {
 		t.Run(scenario, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
+			defer cancel()
+			docker := dockerFor(ctx)
 			f := newDockerJobDB(t, ctx, docker, socket, fixtureBinary)
 			run := "test \"$(cat README)\" = fixture; echo saved > result.txt; echo container-result"
 			extra := ""
@@ -143,7 +149,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 			var out []byte
 			// Register before launch so an uncertain/failed submission is cleaned up too.
 			t.Cleanup(func() {
-				cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
+				cleanup, stop := context.WithTimeout(context.Background(), 2*time.Minute)
 				defer stop()
 				list, err := exec.CommandContext(cleanup, "docker", "--host", socket, "ps", "-aq", "--filter", "label=pulse_job_id="+key.JobId).CombinedOutput()
 				if err != nil {
@@ -162,15 +168,15 @@ func TestDockerC2JIntegration(t *testing.T) {
 						t.Errorf("cleanup: %v\n%s", err, output)
 					}
 				}
-				// Initialization is logged before worker creation, including failed
-				// launches. Delete only namespaces this isolated fixture created.
-				for _, match := range regexp.MustCompile(`Docker dependency cache initialized cache=([a-f0-9]{64})`).FindAllSubmatch(out, -1) {
+				// The start message precedes volume/initializer creation, so even
+				// failed initialization is included. Delete only this fixture's caches.
+				for _, match := range regexp.MustCompile(`Docker dependency cache initializing cache=([a-f0-9]{64})`).FindAllSubmatch(out, -1) {
 					cacheKey := string(match[1])
-					if output, err := exec.CommandContext(cleanup, "docker", "--host", socket, "rm", "pulse-cache-init-"+cacheKey).CombinedOutput(); err != nil {
+					if output, err := exec.CommandContext(cleanup, "docker", "--host", socket, "rm", "-f", "pulse-cache-init-"+cacheKey).CombinedOutput(); err != nil && !strings.Contains(string(output), "No such container") {
 						t.Errorf("cleanup initializer: %v: %s", err, output)
 					}
 					for _, kind := range []string{"nix", "tools"} {
-						if output, err := exec.CommandContext(cleanup, "docker", "--host", socket, "volume", "rm", "pulse-cache-v1-"+cacheKey+"-"+kind).CombinedOutput(); err != nil {
+						if output, err := exec.CommandContext(cleanup, "docker", "--host", socket, "volume", "rm", "pulse-cache-v1-"+cacheKey+"-"+kind).CombinedOutput(); err != nil && !strings.Contains(string(output), "no such volume") {
 							t.Errorf("cleanup cache: %v: %s", err, output)
 						}
 					}

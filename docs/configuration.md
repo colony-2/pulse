@@ -65,8 +65,8 @@ claim_concurrency: 8
 claim_timeout: 5s
 batch_size: 100
 cooldown: 60s
-call_timeout: 10s
-batch_timeout: 1m
+call_timeout: 2m
+batch_timeout: 3m
 ```
 
 `lease_duration` defaults to `5m` and accepts `1s` through `24h`. Allow enough time for lease acquisition of the batch, provider fallback, scheduling, image pulls, and c2j startup. A longer duration also delays recovery after a lost launch or runner crash; c2j renews with the inherited duration. `defaults.start_window`, when present, must be positive and no longer than `lease_duration`. It constrains actual startup; it does not extend the lease. Docker declines this option because it launches c2j directly; c2j validates the supplied lease on startup.
@@ -80,6 +80,8 @@ Claims run concurrently before provider submission, with these controls:
 | `batch_size` | `100` | Maximum candidate claim attempts and therefore maximum acquired leases per provider batch; range 1–100. Failed or unavailable claims count toward this limit. |
 
 Pulse submits as soon as every candidate has been processed, without waiting out the window. Once the time or count limit is met, it stops starting claims, lets outstanding calls finish, and submits the successful subset. Unstarted candidates remain eligible for a later poll and receive no failure cooldown. Attempted claims that fail follow normal backoff; a timed-out claim whose capability was never returned recovers through JobDB lease expiry. A returned but unusable lease is released safely. Fallback reuses the already acquired leases.
+
+`call_timeout` defaults to `2m`, and `batch_timeout` to `3m`. Cold Docker cache creation copies the image's Nix store into a volume and can take more than 30 seconds on VM-backed storage. Docker API requests honor the caller's deadline without a separate 30-second transport cutoff. These defaults leave time within the default five-minute lease for c2j to start and renew it. Explicit timeout settings still apply.
 
 Leave room in `batch_timeout` for provider submission after the claim phase, and in `lease_duration` for claiming plus container startup. Increasing the count or concurrency raises instantaneous JobDB load; increasing the claim window consumes more of the earliest acquired leases' lifetime. The claim window does not cancel requests, so the claim phase can extend beyond it while in-flight calls finish.
 

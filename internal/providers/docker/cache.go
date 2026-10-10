@@ -245,7 +245,7 @@ func (p *Provider) inspectInitializer(ctx context.Context, c dependencyCache) (*
 // Keep the successful, stopped initializer as the durable readiness record.
 // Docker inspection then provides warm readiness and its completion timestamp
 // without a helper process on every launch or a controller-side database.
-func (p *Provider) ensureCache(ctx context.Context, c dependencyCache, plan nativePlan, cost charge) error {
+func (p *Provider) ensureCache(ctx context.Context, c dependencyCache, plan nativePlan, cost charge) (result error) {
 	tools, err := p.inspectVolume(ctx, c, "tools")
 	if err != nil {
 		return err
@@ -270,6 +270,15 @@ func (p *Provider) ensureCache(ctx context.Context, c dependencyCache, plan nati
 			return fmt.Errorf("incomplete cache is still referenced")
 		}
 	}
+	started := time.Now()
+	stage := "create volumes"
+	slog.Info("Docker dependency cache initializing", "cache", c.Key, "image_id", plan.ImageID)
+	defer func() {
+		if result != nil {
+			// Initializers contain no job input; API errors omit daemon messages.
+			slog.Warn("Docker dependency cache initialization failed", "cache", c.Key, "stage", stage, "elapsed", time.Since(started), "error", result)
+		}
+	}()
 	for _, kind := range []string{"tools", "nix"} {
 		if err := p.e.call(ctx, "POST", "/volumes/create", map[string]any{"Name": c.volume(kind), "Driver": "local", "Labels": c.labels(kind)}, nil); err != nil {
 			return err
@@ -329,6 +338,7 @@ func (p *Provider) ensureCache(ctx context.Context, c dependencyCache, plan nati
 		ID       string `json:"Id"`
 		Warnings []string
 	}
+	stage = "create initializer (Nix volume copy-up)"
 	if err = p.e.call(ctx, "POST", "/containers/create?name="+c.initializer(), body, &created); err != nil {
 		var api *apiError
 		if errors.As(err, &api) && api.code >= 400 && api.code < 500 && api.code != 409 {
@@ -346,11 +356,12 @@ func (p *Provider) ensureCache(ctx context.Context, c dependencyCache, plan nati
 	if init == nil || init.ID != created.ID || !verifyCacheContainer(*init, c.Key) || init.HostConfig.AutoRemove || init.HostConfig.RestartPolicy.Name != "no" || init.HostConfig.NanoCPUs != cpu || init.HostConfig.Memory != memory || init.HostConfig.MemorySwap != memory {
 		return fmt.Errorf("cache initializer configuration differs")
 	}
+	stage = "start initializer"
 	if err = p.e.call(ctx, "POST", "/containers/"+created.ID+"/start", nil, nil); err != nil {
 		return err
 	}
-	// Poll with the submission deadline. Engine's response-header timeout makes
-	// a single long /wait request unsuitable for cold volume initialization.
+	// Poll with the submission deadline and report which phase timed out.
+	stage = "validate initialized cache"
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {

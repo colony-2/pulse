@@ -2,10 +2,17 @@ package docker
 
 import (
 	"context"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/colony-2/pulse/internal/config"
+	"github.com/colony-2/pulse/internal/scheduler"
 	"github.com/colony-2/pulse/pkg/compute"
 )
 
@@ -296,5 +303,78 @@ func TestCacheInitializerUnseenCreateRetainsReservation(t *testing.T) {
 	used, _, err := p.usage(context.Background())
 	if err != nil || used.Slots != 1 {
 		t.Fatal("lost uncertain initializer reservation", used, err)
+	}
+}
+
+// Exercise both real deadlines: the no-config scheduler budget and the Engine
+// Unix-socket transport. The old 30s limits fail before cold copy-up completes.
+func TestColdCacheCreationBeyondThirtySeconds(t *testing.T) {
+	d := &daemon{containers: map[string]container{}}
+	// Keep Unix socket paths below macOS's sockaddr_un limit even when its
+	// temporary directory already has a long /var/folders prefix.
+	dir, err := os.MkdirTemp("", "pulse-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "docker.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/containers/create") && strings.HasPrefix(r.URL.Query().Get("name"), "pulse-cache-init-") {
+			select {
+			case <-time.After(31 * time.Second):
+			case <-r.Context().Done():
+				return
+			}
+		}
+		d.serve(w, r)
+	}))
+	server.Listener.Close()
+	server.Listener = listener
+	server.Start()
+	defer server.Close()
+	p, err := open(t.Context(), Config{CPUMillis: 2000, MemoryBytes: 4 << 30, MaxContainers: 2}, newEngine(socket), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Parse([]byte("targets: [{jobdb: 'http://localhost:8080/tenant'}]"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Call >= cfg.Batch || cfg.Batch >= cfg.Lease {
+		t.Fatal("defaults must leave time for submission and lease handoff", cfg.Call, cfg.Batch, cfg.Lease)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), cfg.Batch)
+	defer cancel()
+	l := cachedLaunch("slow-copy")
+	sched := scheduler.New(cfg.Cool, cfg.Call)
+	results, err := sched.Run(ctx, "test", []scheduler.Service{{Name: "docker", Priority: 1, Provider: p}}, []scheduler.Job{{Key: scheduler.Key{Instance: "db", Tenant: "tenant", Job: "slow-copy"}, Request: l.Request, Process: l.Process}})
+	if err != nil || len(results) != 1 || results[0].Submission.Status != compute.Accepted {
+		t.Fatal(results, err)
+	}
+}
+
+func TestCacheInitializerCancellationCleansUpAndAllowsRetry(t *testing.T) {
+	d := &daemon{containers: map[string]container{}, initRunning: true}
+	p, s := testProvider(t, d)
+	defer s.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	out, _ := p.Submit(ctx, []compute.Launch{cachedLaunch("canceled")})
+	if len(out) != 1 || out[0].Status != compute.Unavailable {
+		t.Fatal(out)
+	}
+	used, _, err := p.usage(t.Context())
+	if err != nil || used.Slots != 0 {
+		t.Fatal("canceled initializer still occupies capacity", used, err)
+	}
+	d.mu.Lock()
+	d.initRunning = false
+	d.mu.Unlock()
+	if got := submitCached(t, p, cachedLaunch("retry")); got.Status != compute.Accepted {
+		t.Fatal(got)
 	}
 }

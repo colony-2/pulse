@@ -60,12 +60,30 @@ func TestDockerDependencyCacheIntegration(t *testing.T) {
 	t.Cleanup(func() { p.Close() })
 	keys := map[string]bool{}
 	t.Cleanup(func() {
-		cleanup, stop := context.WithTimeout(context.Background(), 30*time.Second)
+		cleanup, stop := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer stop()
+		// Failed submissions may create an initializer without a worker. This
+		// derived image is unique to the test, so discover those records too.
+		helpers, err := exec.CommandContext(cleanup, "docker", "--host", socket, "ps", "-aq", "--filter", "ancestor="+image, "--filter", "label=pulse_resource_role=cache-init").CombinedOutput()
+		if err != nil {
+			t.Errorf("list cache initializers: %v: %s", err, helpers)
+		}
+		for _, id := range strings.Fields(string(helpers)) {
+			key, err := exec.CommandContext(cleanup, "docker", "--host", socket, "inspect", "--format", `{{index .Config.Labels "pulse_cache_key"}}`, id).CombinedOutput()
+			if err != nil {
+				t.Errorf("inspect cache initializer: %v: %s", err, key)
+				continue
+			}
+			keys[strings.TrimSpace(string(key))] = true
+		}
 		for key := range keys {
-			exec.CommandContext(cleanup, "docker", "--host", socket, "rm", "-f", "pulse-cache-init-"+key).CombinedOutput()
+			if out, err := exec.CommandContext(cleanup, "docker", "--host", socket, "rm", "-f", "pulse-cache-init-"+key).CombinedOutput(); err != nil && !strings.Contains(string(out), "No such container") {
+				t.Errorf("remove cache initializer: %v: %s", err, out)
+			}
 			for _, kind := range []string{"nix", "tools"} {
-				exec.CommandContext(cleanup, "docker", "--host", socket, "volume", "rm", "pulse-cache-v1-"+key+"-"+kind).CombinedOutput()
+				if out, err := exec.CommandContext(cleanup, "docker", "--host", socket, "volume", "rm", "pulse-cache-v1-"+key+"-"+kind).CombinedOutput(); err != nil && !strings.Contains(string(out), "no such volume") {
+					t.Errorf("remove cache volume: %v: %s", err, out)
+				}
 			}
 		}
 	})
@@ -77,6 +95,21 @@ func TestDockerDependencyCacheIntegration(t *testing.T) {
 			l.Process.Env["UV_OFFLINE"] = "1"
 			l.Process.Env["pnpm_config_offline"] = "true"
 		}
+		// Register before Submit: a timed-out worker create may still appear.
+		t.Cleanup(func() {
+			cleanup, stop := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer stop()
+			ids, err := exec.CommandContext(cleanup, "docker", "--host", socket, "ps", "-aq", "--filter", "label=pulse_launch_id="+id).CombinedOutput()
+			if err != nil {
+				t.Errorf("list cache workers: %v: %s", err, ids)
+				return
+			}
+			for _, cid := range strings.Fields(string(ids)) {
+				if out, err := exec.CommandContext(cleanup, "docker", "--host", socket, "rm", "-f", cid).CombinedOutput(); err != nil && !strings.Contains(string(out), "No such container") {
+					t.Errorf("remove cache worker: %v: %s", err, out)
+				}
+			}
+		})
 		out, err := p.Submit(ctx, []compute.Launch{l})
 		if err != nil || len(out) != 1 || out[0].Status != compute.Accepted {
 			t.Fatalf("submit: %+v %v", out, err)
@@ -86,7 +119,6 @@ func TestDockerDependencyCacheIntegration(t *testing.T) {
 			t.Fatalf("missing worker: %v", ids)
 		}
 		cid := ids[0]
-		t.Cleanup(func() { exec.Command("docker", "--host", socket, "rm", "-f", cid).CombinedOutput() })
 		var state struct {
 			Config struct{ Labels map[string]string }
 			Mounts []struct {

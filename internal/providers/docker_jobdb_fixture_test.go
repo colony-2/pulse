@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -46,12 +47,14 @@ func newDockerJobDB(t *testing.T, ctx context.Context, docker func(*testing.T, .
 	// runner's filesystem. Worker containers still use the unmodified base image.
 	id := docker(t, "create", "--publish", "8080", "--entrypoint", "/tmp/jobdb-fixture", c2jIntegrationImage)
 	t.Cleanup(func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
 		if t.Failed() {
-			out, _ := exec.CommandContext(cleanup, "docker", "--host", socket, "logs", id).CombinedOutput()
+			logs, stop := context.WithTimeout(context.Background(), 15*time.Second)
+			out, _ := exec.CommandContext(logs, "docker", "--host", socket, "logs", id).CombinedOutput()
+			stop()
 			t.Logf("JobDB fixture logs:\n%s", out)
 		}
+		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
 		if out, err := exec.CommandContext(cleanup, "docker", "--host", socket, "rm", "-f", id).CombinedOutput(); err != nil {
 			t.Errorf("remove fixture: %v: %s", err, out)
 		}
@@ -109,18 +112,9 @@ func reachableFixture(ctx context.Context, client *http.Client, candidates []str
 	for ctx.Err() == nil {
 		failures = nil
 		for _, candidate := range candidates {
-			req, err := http.NewRequestWithContext(ctx, "GET", candidate+"/healthz", nil)
-			if err != nil {
-				return "", err
-			}
-			response, err := client.Do(req)
+			err := probeFixture(ctx, client, candidate)
 			if err == nil {
-				body, readErr := io.ReadAll(response.Body)
-				response.Body.Close()
-				if readErr == nil && response.StatusCode == 200 && string(body) == "pulse-jobdb-fixture" {
-					return candidate, nil
-				}
-				err = fmt.Errorf("unexpected health response: %s", response.Status)
+				return candidate, nil
 			}
 			failures = append(failures, candidate+": "+err.Error())
 		}
@@ -130,6 +124,26 @@ func reachableFixture(ctx context.Context, client *http.Client, candidates []str
 		}
 	}
 	return "", fmt.Errorf("no reachable published JobDB endpoint: %s", strings.Join(failures, "; "))
+}
+
+func probeFixture(ctx context.Context, client *http.Client, endpoint string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint+"/healthz", nil)
+	if err != nil {
+		return err
+	}
+	response, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1024))
+	if err != nil {
+		return err
+	}
+	if response.StatusCode != 200 || string(body) != "pulse-jobdb-fixture" {
+		return fmt.Errorf("unexpected health response: %s", response.Status)
+	}
+	return nil
 }
 
 func TestReachableFixtureRunnerTopologies(t *testing.T) {
@@ -215,13 +229,24 @@ func (f *dockerJobDB) localhostURL(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !net.ParseIP(target.Hostname()).IsLoopback() {
-		// In a sibling test runner, localhost is the runner, not the Docker host.
-		// Only the controller gets this local forwarder. Workers still reach the
-		// actual daemon-published port through production host-gateway translation.
-		listener, err := net.Listen("tcp4", "127.0.0.1:"+f.publishedPort)
-		if err != nil {
-			t.Fatal(err)
+	// The selected controller URL does not identify the runner's topology:
+	// a native runner can select the gateway while loopback is still starting.
+	// Probe first: Docker can publish through NAT without a listening socket.
+	if probeFixture(f.ctx, f.client, "http://127.0.0.1:"+f.publishedPort) == nil {
+		return "http://localhost:" + f.publishedPort
+	}
+	// If readiness raced this probe and Docker owns the socket, wait for it.
+	listener, err := net.Listen("tcp4", "127.0.0.1:"+f.publishedPort)
+	if err != nil {
+		if _, probeErr := reachableFixture(f.ctx, f.client, []string{"http://127.0.0.1:" + f.publishedPort}); probeErr != nil {
+			t.Fatalf("localhost fixture: bind: %v; probe: %v", err, probeErr)
+		}
+	} else {
+		// A sibling runner needs a controller-only forwarder. Workers still use
+		// the daemon's published port through host-gateway translation.
+		if (net.ParseIP(target.Hostname()).IsLoopback() || target.Hostname() == "localhost") && target.Port() == f.publishedPort {
+			listener.Close()
+			t.Fatal("published loopback fixture disappeared")
 		}
 		proxy := httputil.NewSingleHostReverseProxy(target)
 		proxy.Transport = f.client.Transport
@@ -248,7 +273,7 @@ func TestPeerRunnerLocalhostFixtureForward(t *testing.T) {
 	}
 	_, port, _ := net.SplitHostPort(reservation.Addr().String())
 	reservation.Close()
-	f := &dockerJobDB{controllerURL: target, publishedPort: port, client: origin.Client()}
+	f := &dockerJobDB{controllerURL: target, publishedPort: port, client: origin.Client(), ctx: t.Context()}
 	response, err := origin.Client().Get(f.localhostURL(t) + "/docker-test")
 	if err != nil {
 		t.Fatal(err)
@@ -257,5 +282,24 @@ func TestPeerRunnerLocalhostFixtureForward(t *testing.T) {
 	body, err := io.ReadAll(response.Body)
 	if err != nil || response.StatusCode != http.StatusOK || string(body) != "peer fixture response" {
 		t.Fatal(response.Status, string(body), err)
+	}
+}
+
+// Reproduce Linux CI: the gateway was selected, but Docker already binds the
+// published port on the native runner. Readiness can still be in progress.
+func TestNativeRunnerLocalhostFixtureAlreadyPublished(t *testing.T) {
+	var probes atomic.Int32
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" && probes.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		io.WriteString(w, "pulse-jobdb-fixture")
+	}))
+	defer origin.Close()
+	u, _ := url.Parse(origin.URL)
+	f := &dockerJobDB{controllerURL: "http://192.0.2.1:" + u.Port(), publishedPort: u.Port(), client: origin.Client(), ctx: t.Context()}
+	if got := f.localhostURL(t); got != "http://localhost:"+u.Port() || probes.Load() < 2 {
+		t.Fatal("did not reuse the published fixture after readiness", got)
 	}
 }
