@@ -36,7 +36,7 @@ Pulse needs an HTTP(S) JobDB service with a tenant path. A missing tenant produc
 | Setting | Default |
 | --- | --- |
 | Provider | Local Docker, discovered using the active Docker context/socket |
-| Image | `ghcr.io/colony-2/shai-mega:latest` |
+| Image | `ghcr.io/colony-2/base:latest` |
 | CPU / memory / scratch | `1` / `1Gi` / `1Gi` |
 | Platform | Docker daemon's native Linux platform for a single Docker provider; otherwise `linux/<host architecture>` |
 | Execution timeout | Managed by c2j; no Pulse cap |
@@ -86,6 +86,49 @@ Leave room in `batch_timeout` for provider submission after the claim phase, and
 `cooldown` is provisioning-failure backoff. After definite non-start, Pulse releases the unused lease by rescheduling the same route with a wait deadline, preserving task coordinates and client payload. JobDB persists that wait across controller restarts. Pulse also keeps local failure backoff, including claim/preparation failures. Accepted and uncertain submissions have no local cooldown: they retain their lease until c2j releases it or it expires. A successful executor yield can therefore be scheduled on the next poll without waiting for an old cooldown.
 
 The configured `jobdb_token_env` authorizes discovery and claiming on the controller. It is not copied into the job container. Use JobDB v0.0.22 or later with authoritative supplied-lease renewal, a c2j image supporting `run with-lease`, and a provider supporting sensitive stdin. No activation API or lease transfer transaction is required. See [provider image and transport requirements](providers.md).
+
+## Docker dependency caches
+
+The Docker provider automatically creates shared dependency volumes for
+`ghcr.io/colony-2/base` images, including tags and pinned digests. No host Nix,
+manual volume setup, or daemon is required. Other images run without these mounts.
+Optional overrides:
+
+```yaml
+providers:
+  docker:
+    type: docker
+    dependency_cache:
+      enabled: true
+      namespace: default
+      generation: "1"
+      max_age: 720h
+```
+
+These are the defaults. Set `enabled: false` to use container-local stores.
+Change `generation` to get fresh stores. Cache identity also includes the JobDB
+instance, tenant, resolved image, and native platform. Docker aliases for one
+socket must agree on cache policy. `max_age` accepts positive Go durations up to
+`8760h`; it measures age since initialization, not time since last use.
+
+Pulse retains c2j tools, uv downloads, and pnpm's store under `/var/cache/pulse`,
+and the complete image-seeded `/nix` tree in a second volume. Workers use direct
+local Nix access with automatic GC disabled. The image-provided Python is used;
+automatic interpreter downloads are disabled. Conflicting cache environment
+settings and scratch paths overlapping these mounts are rejected.
+
+A short-lived initializer validates a new pair before worker launch. Its stopped
+container records readiness; it consumes no running capacity. Pulse checks for
+expired pairs at startup and at most hourly during polling, deleting only pairs
+with no worker references and no uncertain creates. Active workers continue to
+use their stores when Pulse stops. Cleanup resumes when Pulse restarts with
+caching enabled and the same operator namespace. Volumes have no disk quota.
+
+Shared writable executable caches assume jobs within a tenant trust each other;
+disable sharing for mutually untrusted jobs. Workers must not run Nix GC or delete
+shared store contents. See the [cache design](../PROPOSAL_DOCKER_DEPENDENCY_CACHES.md)
+for failure recovery and image prerequisites. In particular, the reviewed base
+image's c2j `0.0.63` predates addons: addon jobs require a newer worker in that image.
 
 ## Docker or a native executable
 

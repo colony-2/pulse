@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,7 +34,7 @@ import (
 	dockerprovider "github.com/colony-2/pulse/internal/providers/docker"
 )
 
-const c2jIntegrationImage = "ghcr.io/colony-2/shai-mega:latest"
+const c2jIntegrationImage = "ghcr.io/colony-2/base:latest"
 
 // TestDockerC2JIntegration exercises the installed executor, not a c2j test
 // harness or a binary copied out of the module cache. It deliberately runs in
@@ -84,14 +85,14 @@ func TestDockerC2JIntegration(t *testing.T) {
 			case "success and heartbeat":
 				// Wait for a real background renewal before allowing the command to
 				// complete. There is no sleep-based assumption about VM startup speed.
-				run = "curl --fail --silent '" + f.url + "/gate'; " + run
+				run = pythonHTTPGet(f.url+"/gate") + "; " + run
 			case "host gateway connectivity":
 				_, port, err := net.SplitHostPort(strings.TrimPrefix(f.url, "http://"))
 				if err != nil {
 					t.Fatal(err)
 				}
 				gateway := "http://" + net.JoinHostPort("host.docker.internal", port)
-				run = "test \"$(curl --fail --silent '" + gateway + "/healthz')\" = pulse-jobdb-fixture; " + run
+				run = "test \"$(" + pythonHTTPGet(gateway+"/healthz") + ")\" = pulse-jobdb-fixture; " + run
 			case "recipe failure":
 				run = "echo intentional-recipe-failure >&2; exit 23"
 			case "recipe timeout":
@@ -99,10 +100,10 @@ func TestDockerC2JIntegration(t *testing.T) {
 				run = "sleep 300; echo must-not-complete"
 			case "lease import transport failure":
 				f.dropImport.Store(true)
-				run = "curl --fail '" + f.url + "/forbidden'"
+				run = pythonHTTPGet(f.url + "/forbidden")
 			case "heartbeat transport failure":
 				f.dropHeartbeat.Store(true)
-				run = "curl --fail --silent '" + f.url + "/gate'; curl --fail '" + f.url + "/forbidden'"
+				run = pythonHTTPGet(f.url+"/gate") + "; " + pythonHTTPGet(f.url+"/forbidden")
 			}
 			run = "set -eu; " + run
 			rec, err := recipe.LoadRecipeFromString([]byte("id: docker-executor\n" + extra + "op: command_execution\ninputs:\n  run: " + fmt.Sprintf("%q", run) + "\noutputs:\n  result: '${{ op.outputs.stdout }}'\n"))
@@ -163,6 +164,19 @@ func TestDockerC2JIntegration(t *testing.T) {
 					}
 					if output, err := exec.CommandContext(cleanup, "docker", "--host", socket, "rm", "-f", id).CombinedOutput(); err != nil && !strings.Contains(string(output), "No such container") {
 						t.Errorf("cleanup: %v\n%s", err, output)
+					}
+				}
+				// Initialization is logged before worker creation, including failed
+				// launches. Delete only namespaces this isolated fixture created.
+				for _, match := range regexp.MustCompile(`Docker dependency cache initialized cache=([a-f0-9]{64})`).FindAllSubmatch(out, -1) {
+					cacheKey := string(match[1])
+					if output, err := exec.CommandContext(cleanup, "docker", "--host", socket, "rm", "pulse-cache-init-"+cacheKey).CombinedOutput(); err != nil {
+						t.Errorf("cleanup initializer: %v: %s", err, output)
+					}
+					for _, kind := range []string{"nix", "tools"} {
+						if output, err := exec.CommandContext(cleanup, "docker", "--host", socket, "volume", "rm", "pulse-cache-v1-"+cacheKey+"-"+kind).CombinedOutput(); err != nil {
+							t.Errorf("cleanup cache: %v: %s", err, output)
+						}
 					}
 				}
 			})
@@ -418,8 +432,25 @@ func newDockerJobDB(t *testing.T, ctx context.Context, docker func(*testing.T, .
 	if len(candidates) == 0 {
 		t.Fatal("no host IPv4 interface for the container's JobDB connection")
 	}
-	script := `for url do if [ "$(curl --noproxy '*' --silent --max-time 3 "$url/healthz")" = pulse-jobdb-fixture ]; then printf '%s' "$url"; exit 0; fi; done; exit 1`
-	f.url = docker(t, append([]string{"run", "--rm", "--entrypoint", "/bin/sh", c2jIntegrationImage, "-ec", script, "probe"}, candidates...)...)
+	script := `import sys, urllib.request
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+failures = []
+for url in sys.argv[1:]:
+    try:
+        if opener.open(url + "/healthz", timeout=3).read() == b"pulse-jobdb-fixture":
+            print(url, end="")
+            sys.exit(0)
+    except Exception as error:
+        failures.append(url + ": " + str(error))
+print("\n".join(failures), file=sys.stderr)
+sys.exit(1)
+`
+	f.url = docker(t, append([]string{"run", "--rm", "--entrypoint", "python3", c2jIntegrationImage, "-c", script}, candidates...)...)
 	t.Logf("real JobDB HTTP endpoint: %s", f.url)
 	return f
+}
+
+// The base image deliberately supplies Python rather than the mega image's curl.
+func pythonHTTPGet(address string) string {
+	return "python3 -c 'import sys, urllib.request; sys.stdout.buffer.write(urllib.request.build_opener(urllib.request.ProxyHandler({})).open(sys.argv[1], timeout=300).read())' " + fmt.Sprintf("%q", address)
 }

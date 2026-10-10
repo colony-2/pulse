@@ -12,6 +12,7 @@ import (
 	"github.com/colony-2/pulse/pkg/compute"
 	"github.com/distribution/reference"
 	"os"
+	"time"
 )
 
 func Build(ctx context.Context, cfg *config.Config) (map[string]compute.Provider, func(), error) {
@@ -70,6 +71,14 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]compute.Provider
 				}
 			}
 			dc := docker.Config{Socket: socket, LockDir: p.LockDir, ScratchPath: p.ScratchPath, RegistryAuth: os.Getenv(p.RegistryAuthEnv), CPUMillis: cpu, MemoryBytes: mem, Overhead: overhead, MaxContainers: p.Capacity.MaxContainers}
+			if p.DependencyCache != nil {
+				cache := p.DependencyCache
+				dc.DependencyCache = docker.CacheConfig{Disabled: cache.Enabled != nil && !*cache.Enabled, Namespace: cache.Namespace, Generation: cache.Generation}
+				dc.DependencyCache.MaxAge, e = time.ParseDuration(cache.MaxAge)
+				if e != nil {
+					return fail(e)
+				}
+			}
 			if prior, ok := locals[socket]; ok {
 				if prior.config != dc {
 					return fail(fmt.Errorf("Docker aliases must share an identical budget/configuration"))

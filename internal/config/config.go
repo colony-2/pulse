@@ -32,6 +32,7 @@ type Target struct {
 	Tenant        string    `yaml:"-"`
 }
 type Provider struct {
+	DependencyCache    *DependencyCache  `yaml:"dependency_cache"`
 	SupervisorPath     string            `yaml:"supervisor_path"`
 	ImageStorageBounds map[string]string `yaml:"image_storage_bounds"`
 	MaxAzureCPU        int64             `yaml:"max_azure_cpu_millis"`
@@ -63,6 +64,13 @@ type Provider struct {
 	EnvironmentID   string   `yaml:"environment_id"`
 	ServiceAccount  string   `yaml:"service_account"`
 	Command         string   `yaml:"command"`
+}
+
+type DependencyCache struct {
+	Enabled    *bool  `yaml:"enabled"`
+	Namespace  string `yaml:"namespace"`
+	Generation string `yaml:"generation"`
+	MaxAge     string `yaml:"max_age"`
 }
 type Config struct {
 	HTTP struct {
@@ -143,7 +151,7 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 		}
 	}
 	if c.Defaults.Image == "" {
-		c.Defaults.Image = "ghcr.io/colony-2/shai-mega:latest"
+		c.Defaults.Image = "ghcr.io/colony-2/base:latest"
 	}
 	if c.Defaults.Platform == "" {
 		c.Defaults.Platform = "linux/" + runtime.GOARCH
@@ -288,6 +296,26 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 			return nil, fmt.Errorf("unknown provider type %q", p.Type)
 		}
 		if p.Type == "docker" {
+			if p.DependencyCache == nil {
+				p.DependencyCache = &DependencyCache{}
+			}
+			cache := p.DependencyCache
+			if cache.Namespace == "" {
+				cache.Namespace = "default"
+			}
+			if cache.Generation == "" {
+				cache.Generation = "1"
+			}
+			if cache.MaxAge == "" {
+				cache.MaxAge = "720h"
+			}
+			age, err := time.ParseDuration(cache.MaxAge)
+			if err != nil || age <= 0 || age > 365*24*time.Hour {
+				return nil, fmt.Errorf("invalid dependency_cache.max_age")
+			}
+			if len(cache.Namespace) > 128 || len(cache.Generation) > 128 || strings.ContainsAny(cache.Namespace+cache.Generation, "\x00\r\n") {
+				return nil, fmt.Errorf("invalid dependency_cache namespace or generation")
+			}
 			if p.Overhead == "" {
 				p.Overhead = "256Mi"
 			}
@@ -310,6 +338,8 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 				p.Capacity.MaxContainers = 1
 			}
 			c.Providers[name] = p
+		} else if p.DependencyCache != nil {
+			return nil, fmt.Errorf("dependency_cache is supported only by Docker")
 		}
 	}
 	instances := map[string]string{}

@@ -13,7 +13,7 @@ make vet
 make test-packaging # npm installer tests
 ```
 
-Job discovery uses `github.com/colony-2/c2j/pkg/joblist`, pinned in `go.mod`. No c2j executable is needed to build or run the controller. Executor job images still need c2j. The supplied-lease integration pins c2j `v0.0.63-0.20261006024550-6709c8de92f6` and JobDB `v0.0.26`; there is no local module replacement.
+Job discovery uses `github.com/colony-2/c2j/pkg/joblist`, pinned in `go.mod`. No c2j executable is needed to build or run the controller. Executor job images still need c2j. The integration pins c2j `v0.0.65` and JobDB `v0.0.28`; there is no local module replacement.
 
 When updating c2j, verify the public listing projection and execution compatibility against the new dependency. Keep the dependency pinned and run `go mod tidy -diff` to check module tidiness.
 
@@ -34,12 +34,12 @@ python3 -m venv /tmp/pulse-protocol-venv
 Cloud adapter tests use HTTP doubles for native APIs and credential endpoints. Docker unit tests use a fake daemon API. On Linux and macOS, ordinary `go test ./...` also runs real Docker integration tests by default. To confirm container execution with uncached, verbose output:
 
 ```sh
-go test -race -count=1 -timeout=45m -run '^TestDocker(C2J)?Integration$' -v ./internal/providers
+go test -race -count=1 -timeout=45m -run '^TestDocker(C2J|DependencyCache)?Integration$' -v ./internal/providers
 ```
 
-Both tests use Pulse's core socket/context discovery. No socket override, opt-in flag, or local c2j installation is required; missing or unusable Docker fails the suite on Linux and macOS.
+These tests use Pulse's core socket/context discovery. No socket override, opt-in flag, or local c2j installation is required; missing or unusable Docker fails the suite on Linux and macOS.
 
-`TestDockerC2JIntegration` pulls `ghcr.io/colony-2/shai-mega:latest`, reports its digest and installed c2j version, and starts a real SQLite-backed JobDB HTTP server and Git HTTP repository. It invokes the native `pulse run --once` CLI with only `C2J_JOBDB`, so provider, image, platform, resources, and lease duration use production defaults. Pulse discovers and claims a submitted recipe, then hands the lease over stdin to the image's installed `c2j run with-lease`. The test checks job completion, saved output and execution artifacts, background heartbeat renewal, container-to-host access through `host.docker.internal`, persisted recipe failures, recipe timeout enforcement, and termination on initial or background renewal transport failures. The transport test drops an actual TCP connection and checks the reported `HTTP status 0` error. Workers receive no host mounts or replacement binaries. The test subscribes to Docker logs and removal notifications before allowing execution to finish, then verifies automatic removal on both successful and failed jobs. Heartbeat cases wait for protocol events, including the default lease's renewal interval, rather than asserting short wall-clock deadlines.
+`TestDockerC2JIntegration` pulls `ghcr.io/colony-2/base:latest`, reports its digest and installed c2j version, and starts a real SQLite-backed JobDB HTTP server and Git HTTP repository. It invokes the native `pulse run --once` CLI with only `C2J_JOBDB`, so provider, image, platform, resources, and lease duration use production defaults. Pulse discovers and claims a submitted recipe, then hands the lease over stdin to the image's installed `c2j run with-lease`. The test checks job completion, saved output and execution artifacts, background heartbeat renewal, container-to-host access through `host.docker.internal`, persisted recipe failures, recipe timeout enforcement, and termination on initial or background renewal transport failures. The transport test drops an actual TCP connection and checks the reported `HTTP status 0` error. Workers receive no host mounts or replacement binaries. The test subscribes to Docker logs and removal notifications before allowing execution to finish, then verifies automatic removal on both successful and failed jobs. Heartbeat cases wait for protocol events, including the default lease's renewal interval, rather than asserting short wall-clock deadlines.
 
 The HTTP fixture automatically selects a host interface reachable from the container. Most cases use the same reachable JobDB URI in native Pulse and container c2j. A dedicated localhost case configures Pulse with a loopback JobDB URL and verifies that its Docker command automatically uses `host.docker.internal`, completes the recipe, and logs the endpoint translation. The fixture listens on all host IPv4 interfaces so Linux bridge networking can reach it too. Go, Git (including `git http-backend`), the Docker CLI, permission to use the daemon, and registry access are required. Each test cleans up its containers and database; downloaded images remain cached.
 
@@ -48,6 +48,18 @@ Image preparation has a separate 30-minute timeout for downloading and unpacking
 `TestDockerIntegration` separately checks process output, finite stdin and EOF, environment delivery, working directory, tmpfs and resource configuration, nonzero exits, restart accounting, capacity reuse, and active-instance listing using Alpine. Resource assertions check either enforced limits or the startup warning and recorded fallback mode. Unit tests cover both modes, socket/context selection, probe failures, cleanup, and recovery across capability changes. Live cloud IAM, networking, image access, resource enforcement, and workload execution still require deployment acceptance checks; report which checks you actually ran.
 
 CI runs Go checks and real Docker jobs on Linux AMD64, Linux ARM64, and macOS Intel (using Colima for the CI daemon), cross-compiles all four release executables, tests npm installation, and smoke-tests both container architectures. See [the test workflow](.github/workflows/test.yaml).
+
+`TestDockerDependencyCacheIntegration` builds a test-only worker using the pinned
+c2j tool manager and copies it into a derived Colony base image. It exercises two
+concurrent cold workers, two offline warm workers after provider restart, scoped
+uv/pnpm versions, Nix tools and extension-output retention, generation changes,
+and automatic volume retirement. It removes its containers, volumes, and derived
+image. The upstream base image remains cached. First runs require Python/npm/Nix
+registry access. This test validates storage and the tool manager; it does not
+replace the supplied-lease test of the image's installed c2j binary or test the
+full extension compiler/replay lifecycle. The reviewed base still ships c2j
+0.0.63, so addon execution needs an upstream image update. Its missing `sed` and
+native Python wheel loader are documented in the [cache design](PROPOSAL_DOCKER_DEPENDENCY_CACHES.md).
 
 ## Build container images
 

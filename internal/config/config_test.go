@@ -38,6 +38,31 @@ func TestConfig(t *testing.T) {
 	}
 }
 
+func TestDependencyCacheConfiguration(t *testing.T) {
+	base := "targets: [{jobdb: https://db.example/tenant, launch_services: [{name: docker, priority: 1}]}]\nproviders:\n  docker:\n    type: docker\n"
+	for _, cache := range []string{"", "    dependency_cache: {}\n", "    dependency_cache: {enabled: false, namespace: custom, generation: '2', max_age: 24h}\n"} {
+		cfg, err := Parse([]byte(base + cache))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := cfg.Providers["docker"].DependencyCache
+		if got == nil || got.Namespace == "" || got.Generation == "" || got.MaxAge == "" {
+			t.Fatal("missing automatic defaults", got)
+		}
+		if strings.Contains(cache, "false") && (got.Enabled == nil || *got.Enabled) {
+			t.Fatal("ignored opt-out")
+		}
+	}
+	for _, age := range []string{"0s", "-1h", "bad", "9000h"} {
+		if _, err := Parse([]byte(base + "    dependency_cache: {max_age: '" + age + "'}\n")); err == nil {
+			t.Fatal("accepted invalid retention", age)
+		}
+	}
+	if _, err := Parse([]byte(strings.Replace(base, "type: docker", "type: remote", 1) + "    dependency_cache: {}\n")); err == nil {
+		t.Fatal("accepted Docker cache on remote provider")
+	}
+}
+
 func TestExampleConfigurations(t *testing.T) {
 	paths, err := filepath.Glob("../../examples/*.yaml")
 	if err != nil || len(paths) == 0 {

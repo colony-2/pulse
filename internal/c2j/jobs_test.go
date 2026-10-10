@@ -10,6 +10,31 @@ import (
 	"time"
 )
 
+func TestPackageBearingDemandUsesC2JProjection(t *testing.T) {
+	base := execution.Requirements{Packages: []string{"uv:pyfiglet==1.0.2"}}
+	demand, err := execution.Initial(&base, "recipe-digest", execution.Requirements{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := execution.Requirements{Packages: []string{"pnpm:typescript@5.8.3"}}
+	demand.NodeRequirements = &node
+	demand.Effective = execution.Overlay(base, node)
+	payload, err := execution.PayloadWithDemand(nil, demand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := execution.Inspect(json.RawMessage(`{}`), payload)
+	if view.Diagnostic != "" || view.Demand == nil || len(view.Demand.Effective.Packages) != 2 {
+		t.Fatal(view)
+	}
+	job := Job{Tenant: "tenant", ID: "job", Execution: &view}
+	want := compute.Allocation{Image: "ghcr.io/colony-2/base:latest", Platform: "linux/arm64", CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30}
+	got, err := job.Allocation(want)
+	if err != nil || got != want {
+		t.Fatal(got, err)
+	}
+}
+
 func TestDemandAndRoute(t *testing.T) {
 	var j Job
 	err := json.Unmarshal([]byte(`{"tenant_id":"t","job_id":"j","status":"READY","next_route":{"jobType":"recipe","taskType":"input:with, spaces"},"execution":{"status":"unresolved","source":"submission","demand":{"schema_version":1,"effective":{"resources":{"memory":"4Gi"}}}}}`), &j)

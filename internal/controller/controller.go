@@ -57,6 +57,15 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 	c.pass++
 	targets = append(targets[offset:], targets[:offset]...)
 	var errs []error
+	for _, provider := range c.Providers {
+		if maintenance, ok := provider.(interface{ Maintain(context.Context) error }); ok {
+			call, cancel := context.WithTimeout(ctx, c.Config.Call)
+			if err := maintenance.Maintain(call); err != nil {
+				c.Log.Warn("provider maintenance deferred", "error", err)
+			}
+			cancel()
+		}
+	}
 	for _, t := range targets {
 		if ctx.Err() != nil {
 			return ctx.Err()

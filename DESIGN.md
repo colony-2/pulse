@@ -200,7 +200,7 @@ The provider contract requires a definite decline to guarantee that its submissi
 
 The 60-second default `cooldown` is failure backoff, not ownership. JobDB persists the release wait deadline. Pulse also keeps local backoff for provisioning and preparation failures. Accepted/uncertain submissions have no residual local cooldown; successful executor yields can be reconsidered on the next poll. Controller restarts and overlapping controller discovery do not bypass JobDB ownership. Provider capacity admission remains independently scoped to its compute pool.
 
-Configuration is one YAML document selected from explicit `--config`, then `PULSE_CONFIG`, then `./pulse.yaml`. The YAML file is optional. c2j settings select the default tenant, Docker supplies compute, and unspecified images use `ghcr.io/colony-2/shai-mega:latest`. Targets can override instance IDs, tenant URLs, and launch-service priorities. See [configuration](docs/configuration.md) and [examples](examples). Pulse retains only in-flight attempts, failure backoff, and round-robin cursors in memory; no controller database is introduced.
+Configuration is one YAML document selected from explicit `--config`, then `PULSE_CONFIG`, then `./pulse.yaml`. The YAML file is optional. c2j settings select the default tenant, Docker supplies compute, and unspecified images use `ghcr.io/colony-2/base:latest`. Targets can override instance IDs, tenant URLs, and launch-service priorities. See [configuration](docs/configuration.md) and [examples](examples). Pulse retains only in-flight attempts, failure backoff, and round-robin cursors in memory; no controller database is introduced.
 
 Pulse does not wait for containers to finish or infer lease ownership from provider inventory. Lease expiry can still overlap external side effects, so applications retain their normal idempotency requirements. Duration limits bound abandoned compute.
 
@@ -275,6 +275,14 @@ The remote adapter implements [the v1 protocol](REMOTE_PROVIDER_PROTOCOL.md), wi
 Use authenticated HTTPS, batches of 1–100 items, canonical integer resource quantities, and per-item launch IDs. The protocol specifies single-attempt submission, truthful declines, deadlines, partial failures, and uncertain outcomes. It requires no durable submission journal, replay handling, fixed terminal retention, or provider recovery loop. Disable automatic submission retries in HTTP clients, proxies, and launch SDKs. Active instance listing is available to operators and tooling without adding a scheduling reconciliation loop. Built-in adapters use the same logical contract without HTTP. Runner registration/long polling remains an implementation detail of a remote provider.
 
 ### Built-in local Docker provider
+
+The [dependency cache design](PROPOSAL_DOCKER_DEPENDENCY_CACHES.md) adds automatic
+tenant/image/platform-scoped Docker volumes for c2j tools, uv, pnpm, and the full
+local Nix store. A bounded initializer seeds each namespace; its stopped container
+records readiness. Workers share writable stores without a daemon. Startup and
+polling maintenance retire expired, unreferenced pairs under admission ownership.
+Package preparation and scope resolution remain in c2j; the compute contract
+does not change.
 
 See [the Docker provider plan](LOCAL_DOCKER_PROVIDER.md). Docker limits individual containers; the adapter must also control admission against explicit CPU, memory, and container-count budgets. Count committed allocations rather than measured utilization. Return per-item `no_capacity` when the pool is full, so normal tier selection can fall back to another service.
 

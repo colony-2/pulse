@@ -26,6 +26,7 @@ const accountingLabel = "pulse_docker_accounting"
 const limitsLabel = "pulse_docker_limits"
 
 type Config struct {
+	DependencyCache                            CacheConfig
 	Socket, LockDir, ScratchPath, RegistryAuth string
 	CPUMillis, MemoryBytes, Overhead           int64
 	MaxContainers                              int
@@ -41,20 +42,23 @@ func (c charge) add(b charge) charge {
 }
 
 type Provider struct {
-	cfg        Config
-	e          *engine
-	platform   string
-	gate       chan struct{}
-	uncertain  map[string]charge
-	lock       *os.File
-	closeOnce  sync.Once
-	unenforced bool
-	extraHosts []string
+	cfg             Config
+	e               *engine
+	platform        string
+	gate            chan struct{}
+	uncertain       map[string]charge
+	lock            *os.File
+	closeOnce       sync.Once
+	unenforced      bool
+	extraHosts      []string
+	lastMaintenance time.Time
 }
 type nativePlan struct {
 	Request    compute.Request
 	ImageID    string
 	Allocation compute.Allocation
+	ImageUser  string
+	ImageEnv   []string
 }
 type hostConfig struct {
 	AutoRemove    bool  `json:"AutoRemove"`
@@ -64,18 +68,27 @@ type hostConfig struct {
 	RestartPolicy struct {
 		Name string `json:"Name"`
 	} `json:"RestartPolicy"`
-	Tmpfs map[string]string `json:"Tmpfs"`
+	Tmpfs  map[string]string `json:"Tmpfs"`
+	Mounts []volumeMount     `json:"Mounts"`
 }
 type container struct {
 	HostConfig hostConfig `json:"HostConfig"`
 	ID         string     `json:"Id"`
 	Name       string     `json:"Name"`
-	Config     struct {
+	Mounts     []struct {
+		Type, Name, Destination string
+		RW                      bool
+	} `json:"Mounts"`
+	Config struct {
 		Labels map[string]string `json:"Labels"`
+		Image  string
+		Env    []string
 	} `json:"Config"`
 	State struct {
-		Status    string `json:"Status"`
-		StartedAt string `json:"StartedAt"`
+		Status     string `json:"Status"`
+		StartedAt  string `json:"StartedAt"`
+		FinishedAt string `json:"FinishedAt"`
+		ExitCode   int    `json:"ExitCode"`
 	} `json:"State"`
 }
 
@@ -99,9 +112,15 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 		}
 	}
 	slog.Info("Docker provider ready", "platform", p.platform, "resource_limits_enforced", !p.unenforced)
+	if err := p.Maintain(ctx); err != nil {
+		slog.Warn("Docker cache maintenance deferred", "error", err)
+	}
 	return p, nil
 }
 func open(ctx context.Context, cfg Config, e *engine, locking bool) (*Provider, error) {
+	if err := cfg.DependencyCache.normalize(); err != nil {
+		return nil, err
+	}
 	if cfg.CPUMillis <= 0 || cfg.MemoryBytes <= 0 || cfg.MaxContainers <= 0 || cfg.Overhead < 0 {
 		return nil, fmt.Errorf("invalid Docker capacity budget")
 	}
@@ -110,6 +129,9 @@ func open(ctx context.Context, cfg Config, e *engine, locking bool) (*Provider, 
 	}
 	if !filepath.IsAbs(cfg.ScratchPath) || cfg.ScratchPath == "/" || strings.Contains(cfg.ScratchPath, ":") {
 		return nil, fmt.Errorf("invalid scratch path")
+	}
+	if !cfg.DependencyCache.Disabled && (pathsOverlap(cfg.ScratchPath, "/nix") || pathsOverlap(cfg.ScratchPath, cachePath)) {
+		return nil, fmt.Errorf("scratch path overlaps dependency cache")
 	}
 	var version struct {
 		APIVersion string `json:"ApiVersion"`
@@ -227,10 +249,28 @@ func (p *Provider) usage(ctx context.Context) (charge, map[string]container, err
 		if id == "" {
 			return charge{}, nil, fmt.Errorf("managed container lacks launch ID")
 		}
+		role := c.Config.Labels[roleLabel]
+		if role != "" && role != "worker" && role != cacheInitRole {
+			return charge{}, nil, fmt.Errorf("unknown managed container role")
+		}
 		if _, ok := found[id]; ok {
 			return charge{}, nil, fmt.Errorf("duplicate managed launch ID")
 		}
-		found[id] = c
+		if role != cacheInitRole {
+			found[id] = c
+		} else if !validInitializer(c) {
+			return charge{}, nil, fmt.Errorf("invalid cache initializer identity")
+		}
+		// A controller interrupted before starting its initializer leaves no
+		// user work to recover. Remove the created helper before it can block
+		// the default one-slot pool indefinitely; the volumes are reseeded later.
+		if role == cacheInitRole && c.State.Status == "created" && c.Config.Labels[cacheOwnerLabel] == p.cacheOwner() {
+			if err := p.e.call(ctx, "DELETE", "/containers/"+c.ID, nil, nil); err != nil && !apiStatus(err, 404) {
+				return charge{}, nil, err
+			}
+			delete(p.uncertain, id)
+			continue
+		}
 		var cost charge
 		if err := json.Unmarshal([]byte(c.Config.Labels[accountingLabel]), &cost); err != nil || cost.CPU <= 0 || cost.Memory <= 0 || cost.Slots != 1 {
 			return charge{}, nil, fmt.Errorf("invalid managed capacity accounting")
@@ -294,6 +334,10 @@ func (p *Provider) resolve(ctx context.Context, r compute.Request, used charge) 
 			RepoDigests  []string `json:"RepoDigests"`
 			OS           string   `json:"Os"`
 			Architecture string   `json:"Architecture"`
+			Config       struct {
+				User string
+				Env  []string
+			}
 		}
 		imagePath := "/images/" + url.PathEscape(r.Image) + "/json"
 		e := p.e.call(ctx, "GET", imagePath, nil, &image)
@@ -328,7 +372,7 @@ func (p *Provider) resolve(ctx context.Context, r compute.Request, used charge) 
 				return nativePlan{}, result.Status, result.Reason
 			}
 		}
-		return nativePlan{Request: r, ImageID: image.ID, Allocation: a}, "", ""
+		return nativePlan{Request: r, ImageID: image.ID, Allocation: a, ImageUser: image.Config.User, ImageEnv: image.Config.Env}, "", ""
 	}
 	return nativePlan{}, result.Status, result.Reason
 }
@@ -362,6 +406,8 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 			if c.Config.Labels["pulse_process_fingerprint"] != hash {
 				r.Status = compute.Rejected
 				r.Reason = "launch ID conflict"
+			} else if key := c.Config.Labels[cacheKeyLabel]; key != "" && !verifyCacheContainer(c, key) {
+				r.Status, r.Reason = compute.Unknown, "existing cache attachment could not be verified"
 			} else if c.State.Status == "created" {
 				r.Status = compute.Unknown
 				r.Reason = "previous launch was created but start is unconfirmed"
@@ -385,6 +431,25 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 			continue
 		}
 		cost := p.cost(plan.Allocation)
+		cache, cacheEnv, cacheErr := p.cachePlan(plan, l.Process.Env)
+		if cacheErr != nil {
+			r.Status, r.Reason = compute.Rejected, cacheErr.Error()
+			out = append(out, r)
+			continue
+		}
+		if cache != nil {
+			if cacheErr = p.ensureCache(ctx, *cache, plan, cost); cacheErr != nil {
+				r.Status, r.Reason = compute.Unavailable, "Docker dependency cache initialization failed: "+cacheErr.Error()
+				out = append(out, r)
+				// An uncertain initializer still reserves capacity, but no worker
+				// has been created and provider fallback remains safe.
+				used, found, err = p.usage(ctx)
+				if err != nil {
+					return out, err
+				}
+				continue
+			}
+		}
 
 		used = used.add(cost)
 		p.uncertain[l.LaunchID] = cost
@@ -394,6 +459,11 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		}
 		labels["pulse_managed_by"] = "pulse"
 		labels["pulse_launch_id"] = l.LaunchID
+		labels[roleLabel] = "worker"
+		delete(labels, cacheKeyLabel)
+		if cache != nil {
+			labels[cacheKeyLabel] = cache.Key
+		}
 		accounting, _ := json.Marshal(cost)
 		labels[accountingLabel] = string(accounting)
 		labels["pulse_process_fingerprint"] = hash
@@ -403,6 +473,12 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		}
 		env := []string{}
 		for k, v := range l.Process.Env {
+			if _, managed := cacheEnv[k]; managed {
+				continue
+			}
+			env = append(env, k+"="+v)
+		}
+		for k, v := range cacheEnv {
 			env = append(env, k+"="+v)
 		}
 		if _, ok := l.Process.Env["TMPDIR"]; !ok {
@@ -417,6 +493,9 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 			cpu, memory = 0, 0
 		}
 		body := map[string]any{"Image": plan.ImageID, "Entrypoint": l.Process.Command, "Cmd": l.Process.Args, "OpenStdin": l.Process.Stdin != "", "StdinOnce": true, "AttachStdin": l.Process.Stdin != "", "Env": env, "Labels": labels, "WorkingDir": l.Process.WorkingDir, "HostConfig": map[string]any{"NanoCpus": cpu, "Memory": memory, "MemorySwap": memory, "RestartPolicy": map[string]any{"Name": "no"}, "AutoRemove": true, "Tmpfs": map[string]string{p.cfg.ScratchPath: fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes)}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "3"}}}}
+		if cache != nil {
+			body["HostConfig"].(map[string]any)["Mounts"] = cache.mounts(true)
+		}
 		if len(p.extraHosts) != 0 {
 			body["HostConfig"].(map[string]any)["ExtraHosts"] = p.extraHosts
 		}
@@ -461,6 +540,11 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		if err = p.e.call(ctx, "GET", "/containers/"+url.PathEscape(created.ID)+"/json", nil, &inspected); err != nil || !inspected.HostConfig.AutoRemove || inspected.HostConfig.NanoCPUs != cpu || inspected.HostConfig.Memory != memory || inspected.HostConfig.MemorySwap != memory || inspected.HostConfig.RestartPolicy.Name != "no" || inspected.HostConfig.Tmpfs[p.cfg.ScratchPath] != fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes) {
 			r.Status = compute.Unknown
 			r.Reason = "Docker configuration verification failed; container not started"
+			out = append(out, r)
+			continue
+		}
+		if cache != nil && (!verifyCacheContainer(inspected, cache.Key) || !environmentContains(inspected.Config.Env, cacheEnv)) {
+			r.Status, r.Reason = compute.Unknown, "Docker cache attachment verification failed; container not started"
 			out = append(out, r)
 			continue
 		}

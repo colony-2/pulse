@@ -31,6 +31,9 @@ func (p *Provider) List(ctx context.Context, q compute.ListRequest) (compute.Lis
 	}
 	items := []compute.Instance{}
 	for _, row := range rows {
+		if row.Labels[roleLabel] == cacheInitRole {
+			continue
+		}
 		state := ""
 		switch row.State {
 		case "created":

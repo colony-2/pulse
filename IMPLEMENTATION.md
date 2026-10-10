@@ -46,7 +46,7 @@ Provider documentation now specifies one submission per selected service per att
 
 ## Pre-launch lease handoff
 
-Pulse now acquires an ordinary JobDB lease before submitting compute and runs `c2j run with-lease`. The controller pins c2j v0.0.63-0.20261006024550-6709c8de92f6 and JobDB v0.0.26, refreshes demand from the leased payload, and exports through the public capability API. Providers carry opaque sensitive stdin; native adapters use the updated `pulse-exec` helper. Remote protocol 1.1.0 adds optional `process.stdin`.
+Pulse now acquires an ordinary JobDB lease before submitting compute and runs `c2j run with-lease`. The controller pins c2j v0.0.65 and JobDB v0.0.28, refreshes demand from the leased payload, and exports through the public capability API. Providers carry opaque sensitive stdin; native adapters use the updated `pulse-exec` helper. Remote protocol 1.1.0 adds optional `process.stdin`.
 
 Accepted and uncertain starts retain the lease without a Pulse heartbeat or cooldown. Definite non-starts release it with JobDB-backed retry delay; local cooldown is failure backoff only. There is no activation phase. Tests cover exact remote lease import/renewal, ownership exclusion, authoritative demand, conservative cleanup, cancellation, transport, and redaction. See [configuration](docs/configuration.md) and [provider deployment requirements](docs/providers.md).
 

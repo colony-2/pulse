@@ -22,6 +22,12 @@ type daemon struct {
 	noLimits     bool
 	inspectError int
 	stdin        map[string]string
+	volumes      map[string]cacheVolume
+	cacheFailure string
+	initExitCode int
+	initRunning  bool
+	dropMount    bool
+	deleteError  bool
 }
 
 func TestExplicitInfrastructureDeadlinesAreNotSilentlyIgnored(t *testing.T) {
@@ -60,6 +66,10 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	enc := json.NewEncoder(w)
+	if d.cacheFailure != "" && r.Method+" "+path == d.cacheFailure {
+		w.WriteHeader(500)
+		return
+	}
 	switch {
 	case path == "/version":
 		enc.Encode(map[string]any{"ApiVersion": "1.47"})
@@ -68,11 +78,59 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/images/"):
 		enc.Encode(map[string]any{"Id": "sha256:config", "Os": "linux", "Architecture": "arm64", "RepoDigests": []string{}})
 	case path == "/containers/json":
-		out := []map[string]string{}
-		for id := range d.containers {
-			out = append(out, map[string]string{"Id": id})
+		var filters map[string][]string
+		json.Unmarshal([]byte(r.URL.Query().Get("filters")), &filters)
+		out := []map[string]any{}
+		for id, c := range d.containers {
+			if len(filters["volume"]) != 0 {
+				matches := false
+				for _, name := range filters["volume"] {
+					for _, m := range c.Mounts {
+						if m.Name == name {
+							matches = true
+						}
+					}
+				}
+				if !matches {
+					continue
+				}
+			}
+			out = append(out, map[string]any{"Id": id, "Labels": c.Config.Labels, "State": c.State.Status})
 		}
 		enc.Encode(out)
+	case path == "/volumes/create":
+		var v cacheVolume
+		json.NewDecoder(r.Body).Decode(&v)
+		if d.volumes == nil {
+			d.volumes = map[string]cacheVolume{}
+		}
+		if prior, ok := d.volumes[v.Name]; ok {
+			enc.Encode(prior)
+			return
+		}
+		v.Scope = "local"
+		v.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		d.volumes[v.Name] = v
+		enc.Encode(v)
+	case path == "/volumes":
+		volumes := []cacheVolume{}
+		for _, v := range d.volumes {
+			volumes = append(volumes, v)
+		}
+		enc.Encode(map[string]any{"Volumes": volumes})
+	case strings.HasPrefix(path, "/volumes/"):
+		name := strings.TrimPrefix(path, "/volumes/")
+		v, ok := d.volumes[name]
+		if !ok {
+			w.WriteHeader(404)
+			return
+		}
+		if r.Method == "DELETE" {
+			delete(d.volumes, name)
+			w.WriteHeader(204)
+			return
+		}
+		enc.Encode(v)
 	case path == "/containers/create":
 		var body map[string]any
 		if e := json.NewDecoder(r.Body).Decode(&body); e != nil {
@@ -90,9 +148,25 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 		id := labels["pulse_launch_id"]
 		var c container
 		c.ID = id
+		c.Name = "/" + r.URL.Query().Get("name")
 		c.Config.Labels = labels
+		c.Config.Image, _ = body["Image"].(string)
+		if values, ok := body["Env"].([]any); ok {
+			for _, v := range values {
+				c.Config.Env = append(c.Config.Env, v.(string))
+			}
+		}
 		raw, _ := json.Marshal(body["HostConfig"])
 		json.Unmarshal(raw, &c.HostConfig)
+		for _, m := range c.HostConfig.Mounts {
+			if d.dropMount && labels[roleLabel] != "cache-init" {
+				continue
+			}
+			c.Mounts = append(c.Mounts, struct {
+				Type, Name, Destination string
+				RW                      bool
+			}{m.Type, m.Source, m.Target, !m.ReadOnly})
+		}
 		c.State.Status = "created"
 		d.containers[id] = c
 		enc.Encode(map[string]any{"Id": id})
@@ -100,6 +174,11 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "/containers/"), "/start")
 		c := d.containers[id]
 		c.State.Status = "running"
+		if c.Config.Labels[roleLabel] == cacheInitRole && !d.initRunning {
+			c.State.Status = "exited"
+			c.State.ExitCode = d.initExitCode
+			c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		}
 		d.containers[id] = c
 		if d.startError {
 			w.WriteHeader(500)
@@ -108,6 +187,14 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	case strings.HasSuffix(path, "/json"):
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "/containers/"), "/json")
+		if _, ok := d.containers[id]; !ok {
+			for k, c := range d.containers {
+				if strings.TrimPrefix(c.Name, "/") == id {
+					id = k
+					break
+				}
+			}
+		}
 		if id == "a" && d.inspectError != 0 {
 			if d.inspectError == http.StatusNotFound {
 				delete(d.containers, id)
@@ -115,7 +202,23 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(d.inspectError)
 			return
 		}
-		enc.Encode(d.containers[id])
+		if c, ok := d.containers[id]; ok {
+			enc.Encode(c)
+		} else {
+			w.WriteHeader(404)
+		}
+	case r.Method == "DELETE" && strings.HasPrefix(path, "/containers/"):
+		if d.deleteError {
+			w.WriteHeader(500)
+			return
+		}
+		id := strings.TrimPrefix(path, "/containers/")
+		if _, ok := d.containers[id]; !ok {
+			w.WriteHeader(404)
+			return
+		}
+		delete(d.containers, id)
+		w.WriteHeader(204)
 	default:
 		w.WriteHeader(404)
 	}

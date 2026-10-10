@@ -1,4 +1,4 @@
-# Optional: Pulse already uses Docker and ghcr.io/colony-2/shai-mega:latest.
+# Optional: Pulse already uses Docker and ghcr.io/colony-2/base:latest.
 # Without this file, the tenant comes from C2J_JOBDB or .c2j/config.yaml.
 # Only pulse is needed on the host; c2j comes from the executor image.
 targets:
