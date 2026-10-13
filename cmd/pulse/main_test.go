@@ -147,7 +147,7 @@ func (r leasedListRuntime) ListJobs(ctx context.Context, req jobdb.ListJobsReque
 }
 
 type listOnlyRuntime struct {
-	jobdb.WorkflowRuntime
+	*toy.Runtime
 	list func(context.Context, jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error)
 }
 
@@ -161,7 +161,7 @@ func TestCLIHTTPAndShutdown(t *testing.T) {
 	if out, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %s %v", out, err)
 	}
-	db := httptest.NewServer(jobremote.NewServer(listOnlyRuntime{list: func(context.Context, jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
+	db := httptest.NewServer(jobremote.NewServer(listOnlyRuntime{Runtime: toy.New(), list: func(context.Context, jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
 		return jobdb.ListJobsResponse{Jobs: []jobdb.JobSummary{}}, nil
 	}}))
 	defer db.Close()

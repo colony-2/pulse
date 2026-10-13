@@ -130,7 +130,7 @@ Shared writable executable caches assume jobs within a tenant trust each other;
 disable sharing for mutually untrusted jobs. Workers must not run Nix GC or delete
 shared store contents. See the [cache design](../PROPOSAL_DOCKER_DEPENDENCY_CACHES.md)
 for failure recovery and image prerequisites. The verified base image includes
-c2j `0.0.65`, matching Pulse's pinned library and supporting declared addons.
+c2j `0.0.65`, supporting declared addons. The controller library is pinned separately in [go.mod](../go.mod).
 
 ## Docker or a native executable
 

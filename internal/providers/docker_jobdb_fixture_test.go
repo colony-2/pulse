@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
+	// Keep the separately compiled testdata fixture's dependencies in go mod tidy.
+	_ "github.com/colony-2/jobdb/pkg/jobdb/runtime/sqlite"
 )
 
 type dockerJobDB struct {

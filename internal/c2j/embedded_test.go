@@ -15,11 +15,12 @@ import (
 	"github.com/colony-2/c2j/pkg/joblist"
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
+	"github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
 	"github.com/colony-2/pulse/pkg/compute"
 )
 
 type readOnly struct {
-	jobdb.WorkflowRuntime
+	*toy.Runtime
 	list func(context.Context, jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error)
 }
 
@@ -39,7 +40,7 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	handler := remote.NewServer(readOnly{list: func(_ context.Context, req jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
+	handler := remote.NewServer(readOnly{Runtime: toy.New(), list: func(_ context.Context, req jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
 		if req.MetadataFilter != nil {
 			t.Error("tenant discovery must not filter repositories")
 		}

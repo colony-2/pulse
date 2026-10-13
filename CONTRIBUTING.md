@@ -13,7 +13,7 @@ make vet
 make test-packaging # npm installer tests
 ```
 
-Job discovery uses `github.com/colony-2/c2j/pkg/joblist`, pinned in `go.mod`. No c2j executable is needed to build or run the controller. Executor job images still need c2j. The integration pins c2j `v0.0.65` and JobDB `v0.0.28`; there is no local module replacement.
+Job discovery uses `github.com/colony-2/c2j/pkg/joblist`, pinned in `go.mod`. No c2j executable is needed to build or run the controller. Executor job images still need c2j. The integration pins c2j `main` commit `e433efff2ccf` (`v0.0.67-0.20261013013741-e433efff2ccf`) and JobDB `v0.0.32`; there is no local module replacement.
 
 When updating c2j, verify the public listing projection and execution compatibility against the new dependency. Keep the dependency pinned and run `go mod tidy -diff` to check module tidiness.
 
@@ -72,7 +72,7 @@ image. The upstream base image remains cached. First runs require Python/npm/Nix
 registry access. This test validates storage and the tool manager; it does not
 replace the supplied-lease test of the image's installed c2j binary or test the
 full extension compiler/replay lifecycle. The verified base ships c2j
-0.0.65, matching the pinned library. Its missing `sed` and
+0.0.65; its installed binary is tested separately from the pinned library. Its missing `sed` and
 native Python wheel loader are documented in the [cache design](PROPOSAL_DOCKER_DEPENDENCY_CACHES.md).
 
 ## Build container images

@@ -115,9 +115,9 @@ c2j 0.0.65; Nix 2.35.2; uv 0.12.22; pnpm 12.9.0
 Node v24.21.0; Python 3.14.7; UID/GID 0:0
 ```
 
-The image's c2j binary and version manifest both identify 0.0.65, matching Pulse's
-`v0.0.65` pin and including the reviewed addon support. Pulse also pins JobDB
-`v0.0.28` in [go.mod](go.mod), and tests package-bearing demand decoding and
+The image's c2j binary and version manifest both identify 0.0.65, including the
+reviewed addon support. Pulse pins its controller-side c2j and JobDB libraries
+separately in [go.mod](go.mod), and tests package-bearing demand decoding and
 allocation projection. The previous image's old-worker prerequisite is resolved.
 
 The tested image also lacks `sed` on PATH, which pnpm-generated launchers need,
