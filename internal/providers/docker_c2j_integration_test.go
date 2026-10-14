@@ -76,7 +76,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 	fixtureBinary := buildDockerJobDBFixture(t, ctx, docker)
 
 	for _, scenario := range []string{"success and heartbeat", "peer connectivity", "host gateway connectivity", "localhost JobDB", "recipe failure", "recipe timeout", "lease import transport failure", "heartbeat transport failure"} {
-		t.Run(scenario, func(t *testing.T) {
+		if !t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
 			docker := dockerFor(ctx)
@@ -305,7 +305,11 @@ func TestDockerC2JIntegration(t *testing.T) {
 			if strings.Contains(strings.Join(c.Config.Env, "\n")+strings.Join(c.Config.Cmd, " "), "leaseToken") {
 				t.Fatal("lease capability leaked into container metadata")
 			}
-		})
+		}) {
+			// A failed launch can leave the shared Docker VM unhealthy. Do not
+			// seed seven more namespaces and bury the first useful failure.
+			t.Fatal("stopping Docker scenarios after first failure")
+		}
 	}
 }
 

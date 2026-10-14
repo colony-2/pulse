@@ -119,7 +119,10 @@ local Nix access with automatic GC disabled. The image-provided Python is used;
 automatic interpreter downloads are disabled. Conflicting cache environment
 settings and scratch paths overlapping these mounts are rejected.
 
-A short-lived initializer validates a new pair before worker launch. Its stopped
+A short-lived initializer copies the image's complete `/nix` tree into the new
+volume and validates it before worker launch. All mounts disable Docker's implicit
+volume population: the copy runs inside the resource-limited helper, which Pulse
+can remove on timeout. Its stopped
 container records readiness; it consumes no running capacity. Pulse checks for
 expired pairs at startup and at most hourly during polling, deleting only pairs
 with no worker references and no uncertain creates. Active workers continue to

@@ -30,8 +30,8 @@ func readAPIError(resp *http.Response) error {
 	return &apiError{code: resp.StatusCode, message: body.Message}
 }
 
-// Requests use their caller's deadline, including slow image pulls and Nix
-// volume copy-up during container creation. A shorter transport deadline would
+// Requests use their caller's deadline, including slow image pulls and
+// container creation. A shorter transport deadline would
 // interrupt provisioning even when the configured call budget permits it.
 func newEngine(socket string) *engine {
 	return &engine{base: "http://docker", client: &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {

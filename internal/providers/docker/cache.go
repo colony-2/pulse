@@ -18,6 +18,7 @@ import (
 
 const (
 	cachePath        = "/var/cache/pulse"
+	cacheSeedPath    = "/pulse-cache-seed/nix"
 	cacheKeyLabel    = "pulse_cache_key"
 	cacheOwnerLabel  = "pulse_cache_owner"
 	cacheLayoutLabel = "pulse_cache_layout"
@@ -77,11 +78,20 @@ func (c dependencyCache) initializer() string       { return "pulse-cache-init-"
 func (c dependencyCache) labels(kind string) map[string]string {
 	return map[string]string{cacheKeyLabel: c.Key, cacheOwnerLabel: c.Owner, cacheLayoutLabel: cacheLayout, roleLabel: kind}
 }
-func (c dependencyCache) mounts(noCopy bool) []volumeMount {
+func (c dependencyCache) mounts() []volumeMount {
 	out := []volumeMount{{Type: "volume", Source: c.volume("tools"), Target: cachePath}, {Type: "volume", Source: c.volume("nix"), Target: "/nix"}}
 	for i := range out {
-		out[i].VolumeOptions.NoCopy = noCopy || out[i].Target == cachePath
+		out[i].VolumeOptions.NoCopy = true
 	}
+	return out
+}
+
+func (c dependencyCache) initializerMounts() []volumeMount {
+	out := c.mounts()
+	// Keep the image's /nix visible as the source. Docker's implicit copy-up
+	// happens before container registration and cannot be canceled reliably.
+	// Copy inside the running, resource-limited helper instead.
+	out[1].Target = cacheSeedPath
 	return out
 }
 
@@ -188,10 +198,12 @@ func verifyCacheContainer(c container, key string) bool {
 		return false
 	}
 	cache := dependencyCache{Key: key}
-	for _, want := range cache.mounts(true) {
+	for _, want := range cache.mounts() {
 		found := false
 		for _, got := range c.Mounts {
-			if got.Destination == want.Target {
+			// Accept completed initializers from the earlier /nix copy-up
+			// implementation too; the volume layout has not changed.
+			if got.Destination == want.Target || (want.Target == "/nix" && got.Destination == cacheSeedPath && validInitializer(c)) {
 				found = got.Type == "volume" && got.Name == want.Source && got.RW
 			}
 		}
@@ -309,7 +321,7 @@ func (p *Provider) ensureCache(ctx context.Context, c dependencyCache, plan nati
 	for k, v := range values {
 		env = append(env, k+"="+v)
 	}
-	body := map[string]any{"Image": plan.ImageID, "Entrypoint": []string{"/bin/sh"}, "Cmd": []string{"-ec", cacheInitializeScript}, "Env": env, "Labels": labels, "HostConfig": map[string]any{"Mounts": c.mounts(false), "NetworkMode": "none", "NanoCpus": cpu, "Memory": memory, "MemorySwap": memory, "RestartPolicy": map[string]string{"Name": "no"}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "1m", "max-file": "1"}}}}
+	body := map[string]any{"Image": plan.ImageID, "Entrypoint": []string{"/bin/sh"}, "Cmd": []string{"-ec", cacheInitializeScript}, "Env": env, "Labels": labels, "HostConfig": map[string]any{"Mounts": c.initializerMounts(), "NetworkMode": "none", "NanoCpus": cpu, "Memory": memory, "MemorySwap": memory, "RestartPolicy": map[string]string{"Name": "no"}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "1m", "max-file": "1"}}}}
 	helperID := labels["pulse_launch_id"]
 	p.uncertain[helperID] = cost
 	complete := false
@@ -338,7 +350,7 @@ func (p *Provider) ensureCache(ctx context.Context, c dependencyCache, plan nati
 		ID       string `json:"Id"`
 		Warnings []string
 	}
-	stage = "create initializer (Nix volume copy-up)"
+	stage = "create initializer"
 	if err = p.e.call(ctx, "POST", "/containers/create?name="+c.initializer(), body, &created); err != nil {
 		var api *apiError
 		if errors.As(err, &api) && api.code >= 400 && api.code < 500 && api.code != 409 {
@@ -361,7 +373,7 @@ func (p *Provider) ensureCache(ctx context.Context, c dependencyCache, plan nati
 		return err
 	}
 	// Poll with the submission deadline and report which phase timed out.
-	stage = "validate initialized cache"
+	stage = "seed and validate cache"
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -374,10 +386,10 @@ func (p *Provider) ensureCache(ctx context.Context, c dependencyCache, plan nati
 		}
 		if init.State.Status == "exited" {
 			if init.State.ExitCode != 0 {
-				return fmt.Errorf("base image cache validation failed (exit %d)", init.State.ExitCode)
+				return fmt.Errorf("base image cache initialization failed (exit %d)", init.State.ExitCode)
 			}
 			complete = true
-			slog.Info("Docker dependency cache initialized", "cache", c.Key, "image_id", plan.ImageID)
+			slog.Info("Docker dependency cache initialized", "cache", c.Key, "image_id", plan.ImageID, "elapsed", time.Since(started))
 			return nil
 		}
 		if init.State.Status == "dead" {
@@ -394,10 +406,11 @@ func (p *Provider) ensureCache(ctx context.Context, c dependencyCache, plan nati
 const cacheInitializeScript = `umask 077
 mkdir -p /var/cache/pulse/tools /var/cache/pulse/uv /var/cache/pulse/pnpm
 for tool in c2j nix uv pnpm node python3 git; do command -v "$tool" >/dev/null; done
-nix-store --check-validity "$(readlink -f /root/.nix-profile)"
+cp -a --reflink=auto /nix/. /pulse-cache-seed/nix/
+nix-store --store 'local?root=/pulse-cache-seed' --check-validity "$(readlink -f /root/.nix-profile)"
 test "$(uv cache dir)" = "$UV_CACHE_DIR"
 case "$(pnpm store path)" in "$pnpm_config_store_dir"/*) ;; *) exit 1;; esac
-python3 -c 'import os; assert os.getuid() == 0; assert os.access("/nix/var/nix/db", os.W_OK)'
+python3 -c 'import os; assert os.getuid() == 0; assert os.access("/pulse-cache-seed/nix/var/nix/db", os.W_OK)'
 `
 
 // removeCache runs under admission ownership. A stopped initializer is both

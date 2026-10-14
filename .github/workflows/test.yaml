@@ -33,7 +33,22 @@ jobs:
       - name: Prepare c2j integration image
         timeout-minutes: 30
         run: docker pull ghcr.io/colony-2/base:latest
-      - run: go test -race -count=1 -timeout=45m ./...
+      - run: go test -race -count=1 -failfast -timeout=45m ./...
+      - name: Docker failure diagnostics
+        if: failure()
+        timeout-minutes: 2
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            vm_stat
+            sysctl vm.swapusage
+            colima status || true
+            colima ssh -- free -h || true
+            colima ssh -- df -h || true
+          fi
+          docker info || true
+          docker ps -a --no-trunc || true
+          docker stats --no-stream || true
+          docker system df || true
       - run: make vet build
       - run: node --test scripts/npm.test.js
       - uses: actions/setup-python@v5

@@ -43,7 +43,22 @@ func TestAutomaticCacheColdWarmAndRestart(t *testing.T) {
 	if len(d.volumes) != 2 || len(d.creates) != 2 {
 		t.Fatal("expected one initializer and two volumes", len(d.creates), d.volumes)
 	}
+	// Every attachment must disable daemon-side copying, which can outlive
+	// a timed-out create before the helper becomes inspectable/removable.
+	for _, create := range d.creates {
+		mounts := create["HostConfig"].(map[string]any)["Mounts"].([]any)
+		for _, raw := range mounts {
+			mount := raw.(map[string]any)
+			if mount["VolumeOptions"].(map[string]any)["NoCopy"] != true {
+				t.Fatal("unbounded Docker volume copy-up enabled", mount)
+			}
+		}
+	}
 	key := d.containers["first"].Config.Labels[cacheKeyLabel]
+	init := d.containers["cache-init-"+key]
+	if len(init.Mounts) != 2 || init.Mounts[1].Destination != cacheSeedPath {
+		t.Fatal("initializer hides the image's Nix source", init.Mounts)
+	}
 	if !verifyCacheContainer(d.containers["first"], key) {
 		t.Fatal("missing verified cache mounts")
 	}
@@ -121,6 +136,30 @@ func TestCacheIdentityAndEnvironment(t *testing.T) {
 	base.Request.Metadata["pulse_tenant_id"] = ""
 	if _, _, err := p.cachePlan(base, nil); err == nil {
 		t.Fatal("accepted missing tenant")
+	}
+}
+
+func TestCacheReusesLegacyCopyUpInitializer(t *testing.T) {
+	d := &daemon{containers: map[string]container{}}
+	p, s := testProvider(t, d)
+	defer s.Close()
+	if got := submitCached(t, p, cachedLaunch("first")); got.Status != compute.Accepted {
+		t.Fatal(got)
+	}
+	key := d.containers["first"].Config.Labels[cacheKeyLabel]
+	id := "cache-init-" + key
+	init := d.containers[id]
+	init.Mounts[1].Destination = "/nix"
+	d.containers[id] = init
+	if got := submitCached(t, p, cachedLaunch("second")); got.Status != compute.Accepted || len(d.creates) != 3 {
+		t.Fatal("existing completed cache was not reused", got)
+	}
+	// A worker must still mount the store at /nix, even though initializers
+	// are allowed to attach it at the seed destination.
+	worker := d.containers["first"]
+	worker.Mounts[1].Destination = cacheSeedPath
+	if verifyCacheContainer(worker, key) {
+		t.Fatal("accepted seed mount on a worker")
 	}
 }
 
@@ -307,7 +346,7 @@ func TestCacheInitializerUnseenCreateRetainsReservation(t *testing.T) {
 }
 
 // Exercise both real deadlines: the no-config scheduler budget and the Engine
-// Unix-socket transport. The old 30s limits fail before cold copy-up completes.
+// Unix-socket transport. Even a slow create must use the submission deadline.
 func TestColdCacheCreationBeyondThirtySeconds(t *testing.T) {
 	d := &daemon{containers: map[string]container{}}
 	// Keep Unix socket paths below macOS's sockaddr_un limit even when its

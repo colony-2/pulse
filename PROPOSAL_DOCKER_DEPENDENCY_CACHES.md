@@ -216,10 +216,16 @@ Initialize the **entire `/nix` tree from exactly the resolved worker image**.
 1. Under the existing Docker admission ownership, create and validate both named
    volumes. A new namespace begins unready.
 2. Create a bounded initializer from the resolved image, mounting the empty Nix
-   volume at `/nix` with Docker's normal initial population enabled. Docker copies
-   the image's existing tree into the empty volume. Mount the tool volume at its
-   final path and create its directories for the supported UID/GID.
-3. Verify the base profile, `c2j`, managers, store database permissions, and cache
+   volume at `/pulse-cache-seed/nix` with `VolumeOptions.NoCopy`. The running
+   helper copies `/nix/.` into that volume with `cp -a --reflink=auto`, preserving
+   the image's database, profiles, roots, and store. Mount the tool volume at its
+   final path with `NoCopy` and create its directories for the supported UID/GID.
+   [Docker's implicit population](https://github.com/moby/moby/blob/v28.4.0/daemon/create_unix.go)
+   can continue after a create request times out,
+   before its container is registered for inspection/removal. Keeping the copy
+   inside the helper makes it subject to resource limits and timeout cleanup.
+3. Verify the copied base profile using `local?root=/pulse-cache-seed`, plus
+   `c2j`, managers, store database permissions, and cache
    paths. Keep the successful **stopped** initializer as Docker's readiness
    record, named `pulse-cache-init-<hash>`. Inspect its exit status, image,
    ownership, mounts, and environment before reuse. No process remains running,
@@ -292,7 +298,7 @@ job's supplied lease. Never spend the worker's 30-minute setup allowance on a
 provider operation before c2j has started renewing ownership. Default calls have
 a two-minute budget inside a three-minute batch, leaving headroom in the
 five-minute lease. Docker API requests use that deadline; a separate 30-second
-response-header timeout must not interrupt cold Nix volume copy-up. Explicit
+response-header timeout must not interrupt cold initialization. Explicit
 operator timeouts continue to bound initialization.
 
 There is no persistent helper process to charge or shut down. Keep the stopped
