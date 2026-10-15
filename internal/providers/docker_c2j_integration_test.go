@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -258,13 +259,17 @@ func TestDockerC2JIntegration(t *testing.T) {
 				if ids := strings.Fields(docker(t, "ps", "-aq", "--filter", "label=pulse_job_id="+key.JobId)); len(ids) != 0 || f.stats(t).Claims != 1 {
 					t.Fatal("completed job was claimed or launched again")
 				}
-			case "recipe failure", "recipe timeout":
+			case "recipe failure":
 				want := "command execution failed: exit status 23"
-				if scenario == "recipe timeout" {
-					want = "job total timed out after 1s"
-				}
 				if code == "0" || resultErr == nil || info.Status != jobdb.JobStatusCompleted || !strings.Contains(logs+fmt.Sprint(resultErr), want) {
 					t.Fatalf("missing c2j failure outcome %q: exit=%s data=%s\n%s", want, code, data, logs)
+				}
+			case "recipe timeout":
+				// Scope-based execution reports the deadline as a structured timeout;
+				// its diagnostic text need not repeat the configured recipe duration.
+				var timeoutErr *jobdb.TimeoutError
+				if code == "0" || info.Status != jobdb.JobStatusCompleted || !errors.As(resultErr, &timeoutErr) || timeoutErr.Payload.Scope != jobdb.TimeoutScopeTotal || timeoutErr.Payload.Code != "timeout_total" || timeoutErr.Payload.Retryable {
+					t.Fatalf("missing total recipe timeout: exit=%s data=%s error=%v\n%s", code, data, resultErr, logs)
 				}
 			case "lease import transport failure":
 				if code == "0" || info.Status == jobdb.JobStatusCompleted || f.stats(t).Renewals != 1 || !strings.Contains(logs, "cannot validate supplied lease") || !strings.Contains(logs, "request failed (phase exchange)") || !strings.Contains(logs, "job execution has not started") {
