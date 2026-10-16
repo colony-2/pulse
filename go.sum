@@ -62,10 +62,10 @@ github.com/buger/jsonparser v1.1.1 h1:2PnMjfWD7wBILjqQbt530v576A/cAbQvEW9gGIpYMU
 github.com/buger/jsonparser v1.1.1/go.mod h1:6RYKKt7H4d4+iWqouImQ9R2FZql3VbhNgx27UK13J/0=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
-github.com/colony-2/c2j v0.0.76-0.20261015024712-66010fb85af6 h1:A42DnjjavkiqE82FLgz0KHYNFxubh5SvZH3CqoSEGeA=
-github.com/colony-2/c2j v0.0.76-0.20261015024712-66010fb85af6/go.mod h1:nwtrAZ8CbMM+WW2ga5e9RezgM8VUvfu3fVeBiLcA4/E=
-github.com/colony-2/jobdb v0.0.41 h1:d5y+pXvLrz9o0BMvh57Y5xWxZaDYvJLg3x1DAyYnuGY=
-github.com/colony-2/jobdb v0.0.41/go.mod h1:p2FeWO2+PRfngsjJPKFn8puFa2QxmCQZ7KElqXP+s4E=
+github.com/colony-2/c2j v0.0.79 h1:IK5HYlAAWoi9/nuV5LupBiAHH5eegRnMrqkGy/rur84=
+github.com/colony-2/c2j v0.0.79/go.mod h1:nwtrAZ8CbMM+WW2ga5e9RezgM8VUvfu3fVeBiLcA4/E=
+github.com/colony-2/jobdb v0.0.42-0.20261015191409-5ec146c4d29d h1:2TyOOdCT05W89CUnv1gXbyOq2Wc2c5hkwQcJpZdGWjY=
+github.com/colony-2/jobdb v0.0.42-0.20261015191409-5ec146c4d29d/go.mod h1:p2FeWO2+PRfngsjJPKFn8puFa2QxmCQZ7KElqXP+s4E=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/distribution/reference v0.6.0 h1:0IXCQ5g4/QMHHkarYzh5l+u8T3t73zM5QvfrDyIgxBk=
