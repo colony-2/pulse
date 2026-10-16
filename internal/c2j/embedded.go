@@ -63,16 +63,16 @@ func NewEmbedded(connections []Connection) (*Embedded, error) {
 	return e, nil
 }
 
-// Claim owns exactly the selected route before any compute is submitted. It
+// Claim acquires a currently supported route before any compute is submitted. It
 // starts no heartbeat: the receiver takes over before this capability expires.
-func (e *Embedded) Claim(ctx context.Context, uri string, job Job, worker string, duration time.Duration) (*Claimed, error) {
+func (e *Embedded) Claim(ctx context.Context, uri string, job Job, worker string, duration time.Duration, routes []Route) (*Claimed, error) {
 	runtime, ok := e.runtimes[uri]
-	if !ok || job.Next == nil {
+	if !ok || len(routes) == 0 {
 		return nil, fmt.Errorf("invalid lease target")
 	}
 	lease, err := runtime.GetJobLease(ctx, jobdb.GetJobLeaseRequest{
 		JobKey: jobdb.JobKey{TenantId: job.Tenant, JobId: job.ID}, WorkerID: worker,
-		Routes: []jobdb.Route{{JobType: job.Next.JobType, TaskType: job.Next.TaskType}}, LeaseDuration: duration,
+		Routes: availableRoutes(routes), LeaseDuration: duration,
 	})
 	if err != nil {
 		return nil, errors.New("JobDB lease acquisition failed; any acquired lease will expire")
@@ -81,6 +81,8 @@ func (e *Embedded) Claim(ctx context.Context, uri string, job Job, worker string
 		return nil, nil
 	}
 	claimed := &Claimed{Lease: lease, Job: job}
+	route := lease.Route()
+	claimed.Job.Next = &Route{JobType: route.JobType, TaskType: route.TaskType}
 	// The listing contains the immutable submission hints. Current execution
 	// demand, when present, must come from the leased snapshot instead.
 	var metadata json.RawMessage
@@ -109,11 +111,18 @@ type Claimed struct {
 func (*Claimed) String() string     { return "claimed job (capability redacted)" }
 func (c *Claimed) GoString() string { return c.String() }
 
-// Release is only used after confirmed non-submission. Preserve task coordinates
-// and let JobDB persist provisioning backoff across controller instances.
+// Release is only used after confirmed non-submission. Preserve coordinates for
+// task routes and let JobDB persist backoff across controller instances.
 func (c *Claimed) Release(ctx context.Context, backoff time.Duration) error {
 	until := time.Now().Add(backoff)
-	err := c.Lease.Reschedule(ctx, jobdb.RescheduleExecutionRequest{NextRoute: c.Lease.Route(), TaskWait: c.Lease.ExecutionState().TaskWait, WaitUntil: &until})
+	route := c.Lease.Route()
+	var taskWait *jobdb.TaskWait
+	if route.TaskType != "" {
+		taskWait = c.Lease.ExecutionState().TaskWait
+	}
+	// A due job-only alternate can retain the original input's task state in
+	// the acquired snapshot. Job-only rescheduling must omit task coordinates.
+	err := c.Lease.Reschedule(ctx, jobdb.RescheduleExecutionRequest{NextRoute: route, TaskWait: taskWait, WaitUntil: &until})
 	if err != nil {
 		return errors.New("JobDB lease release failed; lease will expire")
 	}
@@ -121,15 +130,17 @@ func (c *Claimed) Release(ctx context.Context, backoff time.Duration) error {
 }
 
 // List discovers runnable c2j jobs across the entire tenant, without a repository filter.
-func (e *Embedded) List(ctx context.Context, uri, token string) (Page, error) {
+func (e *Embedded) List(ctx context.Context, uri, token string, routes []Route) (Page, error) {
 	tenant, ok := e.tenants[uri]
 	if !ok {
 		return Page{}, fmt.Errorf("unconfigured JobDB target")
 	}
-	statuses := []jobdb.JobStatus{jobdb.JobStatusReady, jobdb.JobStatusCrashConcern}
+	if len(routes) == 0 {
+		return Page{}, fmt.Errorf("discovery requires supported routes")
+	}
 	p, err := joblist.ListExecutionJobs(ctx, e.runtimes[uri], jobdb.ListJobsRequest{
-		TenantIds: []string{tenant}, JobTypes: []string{"recipe"}, Statuses: statuses,
-		Stores: joblist.StoresForStatuses(statuses), PageSize: 100, PageToken: token,
+		TenantIds: []string{tenant}, AvailableRoutes: availableRoutes(routes),
+		PageSize: 100, PageToken: token,
 	}, nil)
 	if err != nil {
 		return Page{}, err
@@ -147,6 +158,14 @@ func (e *Embedded) List(ctx context.Context, uri, token string) (Page, error) {
 		out.Jobs = append(out.Jobs, job)
 	}
 	return out, nil
+}
+
+func availableRoutes(routes []Route) []jobdb.Route {
+	out := make([]jobdb.Route, len(routes))
+	for i, route := range routes {
+		out[i] = jobdb.Route{JobType: route.JobType, TaskType: route.TaskType}
+	}
+	return out
 }
 
 type tokenTransport struct {

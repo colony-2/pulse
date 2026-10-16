@@ -16,10 +16,10 @@ import (
 )
 
 type Lister interface {
-	List(context.Context, string, string) (c2j.Page, error)
+	List(context.Context, string, string, []c2j.Route) (c2j.Page, error)
 }
 type Claimer interface {
-	Claim(context.Context, string, c2j.Job, string, time.Duration) (*c2j.Claimed, error)
+	Claim(context.Context, string, c2j.Job, string, time.Duration, []c2j.Route) (*c2j.Claimed, error)
 }
 type Controller struct {
 	Config    *config.Config
@@ -84,7 +84,7 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 		selected := map[scheduler.Key]bool{}
 		for pageNumber := 0; pageNumber < c.Config.MaxPages; pageNumber++ {
 			call, cancel := context.WithTimeout(ctx, c.Config.Call)
-			page, e := c.Lister.List(call, t.JobDB, token)
+			page, e := c.Lister.List(call, t.JobDB, token, c.Config.Defaults.Routes)
 			cancel()
 			if e != nil {
 				c.Log.Error("discovery failed", "tenant", t.Tenant, "error", e)
@@ -92,9 +92,6 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 				break
 			}
 			for _, j := range page.Jobs {
-				if !j.Ready(c.Config.Defaults.Routes, time.Now()) {
-					continue
-				}
 				k := scheduler.Key{Instance: t.Instance, Tenant: j.Tenant, Job: j.ID}
 				if j.Tenant != t.Tenant {
 					c.Log.Error("tenant mismatch", "job", j.ID)
@@ -127,7 +124,7 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 					if c.Claimer == nil {
 						return compute.Launch{}, nil, errors.New("JobDB lease client is required")
 					}
-					claimed, err := c.Claimer.Claim(ctx, t.JobDB, j, request.LaunchID, c.Config.Lease)
+					claimed, err := c.Claimer.Claim(ctx, t.JobDB, j, request.LaunchID, c.Config.Lease, c.Config.Defaults.Routes)
 					var release func(context.Context) error
 					if claimed != nil {
 						release = func(ctx context.Context) error { return claimed.Release(ctx, c.Config.Cool) }

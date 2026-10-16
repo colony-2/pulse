@@ -48,7 +48,7 @@ setup is needed. See [cache settings and image prerequisites](docs/configuration
 
 `check` validates settings and initializes providers; it does not verify remote connectivity or launch permissions. `run --once` performs one discovery/submission pass. Both `pulse` and `pulse run` keep polling until SIGINT or SIGTERM and write JSON logs to stderr. Launched containers continue under their own lifetime controls.
 
-For custom providers or multiple tenants, use an optional configuration: [remote runners](examples/remote.yaml), [local Docker overrides](examples/docker.yaml), or [cloud providers](examples/clouds.yaml). Executor images must include c2j with `run with-lease` support; cloud images also need `pulse-exec`. Use JobDB v0.0.22 or later with supplied-lease renewal support.
+For custom providers or multiple tenants, use an optional configuration: [remote runners](examples/remote.yaml), [local Docker overrides](examples/docker.yaml), or [cloud providers](examples/clouds.yaml). Executor images must include c2j with `run with-lease` support; cloud images also need `pulse-exec`. Use a JobDB server containing commit `39ae1b444460` or later with available-route discovery and supplied-lease renewal support; upgrade the server alongside Pulse.
 
 ## Run in a container
 

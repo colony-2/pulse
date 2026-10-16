@@ -32,17 +32,6 @@ type Page struct {
 	Next string `json:"next_page_token"`
 }
 
-func (j Job) Ready(routes []Route, now time.Time) bool {
-	if j.CancelRequested || (j.Status != "READY" && j.Status != "CRASH_CONCERN") || j.Next == nil || j.AvailableAt.After(now) {
-		return false
-	}
-	for _, r := range routes {
-		if *j.Next == r {
-			return true
-		}
-	}
-	return false
-}
 func (j Job) Allocation(defaults compute.Allocation) (compute.Allocation, error) {
 	if j.Tenant == "" || j.ID == "" {
 		return defaults, fmt.Errorf("missing job identity")

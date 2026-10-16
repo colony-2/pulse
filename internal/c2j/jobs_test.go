@@ -7,7 +7,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestPackageBearingDemandUsesC2JProjection(t *testing.T) {
@@ -41,11 +40,8 @@ func TestDemandAndRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if j.Ready([]Route{{JobType: "recipe"}}, time.Now()) {
-		t.Fatal("human task selected")
-	}
-	if !j.Ready([]Route{*j.Next}, time.Now()) {
-		t.Fatal("opaque route not matched")
+	if j.Next == nil || j.Next.TaskType != "input:with, spaces" {
+		t.Fatal("opaque route not preserved")
 	}
 	a, e := j.Allocation(compute.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Platform: "linux/amd64", Image: "alpine:3"})
 	if e != nil || a.MemoryBytes != 4<<30 || a.Image != "docker.io/library/alpine:3" {

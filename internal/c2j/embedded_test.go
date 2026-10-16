@@ -44,7 +44,7 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 		if req.MetadataFilter != nil {
 			t.Error("tenant discovery must not filter repositories")
 		}
-		if !reflect.DeepEqual(req.JobTypes, []string{"recipe"}) || !reflect.DeepEqual(req.Statuses, []jobdb.JobStatus{jobdb.JobStatusReady, jobdb.JobStatusCrashConcern}) || req.PageSize != 100 || len(req.TenantIds) != 1 {
+		if !reflect.DeepEqual(req.AvailableRoutes, []jobdb.Route{{JobType: "recipe"}, {JobType: "recipe", TaskType: "task:custom"}}) || len(req.JobTypes) != 0 || len(req.Statuses) != 0 || req.PageSize != 100 || len(req.TenantIds) != 1 {
 			t.Errorf("incorrect listing query: %+v", req)
 		}
 		// Empty pages can still have a continuation token.
@@ -72,15 +72,16 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	routes := []Route{{JobType: "recipe"}, {JobType: "recipe", TaskType: "task:custom"}}
 	var wg sync.WaitGroup
 	for _, tenant := range []string{"one", "two"} {
 		wg.Go(func() {
-			first, err := c.List(context.Background(), server.URL+"/"+tenant, "")
+			first, err := c.List(context.Background(), server.URL+"/"+tenant, "", routes)
 			if err != nil || len(first.Jobs) != 0 || first.Next != "opaque-next" {
 				t.Error(first, err)
 				return
 			}
-			page, err := c.List(context.Background(), server.URL+"/"+tenant, first.Next)
+			page, err := c.List(context.Background(), server.URL+"/"+tenant, first.Next, routes)
 			if err != nil || len(page.Jobs) != 2 {
 				t.Error(page, err)
 				return
@@ -92,9 +93,6 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 			a, err := j.Allocation(compute.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Platform: "linux/amd64", Image: "alpine:3"})
 			if err != nil || a.MemoryBytes != 8<<30 {
 				t.Error(a, err)
-			}
-			if j.Ready([]Route{*j.Next}, now) {
-				t.Error("selected cancelled job")
 			}
 			if page.Jobs[1].Execution.Status != "unsupported" {
 				t.Error(page.Jobs[1].Execution)
@@ -116,7 +114,7 @@ func TestEmbeddedCancellationAndRedirect(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	_, err = c.List(ctx, server.URL+"/tenant", "")
+	_, err = c.List(ctx, server.URL+"/tenant", "", []Route{{JobType: "recipe"}})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
@@ -131,12 +129,22 @@ func TestEmbeddedCancellationAndRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = c.List(context.Background(), redirect.URL+"/tenant", ""); err == nil {
+	if _, err = c.List(context.Background(), redirect.URL+"/tenant", "", []Route{{JobType: "recipe"}}); err == nil {
 		t.Fatal("redirect accepted")
 	}
 }
 
 func TestEmbeddedInputValidation(t *testing.T) {
+	client, err := NewEmbedded([]Connection{{URI: "https://example.com/t"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.List(t.Context(), "https://example.com/t", "", nil); err == nil {
+		t.Fatal("empty routes allowed unfiltered discovery")
+	}
+	if _, err := client.Claim(t.Context(), "https://example.com/t", Job{}, "worker", time.Minute, nil); err == nil {
+		t.Fatal("empty claim routes accepted")
+	}
 	if _, err := NewEmbedded([]Connection{{URI: "https://example.com"}}); !errors.Is(err, joblist.ErrInvalidInput) {
 		t.Fatal(err)
 	}

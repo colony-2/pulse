@@ -39,7 +39,7 @@ func TestClaimExportSnapshotAndRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	listed := Job{Tenant: "tenant", ID: job.JobKey.JobId, Next: &Route{JobType: "recipe"}, Execution: &View{Status: "unresolved"}}
-	claimed, err := client.Claim(ctx, uri, listed, "launch-owner", time.Minute)
+	claimed, err := client.Claim(ctx, uri, listed, "launch-owner", time.Minute, []Route{{JobType: "recipe"}})
 	if err != nil || claimed == nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestClaimExportSnapshotAndRelease(t *testing.T) {
 	if err != nil || a.MemoryBytes != 8<<30 {
 		t.Fatal("did not use leased demand", a, err)
 	}
-	if another, err := client.Claim(ctx, uri, listed, "other-owner", time.Minute); err != nil || another != nil {
+	if another, err := client.Claim(ctx, uri, listed, "other-owner", time.Minute, []Route{{JobType: "recipe"}}); err != nil || another != nil {
 		t.Fatal("duplicate lease", err)
 	}
 	capability, err := remote.DecodeLeaseCapability(claimed.Encoded)
@@ -71,7 +71,7 @@ func TestClaimExportSnapshotAndRelease(t *testing.T) {
 	if err := claimed.Release(ctx, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	if another, err := client.Claim(ctx, uri, listed, "retry", time.Minute); err != nil || another != nil {
+	if another, err := client.Claim(ctx, uri, listed, "retry", time.Minute, []Route{{JobType: "recipe"}}); err != nil || another != nil {
 		t.Fatal("persistent backoff ignored", err)
 	}
 	if _, err := runtime.ImportLease(ctx, capability); err == nil {

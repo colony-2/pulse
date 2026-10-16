@@ -16,10 +16,10 @@ import (
 	"time"
 )
 
-type claimFunc func(context.Context, string, c2j.Job, string, time.Duration) (*c2j.Claimed, error)
+type claimFunc func(context.Context, string, c2j.Job, string, time.Duration, []c2j.Route) (*c2j.Claimed, error)
 
-func (f claimFunc) Claim(ctx context.Context, uri string, j c2j.Job, worker string, duration time.Duration) (*c2j.Claimed, error) {
-	return f(ctx, uri, j, worker, duration)
+func (f claimFunc) Claim(ctx context.Context, uri string, j c2j.Job, worker string, duration time.Duration, routes []c2j.Route) (*c2j.Claimed, error) {
+	return f(ctx, uri, j, worker, duration, routes)
 }
 
 type testLease struct{ jobdb.ExecutionLease }
@@ -28,10 +28,10 @@ func (testLease) Route() jobdb.Route                                            
 func (testLease) ExecutionState() jobdb.ExecutionState                               { return jobdb.ExecutionState{} }
 func (testLease) Reschedule(context.Context, jobdb.RescheduleExecutionRequest) error { return nil }
 
-type listFunc func(context.Context, string, string) (c2j.Page, error)
+type listFunc func(context.Context, string, string, []c2j.Route) (c2j.Page, error)
 
-func (f listFunc) List(c context.Context, u, token string) (c2j.Page, error) {
-	return f(c, u, token)
+func (f listFunc) List(c context.Context, u, token string, routes []c2j.Route) (c2j.Page, error) {
+	return f(c, u, token, routes)
 }
 
 type accept struct {
@@ -57,7 +57,7 @@ func TestTenantIsolationPaginationAndLeaseOwnership(t *testing.T) {
 	cfg.Targets = []config.Target{{Instance: "db", JobDB: "https://db/t", Tenant: "t", Services: []config.Service{{Name: "p", Priority: 1}}}}
 	cfg.Targets = append([]config.Target{{Instance: "db", JobDB: "https://db/bad", Tenant: "bad", Services: cfg.Targets[0].Services}}, cfg.Targets...)
 	calls := 0
-	list := listFunc(func(_ context.Context, uri, token string) (c2j.Page, error) {
+	list := listFunc(func(_ context.Context, uri, token string, _ []c2j.Route) (c2j.Page, error) {
 		if uri == "https://db/bad" {
 			return c2j.Page{}, errors.New("offline")
 		}
@@ -71,7 +71,7 @@ func TestTenantIsolationPaginationAndLeaseOwnership(t *testing.T) {
 		return c2j.Page{Jobs: []c2j.Job{{Tenant: "t", ID: id, Repository: "github.com/acme/" + id, Status: "READY", Next: &c2j.Route{JobType: "recipe"}, Execution: &c2j.View{Status: "unresolved", Source: "absent"}}}, Next: next}, nil
 	})
 	claimed := map[string]bool{}
-	claimer := claimFunc(func(_ context.Context, _ string, job c2j.Job, _ string, _ time.Duration) (*c2j.Claimed, error) {
+	claimer := claimFunc(func(_ context.Context, _ string, job c2j.Job, _ string, _ time.Duration, _ []c2j.Route) (*c2j.Claimed, error) {
 		if claimed[job.ID] {
 			return nil, nil
 		}
@@ -121,14 +121,14 @@ func TestConfiguredBatchSizeBoundsClaimCount(t *testing.T) {
 	cfg.Defaults.Routes = []c2j.Route{{JobType: "recipe"}}
 	cfg.Targets = []config.Target{{Instance: "db", JobDB: "https://db/t", Tenant: "t", Services: []config.Service{{Name: "p", Priority: 1}}}}
 	var claims atomic.Int32
-	list := listFunc(func(context.Context, string, string) (c2j.Page, error) {
+	list := listFunc(func(context.Context, string, string, []c2j.Route) (c2j.Page, error) {
 		page := c2j.Page{}
 		for i := range 7 {
 			page.Jobs = append(page.Jobs, c2j.Job{Tenant: "t", ID: string(rune('a' + i)), Status: "READY", Next: &c2j.Route{JobType: "recipe"}, Execution: &c2j.View{Status: "unresolved", Source: "absent"}})
 		}
 		return page, nil
 	})
-	claimer := claimFunc(func(_ context.Context, _ string, j c2j.Job, _ string, _ time.Duration) (*c2j.Claimed, error) {
+	claimer := claimFunc(func(_ context.Context, _ string, j c2j.Job, _ string, _ time.Duration, _ []c2j.Route) (*c2j.Claimed, error) {
 		claims.Add(1)
 		return &c2j.Claimed{Job: j, Lease: testLease{}, Encoded: []byte("private-capability")}, nil
 	})
