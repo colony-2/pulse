@@ -64,8 +64,8 @@ github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UF
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/colony-2/c2j v0.0.79 h1:IK5HYlAAWoi9/nuV5LupBiAHH5eegRnMrqkGy/rur84=
 github.com/colony-2/c2j v0.0.79/go.mod h1:nwtrAZ8CbMM+WW2ga5e9RezgM8VUvfu3fVeBiLcA4/E=
-github.com/colony-2/jobdb v0.0.42-0.20261016172827-39ae1b444460 h1:/s3Rab9ASVPIA3dbZSzuSstqkbiBYUrBDvKjl74UNs4=
-github.com/colony-2/jobdb v0.0.42-0.20261016172827-39ae1b444460/go.mod h1:p2FeWO2+PRfngsjJPKFn8puFa2QxmCQZ7KElqXP+s4E=
+github.com/colony-2/jobdb v0.0.45 h1:ywlNNye/kO1ITN3mlWxexu3iusK6MqZYKgExHynbhVE=
+github.com/colony-2/jobdb v0.0.45/go.mod h1:p2FeWO2+PRfngsjJPKFn8puFa2QxmCQZ7KElqXP+s4E=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/distribution/reference v0.6.0 h1:0IXCQ5g4/QMHHkarYzh5l+u8T3t73zM5QvfrDyIgxBk=
