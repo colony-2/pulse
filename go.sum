@@ -62,8 +62,8 @@ github.com/buger/jsonparser v1.1.1 h1:2PnMjfWD7wBILjqQbt530v576A/cAbQvEW9gGIpYMU
 github.com/buger/jsonparser v1.1.1/go.mod h1:6RYKKt7H4d4+iWqouImQ9R2FZql3VbhNgx27UK13J/0=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
-github.com/colony-2/c2j v0.0.79 h1:IK5HYlAAWoi9/nuV5LupBiAHH5eegRnMrqkGy/rur84=
-github.com/colony-2/c2j v0.0.79/go.mod h1:nwtrAZ8CbMM+WW2ga5e9RezgM8VUvfu3fVeBiLcA4/E=
+github.com/colony-2/c2j v0.0.80 h1:GVMa6HEQvesS8xrQugfT9Z7oE6ljL337KNIrvGPb694=
+github.com/colony-2/c2j v0.0.80/go.mod h1:nwtrAZ8CbMM+WW2ga5e9RezgM8VUvfu3fVeBiLcA4/E=
 github.com/colony-2/jobdb v0.0.45 h1:ywlNNye/kO1ITN3mlWxexu3iusK6MqZYKgExHynbhVE=
 github.com/colony-2/jobdb v0.0.45/go.mod h1:p2FeWO2+PRfngsjJPKFn8puFa2QxmCQZ7KElqXP+s4E=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
