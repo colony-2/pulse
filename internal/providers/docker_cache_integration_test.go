@@ -2,6 +2,7 @@ package providers_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -48,9 +49,15 @@ func TestDockerDependencyCacheIntegration(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM "+c2jIntegrationImage+"\nCOPY cache-worker /usr/local/bin/cache-worker\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	image := "ghcr.io/colony-2/base:pulse-cache-test-" + compute.NewID()
+	image := "ghcr.io/colony-2/base2:pulse-cache-test-" + compute.NewID()
 	docker("build", "--network=none", "-t", image, dir)
 	t.Cleanup(func() { exec.Command("docker", "--host", socket, "image", "rm", image).CombinedOutput() })
+	peerImage := "ghcr.io/colony-2/base2:pulse-cache-peer-" + compute.NewID()
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM "+image+"\nENV PULSE_CACHE_TEST_PEER=1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	docker("build", "--network=none", "-t", peerImage, dir)
+	t.Cleanup(func() { exec.Command("docker", "--host", socket, "image", "rm", peerImage).CombinedOutput() })
 	namespace := "integration-" + compute.NewID()
 	config := dockerprovider.Config{Socket: socket, LockDir: t.TempDir(), CPUMillis: 2000, MemoryBytes: 6 << 30, MaxContainers: 2, DependencyCache: dockerprovider.CacheConfig{Namespace: namespace}}
 	p, err := dockerprovider.New(ctx, config)
@@ -62,26 +69,25 @@ func TestDockerDependencyCacheIntegration(t *testing.T) {
 	t.Cleanup(func() {
 		cleanup, stop := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer stop()
-		// Failed submissions may create an initializer without a worker. This
-		// derived image is unique to the test, so discover those records too.
-		helpers, err := exec.CommandContext(cleanup, "docker", "--host", socket, "ps", "-aq", "--filter", "ancestor="+image, "--filter", "label=pulse_resource_role=cache-init").CombinedOutput()
+		// Helpers are removed after completion, including failure. Discover volumes
+		// by this test's namespace so failures before worker creation are cleaned up.
+		ownerJSON, _ := json.Marshal([]string{"2", namespace})
+		owner := fmt.Sprintf("%x", sha256.Sum256(ownerJSON))
+		volumes, err := exec.CommandContext(cleanup, "docker", "--host", socket, "volume", "ls", "-q", "--filter", "label=pulse_cache_owner="+owner).CombinedOutput()
 		if err != nil {
-			t.Errorf("list cache initializers: %v: %s", err, helpers)
+			t.Errorf("list cache volumes: %v: %s", err, volumes)
 		}
-		for _, id := range strings.Fields(string(helpers)) {
-			key, err := exec.CommandContext(cleanup, "docker", "--host", socket, "inspect", "--format", `{{index .Config.Labels "pulse_cache_key"}}`, id).CombinedOutput()
-			if err != nil {
-				t.Errorf("inspect cache initializer: %v: %s", err, key)
-				continue
-			}
-			keys[strings.TrimSpace(string(key))] = true
+		for _, name := range strings.Fields(string(volumes)) {
+			key := strings.TrimPrefix(name, "pulse-cache-v2-")
+			key = strings.TrimSuffix(strings.TrimSuffix(key, "-nix"), "-tools")
+			keys[key] = true
 		}
 		for key := range keys {
 			if out, err := exec.CommandContext(cleanup, "docker", "--host", socket, "rm", "-f", "pulse-cache-init-"+key).CombinedOutput(); err != nil && !strings.Contains(string(out), "No such container") {
 				t.Errorf("remove cache initializer: %v: %s", err, out)
 			}
 			for _, kind := range []string{"nix", "tools"} {
-				if out, err := exec.CommandContext(cleanup, "docker", "--host", socket, "volume", "rm", "pulse-cache-v1-"+key+"-"+kind).CombinedOutput(); err != nil && !strings.Contains(string(out), "no such volume") {
+				if out, err := exec.CommandContext(cleanup, "docker", "--host", socket, "volume", "rm", "pulse-cache-v2-"+key+"-"+kind).CombinedOutput(); err != nil && !strings.Contains(string(out), "no such volume") {
 					t.Errorf("remove cache volume: %v: %s", err, out)
 				}
 			}
@@ -168,7 +174,7 @@ func TestDockerDependencyCacheIntegration(t *testing.T) {
 	if !strings.Contains(coldLogs, `"outcome":"prepared"`) {
 		t.Fatal("cold setup not recorded", coldLogs)
 	}
-	// A fresh provider reconstructs readiness from Docker, without local state.
+	// A fresh provider checks the marker in the volume, without retained helper containers.
 	p.Close()
 	p, err = dockerprovider.New(ctx, config)
 	if err != nil {
@@ -180,7 +186,27 @@ func TestDockerDependencyCacheIntegration(t *testing.T) {
 		t.Fatal("compatible jobs did not share one namespace")
 	}
 	concurrentFinish(warmA, warmB)
-	// Reset by changing generation; old volumes survive while the new pair is seeded.
+	// Distinct images share the live store but have separate prepared tool roots.
+	firstImage := image
+	image = peerImage
+	_, peer := launch("tools", "cold")
+	image = firstImage
+	_, original := launch("tools", "cold")
+	if len(keys) != 1 {
+		t.Fatal("different image created a separate Nix store")
+	}
+	docker("exec", original, "/bin/sh", "-ec", "printf shared-store > /nix/pulse-peer-test")
+	if got := docker("exec", peer, "cat", "/nix/pulse-peer-test"); got != "shared-store" {
+		t.Fatal("peer cannot see shared Nix writes", got)
+	}
+	firstRoot := docker("exec", original, "printenv", "C2J_TOOL_CACHE_DIR")
+	peerRoot := docker("exec", peer, "printenv", "C2J_TOOL_CACHE_DIR")
+	if firstRoot == peerRoot {
+		t.Fatal("different images share prepared environments")
+	}
+	docker("exec", peer, "/bin/sh", "-ec", "test -f /nix/.pulse-ready")
+	concurrentFinish(original, peer)
+	// Reset by changing generation; old volumes survive while the new pair is initialized.
 	p.Close()
 	config.DependencyCache.Generation = "2"
 	p, err = dockerprovider.New(ctx, config)
@@ -192,7 +218,7 @@ func TestDockerDependencyCacheIntegration(t *testing.T) {
 		t.Fatal("generation change reused old store")
 	}
 	// No need to reinstall packages to establish isolation: inspect the empty cache.
-	if got := docker("exec", reset, "/bin/sh", "-ec", "find /var/cache/pulse/tools -name ready.json | wc -l"); got != "0" {
+	if got := docker("exec", reset, "/bin/sh", "-ec", "find /var/cache/pulse -name ready.json | wc -l"); got != "0" {
 		t.Fatal("new generation contains old tools", got)
 	}
 	docker("rm", "-f", reset)
@@ -205,7 +231,7 @@ func TestDockerDependencyCacheIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	for key := range keys {
-		out, err := exec.CommandContext(ctx, "docker", "--host", socket, "volume", "inspect", "pulse-cache-v1-"+key+"-tools").CombinedOutput()
+		out, err := exec.CommandContext(ctx, "docker", "--host", socket, "volume", "inspect", "pulse-cache-v2-"+key+"-tools").CombinedOutput()
 		if err == nil {
 			t.Fatalf("idle expired cache survived: %s", out)
 		}

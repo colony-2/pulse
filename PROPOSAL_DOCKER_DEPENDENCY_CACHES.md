@@ -1,6 +1,9 @@
 # Proposal: shared dependency caches for the Docker provider
 
-Status: implemented in this checkout, including the default image switch to
+Historical design: the image-seeded initialization and image-specific Nix volumes
+below are superseded by the [base2 shared-store implementation](docs/configuration.md#docker-dependency-caches).
+
+Original status: implemented, including the default image switch to
 `ghcr.io/colony-2/base:latest`. The refreshed image includes c2j 0.0.65 with addon
 support; see prerequisites and test coverage below.
 

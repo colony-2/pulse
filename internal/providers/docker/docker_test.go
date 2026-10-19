@@ -14,20 +14,23 @@ import (
 )
 
 type daemon struct {
-	mu           sync.Mutex
-	containers   map[string]container
-	creates      []map[string]any
-	startError   bool
-	createError  bool
-	noLimits     bool
-	inspectError int
-	stdin        map[string]string
-	volumes      map[string]cacheVolume
-	cacheFailure string
-	initExitCode int
-	initRunning  bool
-	dropMount    bool
-	deleteError  bool
+	mu            sync.Mutex
+	containers    map[string]container
+	creates       []map[string]any
+	startError    bool
+	createError   bool
+	noLimits      bool
+	inspectError  int
+	stdin         map[string]string
+	volumes       map[string]cacheVolume
+	cacheFailure  string
+	initExitCode  int
+	initRunning   bool
+	dropMount     bool
+	deleteError   bool
+	readyVolumes  map[string]bool
+	helperScripts map[string]string
+	imageID       string
 }
 
 func TestExplicitInfrastructureDeadlinesAreNotSilentlyIgnored(t *testing.T) {
@@ -76,7 +79,11 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 	case path == "/info":
 		enc.Encode(map[string]any{"ID": "test", "NCPU": 8, "MemTotal": int64(16 << 30), "OSType": "linux", "Architecture": "arm64", "MemoryLimit": !d.noLimits, "SwapLimit": !d.noLimits, "CpuCfsQuota": !d.noLimits})
 	case strings.HasPrefix(path, "/images/"):
-		enc.Encode(map[string]any{"Id": "sha256:config", "Os": "linux", "Architecture": "arm64", "RepoDigests": []string{}})
+		imageID := d.imageID
+		if imageID == "" {
+			imageID = "sha256:config"
+		}
+		enc.Encode(map[string]any{"Id": imageID, "Os": "linux", "Architecture": "arm64", "RepoDigests": []string{}})
 	case path == "/containers/json":
 		var filters map[string][]string
 		json.Unmarshal([]byte(r.URL.Query().Get("filters")), &filters)
@@ -127,6 +134,7 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		if r.Method == "DELETE" {
 			delete(d.volumes, name)
+			delete(d.readyVolumes, name)
 			w.WriteHeader(204)
 			return
 		}
@@ -146,6 +154,12 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 			labels[k] = v.(string)
 		}
 		id := labels["pulse_launch_id"]
+		if labels[roleLabel] == cacheInitRole {
+			if d.helperScripts == nil {
+				d.helperScripts = map[string]string{}
+			}
+			d.helperScripts[id] = body["Cmd"].([]any)[1].(string)
+		}
 		var c container
 		c.ID = id
 		c.Name = "/" + r.URL.Query().Get("name")
@@ -177,6 +191,23 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 		if c.Config.Labels[roleLabel] == cacheInitRole && !d.initRunning {
 			c.State.Status = "exited"
 			c.State.ExitCode = d.initExitCode
+			if c.State.ExitCode == 0 {
+				for _, m := range c.Mounts {
+					if m.Destination != "/nix" {
+						continue
+					}
+					if d.helperScripts[id] == cacheCheckScript {
+						if !d.readyVolumes[m.Name] {
+							c.State.ExitCode = cacheNotReady
+						}
+					} else {
+						if d.readyVolumes == nil {
+							d.readyVolumes = map[string]bool{}
+						}
+						d.readyVolumes[m.Name] = true
+					}
+				}
+			}
 			c.State.FinishedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		}
 		d.containers[id] = c

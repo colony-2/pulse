@@ -27,7 +27,7 @@ func TestPackageBearingDemandUsesC2JProjection(t *testing.T) {
 		t.Fatal(view)
 	}
 	job := Job{Tenant: "tenant", ID: "job", Execution: &view}
-	want := compute.Allocation{Image: "ghcr.io/colony-2/base:latest", Platform: "linux/arm64", CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30}
+	want := compute.Allocation{Image: "ghcr.io/colony-2/base2:latest", Platform: "linux/arm64", CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30}
 	got, err := job.Allocation(want)
 	if err != nil || got != want {
 		t.Fatal(got, err)

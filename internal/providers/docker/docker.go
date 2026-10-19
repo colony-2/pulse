@@ -47,6 +47,7 @@ type Provider struct {
 	platform        string
 	gate            chan struct{}
 	uncertain       map[string]charge
+	readyCaches     map[string]bool
 	lock            *os.File
 	closeOnce       sync.Once
 	unenforced      bool
@@ -167,7 +168,7 @@ func open(ctx context.Context, cfg Config, e *engine, locking bool) (*Provider, 
 	if cfg.CPUMillis > int64(info.NCPU)*1000 || cfg.MemoryBytes > info.MemTotal {
 		return nil, fmt.Errorf("Docker budget exceeds daemon resources")
 	}
-	p := &Provider{cfg: cfg, e: e, platform: info.OSType + "/" + arch, gate: make(chan struct{}, 1), uncertain: map[string]charge{}}
+	p := &Provider{cfg: cfg, e: e, platform: info.OSType + "/" + arch, gate: make(chan struct{}, 1), uncertain: map[string]charge{}, readyCaches: map[string]bool{}}
 	p.extraHosts = hostGatewayMapping(runtime.GOOS, info.OperatingSystem, info.Name)
 	if !info.MemoryLimit || !info.SwapLimit || !info.CPUCfsQuota {
 		p.disableLimits("Docker reports CPU, memory, or swap limits unavailable")
@@ -261,14 +262,14 @@ func (p *Provider) usage(ctx context.Context) (charge, map[string]container, err
 		} else if !validInitializer(c) {
 			return charge{}, nil, fmt.Errorf("invalid cache initializer identity")
 		}
-		// A controller interrupted before starting its initializer leaves no
-		// user work to recover. Remove the created helper before it can block
-		// the default one-slot pool indefinitely; the volumes are reseeded later.
-		if role == cacheInitRole && c.State.Status == "created" && c.Config.Labels[cacheOwnerLabel] == p.cacheOwner() {
-			if err := p.e.call(ctx, "DELETE", "/containers/"+c.ID, nil, nil); err != nil && !apiStatus(err, 404) {
+		// One Pulse owns this daemon. A helper without our reservation belongs
+		// to an interrupted invocation; remove it before it consumes the only slot.
+		// Its volume marker, not the container, records completed initialization.
+		_, ourHelper := p.uncertain[id]
+		if role == cacheInitRole && !ourHelper && c.Config.Labels[cacheOwnerLabel] == p.cacheOwner() {
+			if err := p.e.call(ctx, "DELETE", "/containers/"+c.ID+"?force=1", nil, nil); err != nil && !apiStatus(err, 404) {
 				return charge{}, nil, err
 			}
-			delete(p.uncertain, id)
 			continue
 		}
 		var cost charge
@@ -461,8 +462,10 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		labels["pulse_launch_id"] = l.LaunchID
 		labels[roleLabel] = "worker"
 		delete(labels, cacheKeyLabel)
+		delete(labels, cacheLayoutLabel)
 		if cache != nil {
 			labels[cacheKeyLabel] = cache.Key
+			labels[cacheLayoutLabel] = cacheLayout
 		}
 		accounting, _ := json.Marshal(cost)
 		labels[accountingLabel] = string(accounting)

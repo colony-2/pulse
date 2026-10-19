@@ -2,10 +2,13 @@ package docker
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,7 +21,7 @@ import (
 
 func cachedLaunch(id string) compute.Launch {
 	l := launches(requests(id))[0]
-	l.Image = "ghcr.io/colony-2/base:latest"
+	l.Image = "ghcr.io/colony-2/base2:latest"
 	l.Metadata["pulse_jobdb_instance_id"] = "db"
 	l.Metadata["pulse_tenant_id"] = "tenant"
 	return l
@@ -55,9 +58,11 @@ func TestAutomaticCacheColdWarmAndRestart(t *testing.T) {
 		}
 	}
 	key := d.containers["first"].Config.Labels[cacheKeyLabel]
-	init := d.containers["cache-init-"+key]
-	if len(init.Mounts) != 2 || init.Mounts[1].Destination != cacheSeedPath {
-		t.Fatal("initializer hides the image's Nix source", init.Mounts)
+	if _, exists := d.containers["cache-init-"+key]; exists {
+		t.Fatal("initializer retained after completion")
+	}
+	if !d.readyVolumes[(dependencyCache{Key: key}).volume("nix")] {
+		t.Fatal("ready marker not written")
 	}
 	if !verifyCacheContainer(d.containers["first"], key) {
 		t.Fatal("missing verified cache mounts")
@@ -83,12 +88,12 @@ func TestAutomaticCacheColdWarmAndRestart(t *testing.T) {
 	if got := submitCached(t, restarted, cachedLaunch("after-restart")); got.Status != compute.Accepted {
 		t.Fatal(got)
 	}
-	if len(d.creates) != 4 {
-		t.Fatal("restart reinitialized warm cache")
+	if len(d.creates) != 5 || d.helperScripts["cache-init-"+key] != cacheCheckScript {
+		t.Fatal("restart did not check ready marker")
 	}
 	// A configuration generation change cannot redirect an existing launch.
 	restarted.cfg.DependencyCache.Generation = "next"
-	if got := submitCached(t, restarted, cachedLaunch("after-restart")); got.Status != compute.Accepted || len(d.creates) != 4 {
+	if got := submitCached(t, restarted, cachedLaunch("after-restart")); got.Status != compute.Accepted || len(d.creates) != 5 {
 		t.Fatal(got)
 	}
 }
@@ -123,7 +128,7 @@ func TestCacheIdentityAndEnvironment(t *testing.T) {
 				p.cfg.DependencyCache.Namespace = "other"
 			}
 			other, _, err := p.cachePlan(plan, nil)
-			if err != nil || other.Key == c.Key {
+			if err != nil || (other.Key == c.Key) != (change == "image") {
 				t.Fatal(other, err)
 			}
 		})
@@ -139,37 +144,96 @@ func TestCacheIdentityAndEnvironment(t *testing.T) {
 	}
 }
 
-func TestCacheReusesLegacyCopyUpInitializer(t *testing.T) {
+func TestCacheSharesNixAcrossImages(t *testing.T) {
 	d := &daemon{containers: map[string]container{}}
-	p, s := testProvider(t, d)
-	defer s.Close()
+	p, server := testProvider(t, d)
+	defer server.Close()
 	if got := submitCached(t, p, cachedLaunch("first")); got.Status != compute.Accepted {
 		t.Fatal(got)
 	}
-	key := d.containers["first"].Config.Labels[cacheKeyLabel]
-	id := "cache-init-" + key
-	init := d.containers[id]
-	init.Mounts[1].Destination = "/nix"
-	d.containers[id] = init
-	if got := submitCached(t, p, cachedLaunch("second")); got.Status != compute.Accepted || len(d.creates) != 3 {
-		t.Fatal("existing completed cache was not reused", got)
+	d.imageID = "sha256:other"
+	if got := submitCached(t, p, cachedLaunch("second")); got.Status != compute.Accepted {
+		t.Fatal(got)
 	}
-	// A worker must still mount the store at /nix, even though initializers
-	// are allowed to attach it at the seed destination.
-	worker := d.containers["first"]
-	worker.Mounts[1].Destination = cacheSeedPath
-	if verifyCacheContainer(worker, key) {
-		t.Fatal("accepted seed mount on a worker")
+	first, second := d.containers["first"], d.containers["second"]
+	if first.Config.Labels[cacheKeyLabel] != second.Config.Labels[cacheKeyLabel] || len(d.volumes) != 2 || len(d.creates) != 3 {
+		t.Fatal("image change recreated shared store")
+	}
+	a, b := envMap(first.Config.Env), envMap(second.Config.Env)
+	for _, key := range []string{"C2J_TOOL_CACHE_DIR", "UV_CACHE_DIR", "pnpm_config_store_dir"} {
+		if a[key] == b[key] {
+			t.Fatalf("images share prepared environment: %s", key)
+		}
+	}
+	if !verifyCacheContainer(second, second.Config.Labels[cacheKeyLabel]) {
+		t.Fatal("second image cache attachment invalid")
+	}
+}
+
+func TestCacheRestartWithMissingMarkerRecreatesPair(t *testing.T) {
+	d := &daemon{containers: map[string]container{}}
+	p, server := testProvider(t, d)
+	defer server.Close()
+	if got := submitCached(t, p, cachedLaunch("first")); got.Status != compute.Accepted {
+		t.Fatal(got)
+	}
+	before := map[string]string{}
+	for name, v := range d.volumes {
+		before[name] = v.CreatedAt
+	}
+	delete(d.containers, "first")
+	clear(d.readyVolumes) // A failed/interrupted initialization never publishes readiness.
+	restarted, err := open(t.Context(), p.cfg, p.e, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := submitCached(t, restarted, cachedLaunch("retry")); got.Status != compute.Accepted {
+		t.Fatal(got)
+	}
+	for name, v := range d.volumes {
+		if v.CreatedAt == before[name] {
+			t.Fatal("unready volume not replaced", name)
+		}
+	}
+	if len(d.creates) != 5 {
+		t.Fatal("expected check, replacement initializer, worker", len(d.creates))
+	}
+}
+
+func TestCacheReadinessCheckFailurePreservesStore(t *testing.T) {
+	d := &daemon{containers: map[string]container{}}
+	p, server := testProvider(t, d)
+	defer server.Close()
+	if got := submitCached(t, p, cachedLaunch("first")); got.Status != compute.Accepted {
+		t.Fatal(got)
+	}
+	delete(d.containers, "first")
+	before := map[string]string{}
+	for name, v := range d.volumes {
+		before[name] = v.CreatedAt
+	}
+	restarted, err := open(t.Context(), p.cfg, p.e, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.initExitCode = 1
+	if got := submitCached(t, restarted, cachedLaunch("retry")); got.Status != compute.Unavailable {
+		t.Fatal(got)
+	}
+	for name, created := range before {
+		if d.volumes[name].CreatedAt != created {
+			t.Fatal("check failure destroyed store")
+		}
 	}
 }
 
 func TestCacheOptOutAndCustomImages(t *testing.T) {
-	for _, custom := range []bool{false, true} {
+	for _, image := range []string{"", "custom:1", "ghcr.io/colony-2/base:latest"} {
 		d := &daemon{containers: map[string]container{}}
 		p, s := testProvider(t, d)
 		l := cachedLaunch("job")
-		if custom {
-			l.Image = "custom:1"
+		if image != "" {
+			l.Image = image
 		} else {
 			p.cfg.DependencyCache.Disabled = true
 		}
@@ -194,7 +258,7 @@ func TestCacheScratchOverlap(t *testing.T) {
 }
 
 func TestCacheInitializationFailureAndRecovery(t *testing.T) {
-	for _, failure := range []string{"volume", "exit", "interrupted-create", "mount"} {
+	for _, failure := range []string{"volume", "exit", "mount"} {
 		t.Run(failure, func(t *testing.T) {
 			d := &daemon{containers: map[string]container{}}
 			p, s := testProvider(t, d)
@@ -206,23 +270,9 @@ func TestCacheInitializationFailureAndRecovery(t *testing.T) {
 				d.initExitCode = 1
 			case "mount":
 				d.dropMount = true
-			case "interrupted-create":
-				if got := submitCached(t, p, cachedLaunch("first")); got.Status != compute.Accepted {
-					t.Fatal(got)
-				}
-				delete(d.containers, "first")
-				for id, c := range d.containers {
-					c.State.Status = "created"
-					d.containers[id] = c
-				}
+
 			}
 			got := submitCached(t, p, cachedLaunch("job"))
-			if failure == "interrupted-create" {
-				if got.Status != compute.Accepted {
-					t.Fatal(got)
-				}
-				return
-			}
 			want := compute.Unavailable
 			if failure == "mount" {
 				want = compute.Unknown
@@ -244,20 +294,23 @@ func TestCacheInitializationFailureAndRecovery(t *testing.T) {
 	}
 }
 
-func TestCacheOwnershipMismatchDoesNotDeleteVolume(t *testing.T) {
+func TestCacheMissingMarkerDoesNotDeleteActiveStore(t *testing.T) {
 	d := &daemon{containers: map[string]container{}}
-	p, s := testProvider(t, d)
-	defer s.Close()
-	if got := submitCached(t, p, cachedLaunch("first")); got.Status != compute.Accepted {
+	p, server := testProvider(t, d)
+	defer server.Close()
+	if got := submitCached(t, p, cachedLaunch("active")); got.Status != compute.Accepted {
 		t.Fatal(got)
 	}
-	delete(d.containers, "first")
-	for name, v := range d.volumes {
-		v.Labels[cacheOwnerLabel] = "someone-else"
-		d.volumes[name] = v
+	clear(d.readyVolumes)
+	restarted, err := open(t.Context(), p.cfg, p.e, false)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := submitCached(t, p, cachedLaunch("next")); got.Status != compute.Unavailable || len(d.volumes) != 2 {
+	if got := submitCached(t, restarted, cachedLaunch("next")); got.Status != compute.Unavailable || len(d.volumes) != 2 {
 		t.Fatal(got)
+	}
+	if d.containers["active"].State.Status != "running" {
+		t.Fatal("active worker removed")
 	}
 }
 
@@ -269,18 +322,16 @@ func TestCacheRetentionSkipsReferencesAndRecoversPartialRemoval(t *testing.T) {
 		t.Fatal(got)
 	}
 	key := d.containers["live"].Config.Labels[cacheKeyLabel]
-	for id, c := range d.containers {
-		if c.Config.Labels[roleLabel] == cacheInitRole {
-			c.State.FinishedAt = time.Now().Add(-40 * 24 * time.Hour).Format(time.RFC3339Nano)
-			d.containers[id] = c
-		}
+	for name, v := range d.volumes {
+		v.CreatedAt = time.Now().Add(-40 * 24 * time.Hour).Format(time.RFC3339Nano)
+		d.volumes[name] = v
 	}
 	if err := p.Maintain(context.Background()); err != nil || len(d.volumes) != 2 {
 		t.Fatal("retired active cache", err)
 	}
 	delete(d.containers, "live")
 	p.lastMaintenance = time.Time{}
-	d.cacheFailure = "DELETE /volumes/pulse-cache-v1-" + key + "-tools"
+	d.cacheFailure = "DELETE /volumes/pulse-cache-v2-" + key + "-tools"
 	if err := p.Maintain(context.Background()); err == nil || len(d.volumes) != 1 {
 		t.Fatal("expected partial deletion", err, d.volumes)
 	}
@@ -289,9 +340,9 @@ func TestCacheRetentionSkipsReferencesAndRecoversPartialRemoval(t *testing.T) {
 		t.Fatal(got)
 	}
 	delete(d.containers, "reseed")
-	for id, c := range d.containers {
-		c.State.FinishedAt = time.Now().Add(-40 * 24 * time.Hour).Format(time.RFC3339Nano)
-		d.containers[id] = c
+	for name, v := range d.volumes {
+		v.CreatedAt = time.Now().Add(-40 * 24 * time.Hour).Format(time.RFC3339Nano)
+		d.volumes[name] = v
 	}
 	if err := p.Maintain(context.Background()); err != nil || len(d.volumes) != 0 || len(d.containers) != 0 {
 		t.Fatal(err, d.volumes, d.containers)
@@ -415,5 +466,156 @@ func TestCacheInitializerCancellationCleansUpAndAllowsRetry(t *testing.T) {
 	d.mu.Unlock()
 	if got := submitCached(t, p, cachedLaunch("retry")); got.Status != compute.Accepted {
 		t.Fatal(got)
+	}
+}
+
+// Exercise the actual shell scripts as well as the fake Docker API: a failed
+// init must not publish readiness, and checking readiness must not call Nix.
+func TestCacheReadyFileScripts(t *testing.T) {
+	dir := t.TempDir()
+	nix := filepath.Join(dir, "nix-store")
+	marker := filepath.Join(dir, ".pulse-ready")
+	run := func(script string) error {
+		cmd := exec.Command("/bin/sh", "-ec", strings.ReplaceAll(script, cacheReadyFile, `"`+marker+`"`))
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "C2J_TOOL_CACHE_DIR="+dir+"/tools", "UV_CACHE_DIR="+dir+"/uv", "pnpm_config_store_dir="+dir+"/pnpm")
+		out, err := cmd.CombinedOutput()
+		if len(out) != 0 {
+			t.Logf("helper: %s", out)
+		}
+		return err
+	}
+	if err := os.WriteFile(nix, []byte("#!/bin/sh\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(cacheInitializeScript); err == nil {
+		t.Fatal("failed Nix init succeeded")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("failed init published ready marker", err)
+	}
+	if err := run(cacheCheckScript); err == nil || err.(*exec.ExitError).ExitCode() != cacheNotReady {
+		t.Fatal("missing marker not reported", err)
+	}
+	if err := os.WriteFile(nix, []byte("#!/bin/sh\n[ \"$1\" = --init ]\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(cacheInitializeScript); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(nix); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(cacheCheckScript); err != nil {
+		t.Fatal("warm readiness invoked Nix", err)
+	}
+}
+
+func TestCacheRestartRecoversRunningInitializerInSingleSlotPool(t *testing.T) {
+	d := &daemon{containers: map[string]container{}, initRunning: true, deleteError: true}
+	p, server := testProvider(t, d)
+	defer server.Close()
+	p.cfg.MaxContainers = 1
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+	defer cancel()
+	out, err := p.Submit(ctx, []compute.Launch{cachedLaunch("interrupted")})
+	if (err != nil && !errors.Is(err, context.DeadlineExceeded)) || len(out) != 1 || out[0].Status != compute.Unavailable || len(d.containers) != 1 {
+		t.Fatal(out, err)
+	}
+	d.mu.Lock()
+	d.deleteError = false
+	d.initRunning = false
+	d.mu.Unlock()
+	restarted, err := open(t.Context(), p.cfg, p.e, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := submitCached(t, restarted, cachedLaunch("recovered")); got.Status != compute.Accepted {
+		t.Fatal(got)
+	}
+	if len(d.containers) != 1 {
+		t.Fatal("orphan helper survived", d.containers)
+	}
+}
+
+func TestCacheMissingStoreClearsPreparedRecords(t *testing.T) {
+	d := &daemon{containers: map[string]container{}}
+	p, server := testProvider(t, d)
+	defer server.Close()
+	if got := submitCached(t, p, cachedLaunch("first")); got.Status != compute.Accepted {
+		t.Fatal(got)
+	}
+	c := dependencyCache{Key: d.containers["first"].Config.Labels[cacheKeyLabel]}
+	toolsCreated := d.volumes[c.volume("tools")].CreatedAt
+	delete(d.containers, "first")
+	delete(d.volumes, c.volume("nix"))
+	delete(d.readyVolumes, c.volume("nix"))
+	restarted, err := open(t.Context(), p.cfg, p.e, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := submitCached(t, restarted, cachedLaunch("recovered")); got.Status != compute.Accepted {
+		t.Fatal(got)
+	}
+	if d.volumes[c.volume("tools")].CreatedAt == toolsCreated {
+		t.Fatal("old prepared records survived store replacement")
+	}
+}
+
+func TestCacheConcurrentSubmissionsInitializeOnce(t *testing.T) {
+	d := &daemon{containers: map[string]container{}}
+	p, server := testProvider(t, d)
+	defer server.Close()
+	results := make(chan error, 2)
+	for _, id := range []string{"first", "second"} {
+		go func() {
+			out, err := p.Submit(t.Context(), []compute.Launch{cachedLaunch(id)})
+			if err == nil && (len(out) != 1 || out[0].Status != compute.Accepted) {
+				err = fmt.Errorf("submit: %v", out)
+			}
+			results <- err
+		}()
+	}
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(d.creates) != 3 || len(d.volumes) != 2 {
+		t.Fatal("concurrent submissions initialized more than once")
+	}
+}
+
+func TestCacheLegacyResourcesRemainInspectable(t *testing.T) {
+	d := &daemon{containers: map[string]container{}}
+	p, server := testProvider(t, d)
+	defer server.Close()
+	if got := submitCached(t, p, cachedLaunch("legacy")); got.Status != compute.Accepted {
+		t.Fatal(got)
+	}
+	worker := d.containers["legacy"]
+	key := worker.Config.Labels[cacheKeyLabel]
+	delete(worker.Config.Labels, cacheLayoutLabel) // v1 workers did not carry a layout label.
+	worker.Config.Env = []string{"NIX_CONFIG=\nmin-free = 0\n"}
+	for k, v := range cacheEnvironment("") {
+		worker.Config.Env = append(worker.Config.Env, k+"="+v)
+	}
+	for i := range worker.Mounts {
+		worker.Mounts[i].Name = strings.Replace(worker.Mounts[i].Name, "pulse-cache-v2-", "pulse-cache-v1-", 1)
+	}
+	if !verifyCacheContainer(worker, key) {
+		t.Fatal("legacy worker no longer inspectable")
+	}
+	d.containers["legacy"] = worker
+	helper := worker
+	helper.Config.Labels = map[string]string{cacheKeyLabel: key, cacheOwnerLabel: "old-owner", cacheLayoutLabel: "1", roleLabel: cacheInitRole, "pulse_launch_id": "cache-init-" + key, accountingLabel: worker.Config.Labels[accountingLabel], limitsLabel: worker.Config.Labels[limitsLabel]}
+	helper.ID = "cache-init-" + key
+	helper.Name = "/pulse-cache-init-" + key
+	helper.State.Status = "exited"
+	d.containers[helper.ID] = helper
+	if _, err := open(t.Context(), p.cfg, p.e, false); err != nil {
+		t.Fatal("legacy helper prevents startup", err)
+	}
+	if _, ok := d.containers[helper.ID]; !ok {
+		t.Fatal("legacy cache helper removed")
 	}
 }

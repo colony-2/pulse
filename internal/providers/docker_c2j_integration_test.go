@@ -29,7 +29,7 @@ import (
 	dockerprovider "github.com/colony-2/pulse/internal/providers/docker"
 )
 
-const c2jIntegrationImage = "ghcr.io/colony-2/base:latest"
+const c2jIntegrationImage = "ghcr.io/colony-2/base2:latest"
 
 // TestDockerC2JIntegration exercises the installed executor, not a c2j test
 // harness or a binary copied out of the module cache. It deliberately runs in
@@ -177,7 +177,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 						t.Errorf("cleanup initializer: %v: %s", err, output)
 					}
 					for _, kind := range []string{"nix", "tools"} {
-						if output, err := exec.CommandContext(cleanup, "docker", "--host", socket, "volume", "rm", "pulse-cache-v1-"+cacheKey+"-"+kind).CombinedOutput(); err != nil && !strings.Contains(string(output), "no such volume") {
+						if output, err := exec.CommandContext(cleanup, "docker", "--host", socket, "volume", "rm", "pulse-cache-v2-"+cacheKey+"-"+kind).CombinedOutput(); err != nil && !strings.Contains(string(output), "no such volume") {
 							t.Errorf("cleanup cache: %v: %s", err, output)
 						}
 					}

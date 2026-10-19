@@ -151,7 +151,7 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 		}
 	}
 	if c.Defaults.Image == "" {
-		c.Defaults.Image = "ghcr.io/colony-2/base:latest"
+		c.Defaults.Image = "ghcr.io/colony-2/base2:latest"
 	}
 	if c.Defaults.Platform == "" {
 		c.Defaults.Platform = "linux/" + runtime.GOARCH

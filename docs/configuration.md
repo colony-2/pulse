@@ -36,7 +36,7 @@ Pulse needs an HTTP(S) JobDB service with a tenant path. A missing tenant produc
 | Setting | Default |
 | --- | --- |
 | Provider | Local Docker, discovered using the active Docker context/socket |
-| Image | `ghcr.io/colony-2/base:latest` |
+| Image | `ghcr.io/colony-2/base2:latest` |
 | CPU / memory / scratch | `1` / `1Gi` / `1Gi` |
 | Platform | Docker daemon's native Linux platform for a single Docker provider; otherwise `linux/<host architecture>` |
 | Execution timeout | Managed by c2j; no Pulse cap |
@@ -94,7 +94,7 @@ Discovery sends `defaults.routes` to JobDB as `AvailableRoutes` on every page. J
 ## Docker dependency caches
 
 The Docker provider automatically creates shared dependency volumes for
-`ghcr.io/colony-2/base` images, including tags and pinned digests. No host Nix,
+`ghcr.io/colony-2/base2` images, including tags and pinned digests. No host Nix,
 manual volume setup, or daemon is required. Other images run without these mounts.
 Optional overrides:
 
@@ -110,32 +110,75 @@ providers:
 ```
 
 These are the defaults. Set `enabled: false` to use container-local stores.
-Change `generation` to get fresh stores. Cache identity also includes the JobDB
-instance, tenant, resolved image, and native platform. Docker aliases for one
-socket must agree on cache policy. `max_age` accepts positive Go durations up to
-`8760h`; it measures age since initialization, not time since last use.
+Change `generation` to get fresh stores. Cache identity includes the JobDB
+instance, tenant, native platform, namespace, and generation, **not the image**.
+Assume one Pulse instance per Docker host; Docker aliases must agree on cache
+policy. `max_age` accepts positive Go durations up to `8760h` and measures age
+since volume creation, not time since last use.
 
-Pulse retains c2j tools, uv downloads, and pnpm's store under `/var/cache/pulse`,
-and the complete image-seeded `/nix` tree in a second volume. Workers use direct
-local Nix access with automatic GC disabled. The image-provided Python is used;
-automatic interpreter downloads are disabled. Conflicting cache environment
-settings and scratch paths overlapping these mounts are rejected.
+Pulse creates two local Docker volumes named `pulse-cache-v2-<key>-nix` and
+`pulse-cache-v2-<key>-tools`. The new `base2` image supplies Nix outside an empty
+`/nix`. Pulse mounts the Nix volume at `/nix` with Docker copy-up disabled, runs
+`nix-store --init`, and writes `/nix/.pulse-ready` only after success. No image
+contents are copied, no image capability labels or volume validation are required,
+and no Nix daemon or host setup is needed.
 
-A short-lived initializer copies the image's complete `/nix` tree into the new
-volume and validates it before worker launch. All mounts disable Docker's implicit
-volume population: the copy runs inside the resource-limited helper, which Pulse
-can remove on timeout. Its stopped
-container records readiness; it consumes no running capacity. Pulse checks for
-expired pairs at startup and at most hourly during polling, deleting only pairs
-with no worker references and no uncertain creates. Active workers continue to
-use their stores when Pulse stops. Cleanup resumes when Pulse restarts with
-caching enabled and the same operator namespace. Volumes have no disk quota.
+Pulse checks the ready file with one temporary container on first use after each
+restart and remembers readiness for subsequent jobs. The helper is removed after
+completion; pruning stopped containers does not lose readiness. A missing marker
+causes an unused cache pair to be discarded and initialized again. Other helper
+failures leave existing volumes intact. Workers referencing the volumes prevent
+removal. Initialization errors fail the launch; they do not silently fall back to
+a private store.
 
-Shared writable executable caches assume jobs within a tenant trust each other;
-disable sharing for mutually untrusted jobs. Workers must not run Nix GC or delete
-shared store contents. See the [cache design](../PROPOSAL_DOCKER_DEPENDENCY_CACHES.md)
-for failure recovery and image prerequisites. The verified base image includes
-c2j `0.0.65`, supporting declared addons. The controller library is pinned separately in [go.mod](../go.mod).
+All workers in the tenant scope share read/write access to the live Nix store and
+its database, including across different `base2` image versions. The image must
+keep its Nix store format compatible; bump `generation` for an incompatible Nix
+upgrade. Profiles and evaluation caches remain container-private. The tools volume
+uses image-specific subdirectories under `/var/cache/pulse/images/<image-key>` for
+c2j prepared environments, uv downloads, and pnpm's store. Replacing an unready or
+missing Nix store also clears its tools volume, preventing stale prepared records.
+
+Workers use `NIX_REMOTE=local` with automatic GC disabled. The image-provided
+Python is used; automatic interpreter downloads are disabled. Conflicting cache
+environment settings and scratch paths overlapping these mounts are rejected.
+Shared writable executable caches assume jobs within a tenant trust each other.
+Workers must not run Nix GC, optimization, repair, or delete shared store contents.
+Old `pulse-cache-v1-*` volumes are not reused or automatically migrated.
+
+Pulse checks for expired pairs at startup and at most hourly during polling,
+deleting only pairs with no container references and no uncertain creates. Active
+workers continue using their stores when Pulse stops. Volumes have no disk quota.
+
+For manual maintenance, **stop Pulse and wait for every worker using the store to
+exit first**. Find its Nix volume name:
+
+```sh
+docker volume ls --filter label=pulse_cache_layout=2 --filter label=pulse_resource_role=nix
+```
+
+Set `NIX_VOLUME` to that name, then run GC:
+
+```sh
+NIX_VOLUME='pulse-cache-v2-<key>-nix'
+docker run --rm \
+  --mount "type=volume,src=$NIX_VOLUME,dst=/nix,volume-nocopy" \
+  --env NIX_REMOTE=local --entrypoint nix-store \
+  ghcr.io/colony-2/base2:latest --gc
+```
+
+To reset instead, remove both volumes; Pulse provisions them on next use:
+
+```sh
+docker volume rm "$NIX_VOLUME" "${NIX_VOLUME%-nix}-tools"
+```
+
+Verified on Linux ARM64 with `base2:latest` digest
+`sha256:c786c3d27e5e50464b829f956da7204be4204a20d9a60481a5eff55dbfede556`,
+c2j `0.0.80`, and Nix `2.34.3`: the full race-enabled suite passed, including
+supplied-lease execution, concurrent installs, offline warm reuse after restart,
+and sharing across different images. Native amd64 and macOS/Colima verification
+remain for CI. The controller library is pinned separately in [go.mod](../go.mod).
 
 ## Docker or a native executable
 

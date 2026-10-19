@@ -18,13 +18,14 @@ import (
 
 const (
 	cachePath        = "/var/cache/pulse"
-	cacheSeedPath    = "/pulse-cache-seed/nix"
+	cacheReadyFile   = "/nix/.pulse-ready"
+	cacheNotReady    = 42
 	cacheKeyLabel    = "pulse_cache_key"
 	cacheOwnerLabel  = "pulse_cache_owner"
 	cacheLayoutLabel = "pulse_cache_layout"
 	roleLabel        = "pulse_resource_role"
 	cacheInitRole    = "cache-init"
-	cacheLayout      = "1"
+	cacheLayout      = "2"
 )
 
 // CacheConfig is comparable so Docker aliases must agree on cache policy too.
@@ -73,7 +74,7 @@ func cacheHash(v any) string { b, _ := json.Marshal(v); return fmt.Sprintf("%x",
 func (p *Provider) cacheOwner() string {
 	return cacheHash([]string{cacheLayout, p.cfg.DependencyCache.Namespace})
 }
-func (c dependencyCache) volume(kind string) string { return "pulse-cache-v1-" + c.Key + "-" + kind }
+func (c dependencyCache) volume(kind string) string { return "pulse-cache-v2-" + c.Key + "-" + kind }
 func (c dependencyCache) initializer() string       { return "pulse-cache-init-" + c.Key }
 func (c dependencyCache) labels(kind string) map[string]string {
 	return map[string]string{cacheKeyLabel: c.Key, cacheOwnerLabel: c.Owner, cacheLayoutLabel: cacheLayout, roleLabel: kind}
@@ -86,22 +87,17 @@ func (c dependencyCache) mounts() []volumeMount {
 	return out
 }
 
-func (c dependencyCache) initializerMounts() []volumeMount {
-	out := c.mounts()
-	// Keep the image's /nix visible as the source. Docker's implicit copy-up
-	// happens before container registration and cannot be canceled reliably.
-	// Copy inside the running, resource-limited helper instead.
-	out[1].Target = cacheSeedPath
-	return out
-}
-
 func pathsOverlap(a, b string) bool {
 	a, b = filepath.Clean(a), filepath.Clean(b)
 	return a == "/" || b == "/" || a == b || strings.HasPrefix(a, b+"/") || strings.HasPrefix(b, a+"/")
 }
 
-func cacheEnvironment() map[string]string {
-	return map[string]string{"C2J_TOOL_CACHE_DIR": cachePath + "/tools", "UV_CACHE_DIR": cachePath + "/uv", "pnpm_config_store_dir": cachePath + "/pnpm", "NIX_REMOTE": "local", "UV_PYTHON_DOWNLOADS": "never"}
+func cacheEnvironment(imageID string) map[string]string {
+	root := cachePath
+	if imageID != "" {
+		root += "/images/" + cacheHash(imageID)
+	}
+	return map[string]string{"C2J_TOOL_CACHE_DIR": root + "/tools", "UV_CACHE_DIR": root + "/uv", "pnpm_config_store_dir": root + "/pnpm", "NIX_REMOTE": "local", "UV_PYTHON_DOWNLOADS": "never"}
 }
 
 func envMap(env []string) map[string]string {
@@ -149,7 +145,7 @@ func (p *Provider) cachePlan(plan nativePlan, env map[string]string) (*dependenc
 		return nil, nil, nil
 	}
 	ref, err := reference.ParseNormalizedNamed(plan.Request.Image)
-	if err != nil || ref.Name() != "ghcr.io/colony-2/base" {
+	if err != nil || ref.Name() != "ghcr.io/colony-2/base2" {
 		return nil, nil, nil
 	}
 	switch plan.ImageUser {
@@ -161,7 +157,7 @@ func (p *Provider) cachePlan(plan nativePlan, env map[string]string) (*dependenc
 	if metadata["pulse_jobdb_instance_id"] == "" || metadata["pulse_tenant_id"] == "" {
 		return nil, nil, fmt.Errorf("dependency cache requires JobDB instance and tenant metadata")
 	}
-	values := cacheEnvironment()
+	values := cacheEnvironment(plan.ImageID)
 	baseEnv := envMap(plan.ImageEnv)
 	for k, v := range values {
 		if supplied, ok := env[k]; ok && supplied != v {
@@ -179,7 +175,7 @@ func (p *Provider) cachePlan(plan nativePlan, env map[string]string) (*dependenc
 	if err != nil {
 		return nil, nil, err
 	}
-	key := cacheHash([]string{cacheLayout, p.cfg.DependencyCache.Namespace, p.cfg.DependencyCache.Generation, metadata["pulse_jobdb_instance_id"], metadata["pulse_tenant_id"], plan.ImageID, plan.Request.Platform, "0:0"})
+	key := cacheHash([]string{cacheLayout, p.cfg.DependencyCache.Namespace, p.cfg.DependencyCache.Generation, metadata["pulse_jobdb_instance_id"], metadata["pulse_tenant_id"], plan.Request.Platform, "0:0"})
 	return &dependencyCache{Key: key, Owner: p.cacheOwner()}, values, nil
 }
 
@@ -187,11 +183,16 @@ var cacheKeyPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 func validInitializer(c container) bool {
 	key := c.Config.Labels[cacheKeyLabel]
-	return cacheKeyPattern.MatchString(key) && c.Config.Labels[roleLabel] == cacheInitRole && c.Config.Labels[cacheLayoutLabel] == cacheLayout && c.Config.Labels["pulse_launch_id"] == "cache-init-"+key && strings.TrimPrefix(c.Name, "/") == "pulse-cache-init-"+key
+	return cacheKeyPattern.MatchString(key) && c.Config.Labels[roleLabel] == cacheInitRole && (c.Config.Labels[cacheLayoutLabel] == cacheLayout || c.Config.Labels[cacheLayoutLabel] == "1") && c.Config.Labels["pulse_launch_id"] == "cache-init-"+key && strings.TrimPrefix(c.Name, "/") == "pulse-cache-init-"+key
 }
 
 func verifyCacheContainer(c container, key string) bool {
-	if !cacheKeyPattern.MatchString(key) || !environmentContains(c.Config.Env, cacheEnvironment()) {
+	imageID := c.Config.Image
+	legacy := c.Config.Labels[cacheLayoutLabel] != cacheLayout
+	if legacy {
+		imageID = ""
+	}
+	if !cacheKeyPattern.MatchString(key) || !environmentContains(c.Config.Env, cacheEnvironment(imageID)) {
 		return false
 	}
 	if !strings.HasSuffix(envMap(c.Config.Env)["NIX_CONFIG"], "\nmin-free = 0\n") {
@@ -199,11 +200,13 @@ func verifyCacheContainer(c container, key string) bool {
 	}
 	cache := dependencyCache{Key: key}
 	for _, want := range cache.mounts() {
+		if legacy {
+			want.Source = strings.Replace(want.Source, "pulse-cache-v2-", "pulse-cache-v1-", 1)
+		}
 		found := false
 		for _, got := range c.Mounts {
-			// Accept completed initializers from the earlier /nix copy-up
-			// implementation too; the volume layout has not changed.
-			if got.Destination == want.Target || (want.Target == "/nix" && got.Destination == cacheSeedPath && validInitializer(c)) {
+			// Retain inspection support for workers and initializers from v1.
+			if got.Destination == want.Target || (legacy && want.Target == "/nix" && got.Destination == "/pulse-cache-seed/nix" && validInitializer(c)) {
 				found = got.Type == "volume" && got.Name == want.Source && got.RW
 			}
 		}
@@ -228,14 +231,6 @@ func (p *Provider) inspectVolume(ctx context.Context, c dependencyCache, kind st
 	if err != nil {
 		return nil, err
 	}
-	if v.Name != c.volume(kind) || v.Driver != "local" || v.Scope != "local" || len(v.Options) != 0 {
-		return nil, fmt.Errorf("cache volume driver or identity differs")
-	}
-	for k, want := range c.labels(kind) {
-		if v.Labels[k] != want {
-			return nil, fmt.Errorf("cache volume ownership differs")
-		}
-	}
 	return &v, nil
 }
 
@@ -254,53 +249,85 @@ func (p *Provider) inspectInitializer(ctx context.Context, c dependencyCache) (*
 	return &init, nil
 }
 
-// Keep the successful, stopped initializer as the durable readiness record.
-// Docker inspection then provides warm readiness and its completion timestamp
-// without a helper process on every launch or a controller-side database.
-func (p *Provider) ensureCache(ctx context.Context, c dependencyCache, plan nativePlan, cost charge) (result error) {
-	tools, err := p.inspectVolume(ctx, c, "tools")
-	if err != nil {
-		return err
+// Readiness lives in the volume, so pruning stopped containers cannot lose it.
+// The provider admission gate serializes provisioning; one Pulse owns the host.
+func (p *Provider) ensureCache(ctx context.Context, c dependencyCache, plan nativePlan, cost charge) error {
+	if p.readyCaches[c.Key] {
+		return nil
 	}
+	slog.Info("Docker dependency cache initializing", "cache", c.Key, "image_id", plan.ImageID)
 	nix, err := p.inspectVolume(ctx, c, "nix")
 	if err != nil {
 		return err
 	}
-	init, err := p.inspectInitializer(ctx, c)
-	if err != nil {
-		return err
-	}
-	if init != nil && tools != nil && nix != nil && init.State.Status == "exited" && init.State.ExitCode == 0 && init.Config.Image == plan.ImageID && verifyCacheContainer(*init, c.Key) {
-		return nil
-	}
-	if init != nil || tools != nil || nix != nil {
-		removed, err := p.removeCache(ctx, c)
+	if nix != nil {
+		// Creating a missing tools volume is safe; it contains no readiness state.
+		if err := p.createCacheVolume(ctx, c, "tools"); err != nil {
+			return err
+		}
+		code, err := p.runCacheHelper(ctx, c, plan, cost, cacheCheckScript)
 		if err != nil {
 			return err
 		}
-		if !removed {
-			return fmt.Errorf("incomplete cache is still referenced")
+		if code == 0 {
+			p.readyCaches[c.Key] = true
+			return nil
+		}
+		if code != cacheNotReady {
+			return fmt.Errorf("cache readiness check failed (exit %d)", code)
 		}
 	}
+	// Missing store or marker: discard the uninitialized store and all associated
+	// prepared records. Never remove volumes referenced by workers.
+	removed, err := p.removeCache(ctx, c)
+	if err != nil {
+		return err
+	}
+	if !removed {
+		return fmt.Errorf("uninitialized cache is still referenced")
+	}
+	for _, kind := range []string{"tools", "nix"} {
+		if err := p.createCacheVolume(ctx, c, kind); err != nil {
+			return err
+		}
+	}
+	code, err := p.runCacheHelper(ctx, c, plan, cost, cacheInitializeScript)
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("base image cache initialization failed (exit %d)", code)
+	}
+	p.readyCaches[c.Key] = true
+	return nil
+}
+
+func (p *Provider) createCacheVolume(ctx context.Context, c dependencyCache, kind string) error {
+	return p.e.call(ctx, "POST", "/volumes/create", map[string]any{"Name": c.volume(kind), "Driver": "local", "Labels": c.labels(kind)}, nil)
+}
+
+// Helpers are temporary, resource-accounted containers without job input.
+func (p *Provider) runCacheHelper(ctx context.Context, c dependencyCache, plan nativePlan, cost charge, script string) (exitCode int, result error) {
+	// A previous Pulse may have stopped while this helper was running. Stop it
+	// before checking the marker; successful initialization has already written it.
+	init, err := p.inspectInitializer(ctx, c)
+	if err != nil {
+		return 0, err
+	}
+	if init != nil {
+		if err := p.e.call(ctx, "DELETE", "/containers/"+init.ID+"?force=1", nil, nil); err != nil && !apiStatus(err, 404) {
+			return 0, err
+		}
+		delete(p.uncertain, "cache-init-"+c.Key)
+	}
 	started := time.Now()
-	stage := "create volumes"
-	slog.Info("Docker dependency cache initializing", "cache", c.Key, "image_id", plan.ImageID)
+	stage := "create helper"
 	defer func() {
 		if result != nil {
 			// Initializers contain no job input; API errors omit daemon messages.
 			slog.Warn("Docker dependency cache initialization failed", "cache", c.Key, "stage", stage, "elapsed", time.Since(started), "error", result)
 		}
 	}()
-	for _, kind := range []string{"tools", "nix"} {
-		if err := p.e.call(ctx, "POST", "/volumes/create", map[string]any{"Name": c.volume(kind), "Driver": "local", "Labels": c.labels(kind)}, nil); err != nil {
-			return err
-		}
-		if v, err := p.inspectVolume(ctx, c, kind); err != nil {
-			return err
-		} else if v == nil {
-			return fmt.Errorf("cache volume was not created")
-		}
-	}
 	labels := c.labels(cacheInitRole)
 	labels["pulse_managed_by"] = "pulse"
 	labels["pulse_launch_id"] = "cache-init-" + c.Key
@@ -312,16 +339,16 @@ func (p *Provider) ensureCache(ctx context.Context, c dependencyCache, plan nati
 		cpu, memory = 0, 0
 		labels[limitsLabel] = "disabled"
 	}
-	values := cacheEnvironment()
+	values := cacheEnvironment(plan.ImageID)
 	values["NIX_CONFIG"], err = cacheNixConfig(envMap(plan.ImageEnv)["NIX_CONFIG"])
 	if err != nil {
-		return err
+		return 0, err
 	}
 	env := []string{}
 	for k, v := range values {
 		env = append(env, k+"="+v)
 	}
-	body := map[string]any{"Image": plan.ImageID, "Entrypoint": []string{"/bin/sh"}, "Cmd": []string{"-ec", cacheInitializeScript}, "Env": env, "Labels": labels, "HostConfig": map[string]any{"Mounts": c.initializerMounts(), "NetworkMode": "none", "NanoCpus": cpu, "Memory": memory, "MemorySwap": memory, "RestartPolicy": map[string]string{"Name": "no"}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "1m", "max-file": "1"}}}}
+	body := map[string]any{"Image": plan.ImageID, "Entrypoint": []string{"/bin/sh"}, "Cmd": []string{"-ec", script}, "Env": env, "Labels": labels, "HostConfig": map[string]any{"Mounts": c.mounts(), "NetworkMode": "none", "NanoCpus": cpu, "Memory": memory, "MemorySwap": memory, "RestartPolicy": map[string]string{"Name": "no"}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "1m", "max-file": "1"}}}}
 	helperID := labels["pulse_launch_id"]
 	p.uncertain[helperID] = cost
 	complete := false
@@ -356,67 +383,65 @@ func (p *Provider) ensureCache(ctx context.Context, c dependencyCache, plan nati
 		if errors.As(err, &api) && api.code >= 400 && api.code < 500 && api.code != 409 {
 			delete(p.uncertain, helperID)
 		}
-		return err
+		return 0, err
 	}
 	if created.ID == "" || len(created.Warnings) != 0 {
-		return fmt.Errorf("cache initializer creation could not be verified")
+		return 0, fmt.Errorf("cache initializer creation could not be verified")
 	}
 	init, err = p.inspectInitializer(ctx, c)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if init == nil || init.ID != created.ID || !verifyCacheContainer(*init, c.Key) || init.HostConfig.AutoRemove || init.HostConfig.RestartPolicy.Name != "no" || init.HostConfig.NanoCPUs != cpu || init.HostConfig.Memory != memory || init.HostConfig.MemorySwap != memory {
-		return fmt.Errorf("cache initializer configuration differs")
+		return 0, fmt.Errorf("cache initializer configuration differs")
 	}
 	stage = "start initializer"
 	if err = p.e.call(ctx, "POST", "/containers/"+created.ID+"/start", nil, nil); err != nil {
-		return err
+		return 0, err
 	}
 	// Poll with the submission deadline and report which phase timed out.
-	stage = "seed and validate cache"
+	stage = "check or initialize cache"
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		init, err = p.inspectInitializer(ctx, c)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if init == nil {
-			return fmt.Errorf("cache initializer disappeared")
+			return 0, fmt.Errorf("cache initializer disappeared")
 		}
 		if init.State.Status == "exited" {
-			if init.State.ExitCode != 0 {
-				return fmt.Errorf("base image cache initialization failed (exit %d)", init.State.ExitCode)
+			if err := p.e.call(ctx, "DELETE", "/containers/"+init.ID, nil, nil); err != nil && !apiStatus(err, 404) {
+				return 0, err
 			}
 			complete = true
-			slog.Info("Docker dependency cache initialized", "cache", c.Key, "image_id", plan.ImageID, "elapsed", time.Since(started))
-			return nil
+			slog.Info("Docker dependency cache helper finished", "cache", c.Key, "exit_code", init.State.ExitCode, "elapsed", time.Since(started))
+			return init.State.ExitCode, nil
 		}
 		if init.State.Status == "dead" {
-			return fmt.Errorf("cache initializer died")
+			return 0, fmt.Errorf("cache initializer died")
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return 0, ctx.Err()
 		case <-ticker.C:
 		}
 	}
 }
 
-const cacheInitializeScript = `umask 077
-mkdir -p /var/cache/pulse/tools /var/cache/pulse/uv /var/cache/pulse/pnpm
-for tool in c2j nix uv pnpm node python3 git; do command -v "$tool" >/dev/null; done
-cp -a --reflink=auto /nix/. /pulse-cache-seed/nix/
-nix-store --store 'local?root=/pulse-cache-seed' --check-validity "$(readlink -f /root/.nix-profile)"
-test "$(uv cache dir)" = "$UV_CACHE_DIR"
-case "$(pnpm store path)" in "$pnpm_config_store_dir"/*) ;; *) exit 1;; esac
-python3 -c 'import os; assert os.getuid() == 0; assert os.access("/pulse-cache-seed/nix/var/nix/db", os.W_OK)'
+const cacheDirectoriesScript = `umask 077
+mkdir -p "$C2J_TOOL_CACHE_DIR" "$UV_CACHE_DIR" "$pnpm_config_store_dir"
 `
 
-// removeCache runs under admission ownership. A stopped initializer is both
-// the readiness record and a reference protecting the volumes from pruning.
-// Remove it first: after a crash, leftover volumes have no readiness record and
-// are reconciled before reuse. Never force volume removal or delete workers.
+const cacheCheckScript = cacheDirectoriesScript + `test -f ` + cacheReadyFile + ` || exit 42
+`
+
+const cacheInitializeScript = cacheDirectoriesScript + `nix-store --init
+touch ` + cacheReadyFile + `
+`
+
+// Remove only idle pairs, never workers. The marker is deleted with the store.
 func (p *Provider) removeCache(ctx context.Context, c dependencyCache) (bool, error) {
 	// An ambiguous create may not yet appear in Docker's container listing.
 	// Conservatively defer eviction until all such reservations are resolved.
@@ -453,6 +478,7 @@ func (p *Provider) removeCache(ctx context.Context, c dependencyCache) (bool, er
 		}
 		delete(p.uncertain, "cache-init-"+c.Key)
 	}
+	delete(p.readyCaches, c.Key)
 	for _, kind := range []string{"nix", "tools"} {
 		if err = p.e.call(ctx, "DELETE", "/volumes/"+c.volume(kind), nil, nil); err != nil && !apiStatus(err, 404) {
 			return false, err
@@ -496,16 +522,6 @@ func (p *Provider) Maintain(ctx context.Context) error {
 		created, err := time.Parse(time.RFC3339Nano, v.CreatedAt)
 		if err != nil {
 			return fmt.Errorf("cache volume creation time unavailable")
-		}
-		init, err := p.inspectInitializer(ctx, c)
-		if err != nil {
-			return err
-		}
-		if init != nil && init.State.Status == "exited" && init.State.ExitCode == 0 {
-			created, err = time.Parse(time.RFC3339Nano, init.State.FinishedAt)
-			if err != nil {
-				return fmt.Errorf("cache initialization time unavailable")
-			}
 		}
 		if time.Since(created) < p.cfg.DependencyCache.MaxAge {
 			continue
