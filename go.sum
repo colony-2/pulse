@@ -62,10 +62,10 @@ github.com/buger/jsonparser v1.1.1 h1:2PnMjfWD7wBILjqQbt530v576A/cAbQvEW9gGIpYMU
 github.com/buger/jsonparser v1.1.1/go.mod h1:6RYKKt7H4d4+iWqouImQ9R2FZql3VbhNgx27UK13J/0=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
-github.com/colony-2/c2j v0.0.80 h1:GVMa6HEQvesS8xrQugfT9Z7oE6ljL337KNIrvGPb694=
-github.com/colony-2/c2j v0.0.80/go.mod h1:nwtrAZ8CbMM+WW2ga5e9RezgM8VUvfu3fVeBiLcA4/E=
-github.com/colony-2/jobdb v0.0.46-0.20261019210628-20269bd76cd7 h1:3FXhjeE/YCzKM24O3z9kloHfpPuZ6mlacfGkCC+Oqhs=
-github.com/colony-2/jobdb v0.0.46-0.20261019210628-20269bd76cd7/go.mod h1:p2FeWO2+PRfngsjJPKFn8puFa2QxmCQZ7KElqXP+s4E=
+github.com/colony-2/c2j v0.0.81 h1:XP30z3gnEigvcgVzOPcBvoNbiPOkZPfhTaVfJQ2pqWY=
+github.com/colony-2/c2j v0.0.81/go.mod h1:/XsbB7oUQ84oCPWLSIWTaTjqwH3ws70pVo0sjls1kms=
+github.com/colony-2/jobdb v0.0.46 h1:NFh0CMAQF0SGxx+8I5kj+8d9XzYbMbT13n28aQSNpNc=
+github.com/colony-2/jobdb v0.0.46/go.mod h1:p2FeWO2+PRfngsjJPKFn8puFa2QxmCQZ7KElqXP+s4E=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/distribution/reference v0.6.0 h1:0IXCQ5g4/QMHHkarYzh5l+u8T3t73zM5QvfrDyIgxBk=
