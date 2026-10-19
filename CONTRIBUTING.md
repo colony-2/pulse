@@ -13,7 +13,7 @@ make vet
 make test-packaging # npm installer tests
 ```
 
-Job discovery uses `github.com/colony-2/c2j/pkg/joblist`, pinned in `go.mod`. No c2j executable is needed to build or run the controller. Executor job images still need c2j. The integration pins c2j `v0.0.80` (`c9d84c6800aa`) and JobDB `v0.0.45` (`1aa9ab54b9ec`), the verified `main` heads; there is no local module replacement.
+Job discovery uses `github.com/colony-2/c2j/pkg/joblist`, pinned in `go.mod`. No c2j executable is needed to build or run the controller. Executor job images still need c2j. The integration pins c2j `v0.0.80` (`c9d84c6800aa`) and JobDB `v0.0.46-0.20261019210628-20269bd76cd7` (`20269bd76cd7`), the verified `main` heads; there is no local module replacement.
 
 When updating c2j, verify the public listing projection and execution compatibility against the new dependency. Keep the dependency pinned and run `go mod tidy -diff` to check module tidiness.
 
