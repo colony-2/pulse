@@ -19,7 +19,7 @@ Configuration is read once at startup. Restart or deploy a new revision after ch
 
 ## Tenant selection and defaults
 
-Pulse selects the tenant using `--jobdb`, an explicit Pulse target's `jobdb`, `C2J_JOBDB`, then `jobdb` in the nearest ancestor `.c2j/config.yaml`. The c2j public settings loader handles both literal and command-valued project settings. No repository scope is needed: discovery lists all eligible recipe jobs in the tenant, across repositories. Remove obsolete target `cells` and top-level `c2j` settings when upgrading; validation rejects them.
+Pulse selects the tenant using `--jobdb`, an explicit Pulse target's `jobdb`, `C2J_JOBDB`, then `jobdb` in the nearest ancestor `.c2/config.yaml`. The c2j public settings loader handles both literal and command-valued project settings. Projects using the former `.c2j/config.yaml` location must move their settings to `.c2/config.yaml`; the old location is no longer read. No repository scope is needed: discovery lists all eligible recipe jobs in the tenant, across repositories. Remove obsolete target `cells` and top-level `c2j` settings when upgrading; validation rejects them.
 
 ```sh
 export C2J_JOBDB=https://jobdb.example.com/acme

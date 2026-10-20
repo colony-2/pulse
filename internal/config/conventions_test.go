@@ -14,13 +14,13 @@ func TestC2JConventionsWithoutPulseConfig(t *testing.T) {
 	t.Setenv("PULSE_CONFIG", "")
 	os.Unsetenv("PULSE_CONFIG")
 	t.Setenv("C2J_JOBDB", "")
-	if _, err := LoadSource(""); err == nil || !strings.Contains(err.Error(), "C2J_JOBDB") {
+	if _, err := LoadSource(""); err == nil || (!strings.Contains(err.Error(), "C2J_JOBDB") || !strings.Contains(err.Error(), ".c2/config.yaml")) {
 		t.Fatalf("missing tenant should explain c2j settings: %v", err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, ".c2j"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, ".c2"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	project := filepath.Join(root, ".c2j", "config.yaml")
+	project := filepath.Join(root, ".c2", "config.yaml")
 	if err := os.WriteFile(project, []byte("jobdb: https://jobdb.example/project\n"), 0600); err != nil {
 		t.Fatal(err)
 	}

@@ -31,7 +31,7 @@ Start Docker Engine on Linux or Docker Desktop on macOS, then run:
 pulse
 ```
 
-No Pulse configuration file is required. Pulse uses the same tenant settings as c2j: `C2J_JOBDB`, then `jobdb` in the nearest `.c2j/config.yaml`. You can also select a tenant explicitly:
+No Pulse configuration file is required. Pulse uses the same tenant settings as c2j: `C2J_JOBDB`, then `jobdb` in the nearest `.c2/config.yaml`. You can also select a tenant explicitly:
 
 ```sh
 pulse run --jobdb https://jobdb.example.com/acme

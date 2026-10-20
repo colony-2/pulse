@@ -67,5 +67,5 @@ func resolveJobDB(ctx context.Context) (string, error) {
 			return uri, nil
 		}
 	}
-	return "", fmt.Errorf("JobDB tenant required: use --jobdb, C2J_JOBDB, or jobdb in .c2j/config.yaml")
+	return "", fmt.Errorf("JobDB tenant required: use --jobdb, C2J_JOBDB, or jobdb in .c2/config.yaml")
 }

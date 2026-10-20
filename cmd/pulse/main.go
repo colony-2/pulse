@@ -56,7 +56,7 @@ func newRootCmd() *cobra.Command {
 		}
 	}
 	root.PersistentFlags().StringVar(&path, "config", "", "optional configuration file (overrides PULSE_CONFIG and pulse.yaml)")
-	root.PersistentFlags().StringVar(&jobdb, "jobdb", "", "JobDB tenant URI (defaults to C2J_JOBDB or .c2j/config.yaml)")
+	root.PersistentFlags().StringVar(&jobdb, "jobdb", "", "JobDB tenant URI (defaults to C2J_JOBDB or .c2/config.yaml)")
 	root.Args, root.RunE = cobra.NoArgs, execute(false)
 	runCmd := &cobra.Command{Use: "run", Short: "Run jobs for the selected tenant", Args: cobra.NoArgs, RunE: execute(false)}
 	runCmd.Flags().BoolVar(&once, "once", false, "run one discovery/submission pass")
