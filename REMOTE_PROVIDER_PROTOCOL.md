@@ -1,6 +1,6 @@
 # Remote compute provider protocol v1
 
-Pulse uses **one batch submission operation** to send complete container launches. The [OpenAPI contract](api/provider.openapi.yaml) specifies v1 (`1.2.0`), including optional sensitive stdin and optional infrastructure timeouts. Built-in adapters use the same submission model in-process. See [Implementing a remote provider](docs/implementing-a-remote-provider.md) for server guidance.
+Pulse uses **one batch submission operation** to send complete container launches. The [OpenAPI contract](api/provider.openapi.yaml) specifies v1 (`1.3.0`), including unspecified resource quantities (zero), optional sensitive stdin, and optional infrastructure timeouts. Built-in adapters use the same submission model in-process. See [Implementing a remote provider](docs/implementing-a-remote-provider.md) for server guidance.
 
 ## Operations
 
@@ -19,7 +19,7 @@ Each item contains:
 
 - A unique `launch_id` for this attempt.
 - An OCI `image` reference and `platform` (`os/architecture[/variant]`).
-- Positive integer `cpu_millis`, `memory_bytes`, and `scratch_bytes`. One CPU is 1000 millicores; the maximum integer is `9007199254740991`.
+- Nonnegative integer `cpu_millis`, `memory_bytes`, and `scratch_bytes`. Zero means no requirement for that resource; positive values remain minimum capacity guarantees. One CPU is 1000 millicores; the maximum integer is `9007199254740991`.
 - Optional `timeout_seconds`: absent or zero delegates execution timeouts to c2j; a positive value is an explicit infrastructure cap of at most 31536000 seconds, and optional `start_before` in RFC 3339 format.
 - Opaque string-valued `metadata` for reverse lookup.
 - `process`: explicit `command`, `args`, literal `env`, optional sensitive `stdin`, and optional absolute `working_dir`. Empty arguments/environment use `[]` and `{}`, not `null`.

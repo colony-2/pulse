@@ -92,6 +92,65 @@ func TestGoogleCapacityAndUnknownStart(t *testing.T) {
 		s.Close()
 	}
 }
+
+func TestCloudRunUnspecifiedResources(t *testing.T) {
+	p, err := New(Config{Kind: "cloudrun", Project: "p", Region: "r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.accessToken = func(context.Context) (string, error) { return "token", nil }
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ":run") {
+			w.Write([]byte(`{"name":"operations/run"}`))
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+			w.WriteHeader(400)
+			return
+		}
+		task := body["template"].(map[string]any)["template"].(map[string]any)
+		limits := task["containers"].([]any)[0].(map[string]any)["resources"].(map[string]any)["limits"].(map[string]any)
+		if limits["cpu"] != "1" || limits["memory"] != "512Mi" {
+			t.Error("native minimum sizing changed", limits)
+		}
+		scratch := task["volumes"].([]any)[0].(map[string]any)["emptyDir"].(map[string]any)
+		if _, ok := scratch["sizeLimit"]; ok {
+			t.Error("unspecified scratch acquired a size limit", scratch)
+		}
+		w.Write([]byte(`{"done":true}`))
+	}))
+	defer s.Close()
+	p.BaseURL, p.HTTP = s.URL, s.Client()
+	r := request("unspecified")
+	r.CPUMillis, r.MemoryBytes, r.ScratchBytes = 0, 0, 0
+	l := launch(r)
+	l.Process.Env = map[string]string{}
+	out, err := p.Submit(context.Background(), []compute.Launch{l})
+	if err != nil || len(out) != 1 || out[0].Status != compute.Accepted {
+		t.Fatal(out, err)
+	}
+}
+
+func TestCloudUnspecifiedScratchNeedsNoImageStorageBound(t *testing.T) {
+	for _, kind := range []string{"ecs", "azurejobs"} {
+		t.Run(kind, func(t *testing.T) {
+			p := &Provider{cfg: Config{Kind: kind, MaxAzureCPU: 4000}}
+			r := request("unspecified")
+			r.CPUMillis, r.MemoryBytes, r.ScratchBytes = 0, 0, 0
+			r.Image = "runner:latest"
+			pl, reason := p.size(r)
+			if reason != "" || pl.Allocation.CPUMillis != 250 || pl.Allocation.MemoryBytes != 512*Mi || pl.Allocation.ScratchBytes != 0 {
+				t.Fatal(pl, reason)
+			}
+			r.ScratchBytes = Gi
+			if _, reason := p.size(r); !strings.Contains(reason, "storage bound") {
+				t.Fatal("explicit scratch must still require image accounting", reason)
+			}
+		})
+	}
+}
 func TestECSNativeTaskAndFailure(t *testing.T) {
 	for _, full := range []bool{false, true} {
 		req := request("ecs")

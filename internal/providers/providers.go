@@ -55,13 +55,18 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]compute.Provider
 			if e != nil {
 				return fail(e)
 			}
-			cpu, e := quantity.Parse(p.Capacity.CPU, true)
-			if e != nil {
-				return fail(e)
+			var cpu, mem int64
+			if p.Capacity.CPU != "" {
+				cpu, e = quantity.Parse(p.Capacity.CPU, true)
+				if e != nil {
+					return fail(e)
+				}
 			}
-			mem, e := quantity.Parse(p.Capacity.Memory, false)
-			if e != nil {
-				return fail(e)
+			if p.Capacity.Memory != "" {
+				mem, e = quantity.Parse(p.Capacity.Memory, false)
+				if e != nil {
+					return fail(e)
+				}
 			}
 			overhead := int64(256 << 20)
 			if p.Overhead != "" {

@@ -67,6 +67,39 @@ func TestAllocationProcess(t *testing.T) {
 	}
 }
 
+func TestUnspecifiedJobResources(t *testing.T) {
+	for _, raw := range []string{
+		`{"tenant_id":"t","job_id":"j","execution":{"status":"unresolved"}}`,
+		`{"tenant_id":"t","job_id":"j","execution":{"status":"unspecified","demand":{"schema_version":1,"effective":{}}}}`,
+		`{"tenant_id":"t","job_id":"j","execution":{"status":"specified","demand":{"schema_version":1,"effective":{"resources":{"memory":"4Gi"}}}}}`,
+	} {
+		var job Job
+		if err := json.Unmarshal([]byte(raw), &job); err != nil {
+			t.Fatal(err)
+		}
+		a, err := job.Allocation(compute.Allocation{Image: "ghcr.io/colony-2/base2:latest", Platform: "linux/arm64"})
+		if err != nil || a.CPUMillis != 0 || a.ScratchBytes != 0 {
+			t.Fatal(a, err)
+		}
+		p, err := Process("https://db/t", "j", a, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"C2J_EXECUTION_CPU", "C2J_EXECUTION_EPHEMERAL_STORAGE"} {
+			if _, ok := p.Env[key]; ok {
+				t.Fatal("unspecified resource advertised", p.Env)
+			}
+		}
+		if strings.Contains(raw, "4Gi") {
+			if a.MemoryBytes != 4<<30 || p.Env["C2J_EXECUTION_MEMORY"] != "4194304Ki" {
+				t.Fatal(a, p.Env)
+			}
+		} else if _, ok := p.Env["C2J_EXECUTION_MEMORY"]; ok || a.MemoryBytes != 0 {
+			t.Fatal(a, p.Env)
+		}
+	}
+}
+
 func TestRecordedC2JList(t *testing.T) {
 	b, e := os.ReadFile("testdata/list-v0.0.52.json")
 	if e != nil {

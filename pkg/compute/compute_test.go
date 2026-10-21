@@ -29,6 +29,28 @@ func TestAllocationEvidence(t *testing.T) {
 	}
 }
 
+func TestUnspecifiedAllocation(t *testing.T) {
+	a := Allocation{Image: "alpine:3", Platform: "linux/arm64"}
+	if err := a.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	want := a
+	want.MemoryBytes = 1024
+	if a.Satisfies(want) == nil {
+		t.Fatal("unspecified allocation satisfied explicit memory requirement")
+	}
+	if err := want.Satisfies(a); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []*int64{&a.CPUMillis, &a.MemoryBytes, &a.ScratchBytes} {
+		*field = -1
+		if a.Validate() == nil {
+			t.Fatal("negative resource accepted")
+		}
+		*field = 0
+	}
+}
+
 func TestSecretStdinTransportAndRedaction(t *testing.T) {
 	p := Process{Command: []string{"c2j"}, Stdin: "private-lease"}
 	for _, format := range []string{"%v", "%+v", "%#v"} {

@@ -18,7 +18,7 @@ def check(name, value, valid=True):
 
 
 assert set(spec["paths"]) == {"/v1/submit", "/v1/launches"}
-assert spec["info"]["version"] == "1.2.0"
+assert spec["info"]["version"] == "1.3.0"
 for operations in spec["paths"].values():
     for op in operations.values():
         bodies = [op["requestBody"]] if "requestBody" in op else []
@@ -40,13 +40,17 @@ legacy = copy.deepcopy(request)
 legacy["items"][0]["process"].pop("stdin")
 legacy["items"][0].pop("timeout_seconds")
 check("SubmitRequest", legacy)
+unspecified = copy.deepcopy(request)
+for field in ("cpu_millis", "memory_bytes", "scratch_bytes"):
+    unspecified["items"][0][field] = 0
+check("SubmitRequest", unspecified)
 for value in (123, "x" * (1048576 + 1), "bad\u0000input"):
     bad = copy.deepcopy(request)
     bad["items"][0]["process"]["stdin"] = value
     check("SubmitRequest", bad, False)
 check("SubmitRequest", {"items": []}, False)
 check("SubmitRequest", {"items": [request["items"][0]] * 101}, False)
-for field, value in (("cpu_millis", 0), ("memory_bytes", 1.5), ("scratch_bytes", 9007199254740992), ("timeout_seconds", 31536001), ("timeout_seconds", -1)):
+for field, value in (("cpu_millis", -1), ("memory_bytes", -1), ("scratch_bytes", -1), ("memory_bytes", 1.5), ("scratch_bytes", 9007199254740992), ("timeout_seconds", 31536001), ("timeout_seconds", -1)):
     bad = copy.deepcopy(request)
     bad["items"][0][field] = value
     check("SubmitRequest", bad, False)

@@ -96,9 +96,15 @@ func Process(jobdb, job string, a compute.Allocation, extra map[string]string, m
 		}
 		env[k] = v
 	}
-	env["C2J_EXECUTION_CPU"] = quantity.CPU(a.CPUMillis)
-	env["C2J_EXECUTION_MEMORY"] = quantity.Bytes(a.MemoryBytes)
-	env["C2J_EXECUTION_EPHEMERAL_STORAGE"] = quantity.Bytes(a.ScratchBytes)
+	if a.CPUMillis > 0 {
+		env["C2J_EXECUTION_CPU"] = quantity.CPU(a.CPUMillis)
+	}
+	if a.MemoryBytes > 0 {
+		env["C2J_EXECUTION_MEMORY"] = quantity.Bytes(a.MemoryBytes)
+	}
+	if a.ScratchBytes > 0 {
+		env["C2J_EXECUTION_EPHEMERAL_STORAGE"] = quantity.Bytes(a.ScratchBytes)
+	}
 	env["C2J_EXECUTION_PLATFORM"] = a.Platform
 	env["C2J_EXECUTION_IMAGE"] = a.Image
 	// The provider must enforce this image constraint before starting the process,

@@ -122,7 +122,7 @@ func open(ctx context.Context, cfg Config, e *engine, locking bool) (*Provider, 
 	if err := cfg.DependencyCache.normalize(); err != nil {
 		return nil, err
 	}
-	if cfg.CPUMillis <= 0 || cfg.MemoryBytes <= 0 || cfg.MaxContainers <= 0 || cfg.Overhead < 0 {
+	if cfg.CPUMillis < 0 || cfg.MemoryBytes < 0 || cfg.MaxContainers < 0 || cfg.Overhead < 0 {
 		return nil, fmt.Errorf("invalid Docker capacity budget")
 	}
 	if cfg.ScratchPath == "" {
@@ -164,6 +164,12 @@ func open(ctx context.Context, cfg Config, e *engine, locking bool) (*Provider, 
 	}
 	if info.OSType != "linux" {
 		return nil, fmt.Errorf("Docker daemon must run Linux")
+	}
+	if cfg.CPUMillis == 0 {
+		cfg.CPUMillis = int64(info.NCPU) * 1000
+	}
+	if cfg.MemoryBytes == 0 {
+		cfg.MemoryBytes = info.MemTotal
 	}
 	if cfg.CPUMillis > int64(info.NCPU)*1000 || cfg.MemoryBytes > info.MemTotal {
 		return nil, fmt.Errorf("Docker budget exceeds daemon resources")
@@ -220,7 +226,16 @@ func (p *Provider) acquire(ctx context.Context) error {
 }
 func (p *Provider) release() { <-p.gate }
 func (p *Provider) fits(c charge) bool {
-	return c.CPU <= p.cfg.CPUMillis && c.Memory <= p.cfg.MemoryBytes && c.Slots <= p.cfg.MaxContainers
+	return c.CPU <= p.cfg.CPUMillis && c.Memory <= p.cfg.MemoryBytes && (p.cfg.MaxContainers == 0 || c.Slots <= p.cfg.MaxContainers)
+}
+
+// A scratch-only request must not impose an application memory limit.
+func containerLimits(a compute.Allocation) (cpu, memory int64) {
+	cpu = a.CPUMillis * 1000000
+	if a.MemoryBytes > 0 {
+		memory = a.MemoryBytes + a.ScratchBytes
+	}
+	return
 }
 func (p *Provider) cost(a compute.Allocation) charge {
 	return charge{a.CPUMillis, a.MemoryBytes + a.ScratchBytes + p.cfg.Overhead, 1}
@@ -273,11 +288,11 @@ func (p *Provider) usage(ctx context.Context) (charge, map[string]container, err
 			continue
 		}
 		var cost charge
-		if err := json.Unmarshal([]byte(c.Config.Labels[accountingLabel]), &cost); err != nil || cost.CPU <= 0 || cost.Memory <= 0 || cost.Slots != 1 {
+		if err := json.Unmarshal([]byte(c.Config.Labels[accountingLabel]), &cost); err != nil || cost.CPU < 0 || cost.Memory < 0 || cost.Slots != 1 {
 			return charge{}, nil, fmt.Errorf("invalid managed capacity accounting")
 		}
 		h := c.HostConfig
-		validLimits := h.NanoCPUs > 0 && h.NanoCPUs%1000000 == 0 && h.NanoCPUs/1000000 == cost.CPU && h.Memory > 0 && h.Memory <= cost.Memory && h.MemorySwap == h.Memory
+		validLimits := h.NanoCPUs >= 0 && h.NanoCPUs%1000000 == 0 && h.NanoCPUs/1000000 == cost.CPU && h.Memory >= 0 && h.Memory <= cost.Memory && h.MemorySwap == h.Memory
 		switch c.Config.Labels[limitsLabel] {
 		case "disabled":
 			validLimits = h.NanoCPUs == 0 && h.Memory == 0 && h.MemorySwap == 0
@@ -306,7 +321,7 @@ func (p *Provider) resolve(ctx context.Context, r compute.Request, used charge) 
 	a.CPUMillis = (a.CPUMillis + 9) / 10 * 10
 	a.MemoryBytes = (a.MemoryBytes + 4095) / 4096 * 4096
 	a.ScratchBytes = (a.ScratchBytes + 4095) / 4096 * 4096
-	if a.MemoryBytes+a.ScratchBytes < 6<<20 {
+	if a.MemoryBytes > 0 && a.MemoryBytes+a.ScratchBytes < 6<<20 {
 		a.MemoryBytes = (6 << 20) - a.ScratchBytes
 	}
 	cost := p.cost(a)
@@ -484,18 +499,22 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		for k, v := range cacheEnv {
 			env = append(env, k+"="+v)
 		}
-		if _, ok := l.Process.Env["TMPDIR"]; !ok {
+		if _, ok := l.Process.Env["TMPDIR"]; !ok && plan.Allocation.ScratchBytes > 0 {
 			env = append(env, "TMPDIR="+p.cfg.ScratchPath)
 		}
-		if _, supplied := l.Process.Env["PULSE_SCRATCH_DIR"]; !supplied {
+		if _, supplied := l.Process.Env["PULSE_SCRATCH_DIR"]; !supplied && plan.Allocation.ScratchBytes > 0 {
 			env = append(env, "PULSE_SCRATCH_DIR="+p.cfg.ScratchPath)
 		}
 		a := plan.Allocation
-		cpu, memory := a.CPUMillis*1000000, a.MemoryBytes+a.ScratchBytes
+		cpu, memory := containerLimits(a)
 		if p.unenforced {
 			cpu, memory = 0, 0
 		}
-		body := map[string]any{"Image": plan.ImageID, "Entrypoint": l.Process.Command, "Cmd": l.Process.Args, "OpenStdin": l.Process.Stdin != "", "StdinOnce": true, "AttachStdin": l.Process.Stdin != "", "Env": env, "Labels": labels, "WorkingDir": l.Process.WorkingDir, "HostConfig": map[string]any{"NanoCpus": cpu, "Memory": memory, "MemorySwap": memory, "RestartPolicy": map[string]any{"Name": "no"}, "AutoRemove": true, "Tmpfs": map[string]string{p.cfg.ScratchPath: fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes)}, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "3"}}}}
+		tmpfs := map[string]string{}
+		if a.ScratchBytes > 0 {
+			tmpfs[p.cfg.ScratchPath] = fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes)
+		}
+		body := map[string]any{"Image": plan.ImageID, "Entrypoint": l.Process.Command, "Cmd": l.Process.Args, "OpenStdin": l.Process.Stdin != "", "StdinOnce": true, "AttachStdin": l.Process.Stdin != "", "Env": env, "Labels": labels, "WorkingDir": l.Process.WorkingDir, "HostConfig": map[string]any{"NanoCpus": cpu, "Memory": memory, "MemorySwap": memory, "RestartPolicy": map[string]any{"Name": "no"}, "AutoRemove": true, "Tmpfs": tmpfs, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "3"}}}}
 		if cache != nil {
 			body["HostConfig"].(map[string]any)["Mounts"] = cache.mounts()
 		}
@@ -540,7 +559,7 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 			continue
 		}
 		var inspected container
-		if err = p.e.call(ctx, "GET", "/containers/"+url.PathEscape(created.ID)+"/json", nil, &inspected); err != nil || !inspected.HostConfig.AutoRemove || inspected.HostConfig.NanoCPUs != cpu || inspected.HostConfig.Memory != memory || inspected.HostConfig.MemorySwap != memory || inspected.HostConfig.RestartPolicy.Name != "no" || inspected.HostConfig.Tmpfs[p.cfg.ScratchPath] != fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes) {
+		if err = p.e.call(ctx, "GET", "/containers/"+url.PathEscape(created.ID)+"/json", nil, &inspected); err != nil || !inspected.HostConfig.AutoRemove || inspected.HostConfig.NanoCPUs != cpu || inspected.HostConfig.Memory != memory || inspected.HostConfig.MemorySwap != memory || inspected.HostConfig.RestartPolicy.Name != "no" || inspected.HostConfig.Tmpfs[p.cfg.ScratchPath] != tmpfs[p.cfg.ScratchPath] {
 			r.Status = compute.Unknown
 			r.Reason = "Docker configuration verification failed; container not started"
 			out = append(out, r)

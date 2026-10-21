@@ -33,7 +33,7 @@ HTTP `400`, `401`, `403`, `413`, and `422` guarantee that no item was processed.
 
 ## Size and admit complete requests
 
-Each item includes `launch_id`, `image`, `platform`, `cpu_millis`, `memory_bytes`, `scratch_bytes`, optional `timeout_seconds` and `start_before`, `metadata`, and `process`. There are no plan tokens or separate allocation negotiation calls.
+Each item includes `launch_id`, `image`, `platform`, `cpu_millis`, `memory_bytes`, `scratch_bytes`, optional `timeout_seconds` and `start_before`, `metadata`, and `process`. Resource quantities may be zero (unspecified); only positive quantities require a capacity guarantee. There are no plan tokens or separate allocation negotiation calls.
 
 1. Match the image and platform. A digest-pinned image must launch that content. Pulse includes its requested digest in `C2J_EXECUTION_IMAGE_DIGEST` for c2j compatibility, so enforcing the pin is part of honoring the submitted environment. Do not silently substitute an image or architecture.
 2. Guarantee at least the requested usable CPU, memory, and scratch simultaneously. Round up to native sizes when needed; subtract image/provider overhead where it consumes usable capacity.

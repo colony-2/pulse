@@ -277,6 +277,101 @@ func launches(rs []compute.Request) []compute.Launch {
 	}
 	return out
 }
+
+func TestUnspecifiedResourcesAndUnlimitedContainers(t *testing.T) {
+	d := &daemon{containers: map[string]container{}}
+	s := httptest.NewServer(http.HandlerFunc(d.serve))
+	defer s.Close()
+	ctx := context.Background()
+	openProvider := func(cfg Config) *Provider {
+		t.Helper()
+		p, err := open(ctx, cfg, &engine{base: s.URL, client: s.Client()}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	p := openProvider(Config{Overhead: 256 << 20})
+	if p.cfg.CPUMillis != 8000 || p.cfg.MemoryBytes != 16<<30 || p.cfg.MaxContainers != 0 {
+		t.Fatalf("unexpected pool defaults: %+v", p.cfg)
+	}
+	ls := launches(requests("a", "b", "c"))
+	for i := range ls {
+		ls[i].Allocation.CPUMillis = 0
+		ls[i].Allocation.MemoryBytes = 0
+		ls[i].Allocation.ScratchBytes = 0
+	}
+	submit := func(p *Provider, items []compute.Launch, want compute.Status) {
+		t.Helper()
+		out, err := p.Submit(ctx, items)
+		if err != nil || len(out) != len(items) {
+			t.Fatal(out, err)
+		}
+		for _, result := range out {
+			if result.Status != want {
+				t.Fatal(result)
+			}
+		}
+	}
+	submit(p, ls[:2], compute.Accepted)
+	for _, c := range d.containers {
+		if c.HostConfig.NanoCPUs != 0 || c.HostConfig.Memory != 0 || c.HostConfig.MemorySwap != 0 || len(c.HostConfig.Tmpfs) != 0 {
+			t.Fatalf("unspecified resources acquired limits: %+v", c.HostConfig)
+		}
+		for _, env := range c.Config.Env {
+			if strings.HasPrefix(env, "TMPDIR=") || strings.HasPrefix(env, "PULSE_SCRATCH_DIR=") {
+				t.Fatal("unspecified scratch changed environment", env)
+			}
+		}
+	}
+	// Recover unbounded containers, then admit another one after restart.
+	p = openProvider(Config{Overhead: 256 << 20})
+	submit(p, ls[2:], compute.Accepted)
+	used, _, err := p.usage(ctx)
+	if err != nil || used != (charge{Memory: 768 << 20, Slots: 3}) {
+		t.Fatal(used, err)
+	}
+	ls[0].LaunchID = "d"
+	// Unlimited slots do not bypass an explicit memory accounting budget.
+	p = openProvider(Config{MemoryBytes: 768 << 20, Overhead: 256 << 20})
+	submit(p, ls[:1], compute.NoCapacity)
+	p = openProvider(Config{MaxContainers: 3})
+	submit(p, ls[:1], compute.NoCapacity)
+}
+
+func TestPartialResourceRequirements(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		cpu, memory, scratch int64
+		wantCPU, wantMemory  int64
+	}{
+		{"cpu only", 101, 0, 0, 110000000, 0},
+		{"memory only", 0, 1 << 20, 0, 0, 6 << 20},
+		{"scratch only", 0, 0, 8 << 20, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &daemon{containers: map[string]container{}}
+			p, s := testProvider(t, d)
+			defer s.Close()
+			ls := launches(requests("partial"))
+			ls[0].Allocation.CPUMillis = tc.cpu
+			ls[0].Allocation.MemoryBytes = tc.memory
+			ls[0].Allocation.ScratchBytes = tc.scratch
+			out, err := p.Submit(context.Background(), ls)
+			if err != nil || out[0].Status != compute.Accepted {
+				t.Fatal(out, err)
+			}
+			h := d.containers["partial"].HostConfig
+			if h.NanoCPUs != tc.wantCPU || h.Memory != tc.wantMemory || h.MemorySwap != tc.wantMemory || (len(h.Tmpfs) != 0) != (tc.scratch > 0) {
+				t.Fatalf("incorrect limits: %+v", h)
+			}
+			if _, _, err := p.usage(context.Background()); err != nil {
+				t.Fatal("cannot recover partial limits", err)
+			}
+		})
+	}
+}
+
 func TestConcurrentBatchesAndRestart(t *testing.T) {
 	d := &daemon{containers: map[string]container{}}
 	p, s := testProvider(t, d)

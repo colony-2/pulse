@@ -37,14 +37,15 @@ Pulse needs an HTTP(S) JobDB service with a tenant path. A missing tenant produc
 | --- | --- |
 | Provider | Local Docker, discovered using the active Docker context/socket |
 | Image | `ghcr.io/colony-2/base2:latest` |
-| CPU / memory / scratch | `1` / `1Gi` / `1Gi` |
+| CPU / memory / scratch | Unspecified; no implicit resource requirements |
 | Platform | Docker daemon's native Linux platform for a single Docker provider; otherwise `linux/<host architecture>` |
 | Execution timeout | Managed by c2j; no Pulse cap |
-| Docker capacity | One default-sized job plus `256Mi` memory overhead |
+| Docker capacity | Daemon CPU/memory capacity; `256Mi` accounting overhead per container |
+| Docker `capacity.max_containers` | `0` (unlimited) |
 | `max_jobs_per_tenant` | `100` per poll |
 | `max_pages_per_tenant` | `1000` per poll |
 
-Job execution requirements override allocation defaults. `defaults` in optional YAML changes the fallback values. When providers are explicitly configured, targets specify their `launch_services`. For advanced deployments, keep `instance_id` explicit if it must survive changes to the deployment URL. Executor images still provide c2j and recipe dependencies.
+Job execution requirements override explicitly configured allocation defaults. Omitted resources remain unspecified; Docker applies no corresponding CPU or memory limit, and creates a scratch tmpfs only when scratch is requested. `defaults` in optional YAML changes the fallback values. When providers are explicitly configured, targets specify their `launch_services`. For advanced deployments, keep `instance_id` explicit if it must survive changes to the deployment URL. Executor images still provide c2j and recipe dependencies.
 
 ## Execution lifetime
 
@@ -52,7 +53,7 @@ c2j enforces recipe and operation timeouts, cancels process trees, and stops wor
 
 `defaults.timeout`, if set, is an explicit infrastructure lifetime cap, from one second to one year. Providers must enforce a requested cap or decline it. Docker declines positive caps; use c2j recipe timeouts. Cloud Run and Azure require an explicit cap because their native job APIs require a task timeout. ECS and remote providers can use executor-managed timeouts without a Pulse cap. Cloud adapters still use `pulse-exec` as a stdin bridge; with no cap it applies no timer.
 
-Remote provider protocol 1.2 makes `timeout_seconds` optional: absent or zero means executor-managed timeouts. Upgrade remote providers before sending requests without a cap.
+Remote provider protocol 1.2 makes `timeout_seconds` optional: absent or zero means executor-managed timeouts. Protocol 1.3 also allows zero resource quantities, meaning no requirement for those resources. Upgrade remote providers before sending these requests.
 
 ## Lease handoff and recovery
 

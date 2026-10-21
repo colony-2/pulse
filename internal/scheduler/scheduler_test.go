@@ -178,7 +178,7 @@ func TestInvalidJobDoesNotReachProvider(t *testing.T) {
 		if invalidProcess {
 			batch[0].Process.Command = nil
 		} else {
-			batch[0].Request.MemoryBytes = 0
+			batch[0].Request.MemoryBytes = -1
 		}
 		calls := [][]string{}
 		s := New(time.Minute, time.Second)

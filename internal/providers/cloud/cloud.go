@@ -126,14 +126,18 @@ func (p *Provider) size(r compute.Request) (plan, string) {
 			reason = "unsupported Fargate platform"
 		}
 		bound, known := p.cfg.ImageStorageBounds[r.Image]
-		if !known || bound <= 0 || !strings.Contains(r.Image, "@") {
+		if r.ScratchBytes == 0 {
+			bound = 0
+		} else if !known || bound <= 0 || !strings.Contains(r.Image, "@") {
 			reason = "Fargate scratch requires a configured storage bound for this digest-pinned image"
 		}
 		pl.DiskGiB = max(int64(20), ceil(r.ScratchBytes+bound, Gi)/Gi)
 		if pl.DiskGiB > 200 {
 			reason = "Fargate ephemeral storage limit exceeded"
 		}
-		pl.Allocation.ScratchBytes = pl.DiskGiB*Gi - bound
+		if r.ScratchBytes > 0 {
+			pl.Allocation.ScratchBytes = pl.DiskGiB*Gi - bound
+		}
 		found := false
 		for _, size := range []struct{ milli, units, min, max, step int64 }{{250, 256, 512, 2048, 512}, {500, 512, 1024, 4096, 1024}, {1000, 1024, 2048, 8192, 1024}, {2000, 2048, 4096, 16384, 1024}, {4000, 4096, 8192, 30720, 1024}, {8000, 8192, 16384, 61440, 4096}, {16000, 16384, 32768, 122880, 8192}} {
 			if size.milli < r.CPUMillis {
@@ -161,7 +165,9 @@ func (p *Provider) size(r compute.Request) (plan, string) {
 			reason = "Azure adapter requires linux/amd64"
 		}
 		bound, known := p.cfg.ImageStorageBounds[r.Image]
-		if !known || bound <= 0 || !strings.Contains(r.Image, "@") {
+		if r.ScratchBytes == 0 {
+			bound = 0
+		} else if !known || bound <= 0 || !strings.Contains(r.Image, "@") {
 			reason = "Azure scratch requires a configured storage bound for this digest-pinned image"
 		}
 		found := false
@@ -179,7 +185,9 @@ func (p *Provider) size(r compute.Request) (plan, string) {
 			if cpu >= r.CPUMillis && memory >= r.MemoryBytes && disk-bound >= r.ScratchBytes {
 				pl.Allocation.CPUMillis = cpu
 				pl.Allocation.MemoryBytes = memory
-				pl.Allocation.ScratchBytes = disk - bound
+				if r.ScratchBytes > 0 {
+					pl.Allocation.ScratchBytes = disk - bound
+				}
 				found = true
 				break
 			}
@@ -365,7 +373,11 @@ func (p *Provider) submitGoogle(ctx context.Context, token string, l compute.Lau
 	a := pl.Allocation
 	container := map[string]any{"image": a.Image, "command": l.Process.Command, "args": l.Process.Args, "env": envList(l.Process, pl.Request.Metadata), "resources": map[string]any{"limits": map[string]string{"cpu": strconv.FormatInt(a.CPUMillis/1000, 10), "memory": fmt.Sprintf("%dMi", pl.TotalMemory/Mi)}}, "volumeMounts": []map[string]string{{"name": "scratch", "mountPath": "/scratch"}}}
 	p.withStdinHelper(container, l)
-	task := map[string]any{"containers": []any{container}, "maxRetries": 0, "timeout": fmt.Sprintf("%ds", pl.Request.TimeoutSeconds), "volumes": []any{map[string]any{"name": "scratch", "emptyDir": map[string]string{"medium": "MEMORY", "sizeLimit": fmt.Sprintf("%d", a.ScratchBytes)}}}}
+	scratch := map[string]string{"medium": "MEMORY"}
+	if a.ScratchBytes > 0 {
+		scratch["sizeLimit"] = fmt.Sprintf("%d", a.ScratchBytes)
+	}
+	task := map[string]any{"containers": []any{container}, "maxRetries": 0, "timeout": fmt.Sprintf("%ds", pl.Request.TimeoutSeconds), "volumes": []any{map[string]any{"name": "scratch", "emptyDir": scratch}}}
 	if p.cfg.ServiceAccount != "" {
 		task["serviceAccount"] = p.cfg.ServiceAccount
 	}

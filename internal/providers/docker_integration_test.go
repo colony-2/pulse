@@ -46,7 +46,7 @@ func TestDockerIntegration(t *testing.T) {
 	}
 	t.Logf("running real container jobs through Pulse defaults: %s (%s)", socket, platform)
 	dir := t.TempDir()
-	// Omit providers and launch_services. No helper binary or host mount exists.
+	// Default discovery needs no helper binary or host mount.
 	data := `defaults:
   image: alpine:3.21
   cpu: "100m"
@@ -81,6 +81,63 @@ targets:
 		}
 		unenforced = strings.Contains(string(out), "WARN Docker resource limits unavailable")
 	})
+	t.Run("unspecified resources allow concurrent containers", func(t *testing.T) {
+		cfg, err := config.Parse([]byte("defaults: {image: 'alpine:3.21'}\ntargets: [{jobdb: 'http://localhost/acme'}]\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		instances, closeProviders, err := providers.Build(ctx, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(closeProviders)
+		var ls []compute.Launch
+		for i := 0; i < 2; i++ {
+			id := fmt.Sprintf("docker-unbounded-%d-%d", time.Now().UnixNano(), i)
+			sum := sha256.Sum256([]byte(id))
+			name := "pulse-" + hex.EncodeToString(sum[:16])
+			t.Cleanup(func() {
+				cleanup, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				if out, err := exec.CommandContext(cleanup, "docker", "--host", socket, "rm", "-f", name).CombinedOutput(); err != nil {
+					t.Errorf("cleanup: %v: %s", err, out)
+				}
+			})
+			ls = append(ls, compute.Launch{Request: compute.Request{LaunchID: id, Allocation: cfg.Allocation, Metadata: map[string]string{"pulse_job_id": id}}, Process: compute.Process{Command: []string{"/bin/sleep"}, Args: []string{"300"}}})
+		}
+		out, err := instances["docker"].Submit(ctx, ls)
+		if err != nil || len(out) != 2 || out[0].Status != compute.Accepted || out[1].Status != compute.Accepted {
+			t.Fatal(out, err)
+		}
+		closeProviders()
+		instances, closeAgain, err := providers.Build(ctx, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(closeAgain)
+		for _, l := range ls {
+			listed, err := instances["docker"].List(ctx, compute.ListRequest{LaunchID: l.LaunchID})
+			if err != nil || len(listed.Items) != 1 || listed.Items[0].State != "running" {
+				t.Fatalf("concurrent job missing after restart: %+v, %v", listed, err)
+			}
+			sum := sha256.Sum256([]byte(l.LaunchID))
+			name := "pulse-" + hex.EncodeToString(sum[:16])
+			var limits struct {
+				NanoCPUs, Memory, MemorySwap int64
+				Tmpfs                        map[string]string
+			}
+			if err := json.Unmarshal([]byte(docker(t, "inspect", "--format", "{{json .HostConfig}}", name)), &limits); err != nil {
+				t.Fatal(err)
+			}
+			if limits.NanoCPUs != 0 || limits.Memory != 0 || limits.MemorySwap != 0 || len(limits.Tmpfs) != 0 {
+				t.Fatalf("unexpected resource limits: %+v", limits)
+			}
+		}
+	})
+	// The bounded-pool scenarios below explicitly request one slot.
+	pool := cfg.Providers["docker"]
+	pool.Capacity.MaxContainers = 1
+	cfg.Providers["docker"] = pool
 	instances, closeProviders, err := providers.Build(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)

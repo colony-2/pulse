@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -242,7 +243,7 @@ func TestDefaultDockerProvider(t *testing.T) {
 				t.Fatal(err)
 			}
 			p := cfg.Providers["docker"]
-			if len(cfg.Providers) != 1 || p.Type != "docker" || p.Socket != "" || p.Capacity.CPU != "1000m" || p.Capacity.Memory != "2359296Ki" || p.Capacity.MaxContainers != 1 || p.Overhead != "256Mi" {
+			if len(cfg.Providers) != 1 || p.Type != "docker" || p.Socket != "" || p.Capacity.CPU != "" || p.Capacity.Memory != "" || p.Capacity.MaxContainers != 0 || p.Overhead != "256Mi" {
 				t.Fatalf("unexpected Docker defaults: %+v", p)
 			}
 			if services := cfg.Targets[0].Services; len(services) != 1 || services[0] != (Service{Name: "docker", Priority: 1}) {
@@ -274,7 +275,7 @@ func TestExplicitProviderDoesNotAddDocker(t *testing.T) {
 	}
 }
 
-func TestDockerBudgetDefaultsRoundUp(t *testing.T) {
+func TestDockerBudgetIndependentOfJobDefaults(t *testing.T) {
 	data := strings.Replace(valid, "type: remote", "type: docker", 1)
 	data = strings.Replace(data, `cpu: "1"`, `cpu: "1001m"`, 1)
 	data = strings.ReplaceAll(data, "1Gi", "1Ki")
@@ -283,8 +284,8 @@ func TestDockerBudgetDefaultsRoundUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := cfg.Providers["pool"]
-	if p.Capacity.CPU != "1010m" || p.Capacity.Memory != "268288Ki" {
-		t.Fatalf("budget cannot fit rounded default job: %+v", p)
+	if p.Capacity.CPU != "" || p.Capacity.Memory != "" || p.Capacity.MaxContainers != 0 {
+		t.Fatalf("job defaults changed pool defaults: %+v", p)
 	}
 	cfg, err = Load("../../examples/docker.yaml")
 	if err != nil {
@@ -293,5 +294,20 @@ func TestDockerBudgetDefaultsRoundUp(t *testing.T) {
 	p = cfg.Providers["local"]
 	if p.Capacity.CPU != "4" || p.Capacity.Memory != "8Gi" || p.Capacity.MaxContainers != 4 {
 		t.Fatalf("explicit Docker configuration changed: %+v", p)
+	}
+}
+
+func TestDockerContainerLimit(t *testing.T) {
+	base := strings.Replace(valid, "type: remote", "type: docker\n    capacity: {max_containers: %d}", 1)
+	for _, n := range []int{-1, 0, 3} {
+		data := strings.Replace(base, "%d", strconv.Itoa(n), 1)
+		cfg, err := Parse([]byte(data))
+		if n < 0 {
+			if err == nil {
+				t.Fatal("negative container limit accepted")
+			}
+		} else if err != nil || cfg.Providers["pool"].Capacity.MaxContainers != n {
+			t.Fatal(cfg, err)
+		}
 	}
 }

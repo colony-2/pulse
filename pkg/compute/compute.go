@@ -47,6 +47,7 @@ func (s Status) Valid() bool {
 	return s == Accepted || s.Fallback() || s == Rejected || s == Unknown
 }
 
+// Allocation uses zero resource quantities for unspecified requirements.
 type Allocation struct {
 	CPUMillis    int64  `json:"cpu_millis" yaml:"cpu_millis"`
 	MemoryBytes  int64  `json:"memory_bytes" yaml:"memory_bytes"`
@@ -59,7 +60,7 @@ type Allocation struct {
 
 func (a Allocation) Validate() error {
 	for name, n := range map[string]int64{"cpu": a.CPUMillis, "memory": a.MemoryBytes, "scratch": a.ScratchBytes} {
-		if n <= 0 || n > MaxQuantity {
+		if n < 0 || n > MaxQuantity {
 			return fmt.Errorf("invalid %s allocation %d", name, n)
 		}
 	}

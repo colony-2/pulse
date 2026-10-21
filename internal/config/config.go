@@ -157,15 +157,6 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 		c.Defaults.Platform = "linux/" + runtime.GOARCH
 		c.AutoPlatform = true
 	}
-	if c.Defaults.CPU == "" {
-		c.Defaults.CPU = "1"
-	}
-	if c.Defaults.Memory == "" {
-		c.Defaults.Memory = "1Gi"
-	}
-	if c.Defaults.Scratch == "" {
-		c.Defaults.Scratch = "1Gi"
-	}
 	if c.HTTP.Listen == "" {
 		port := os.Getenv("PORT")
 		if port == "" {
@@ -250,6 +241,9 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 		p   *int64
 		cpu bool
 	}{{c.Defaults.CPU, &a.CPUMillis, true}, {c.Defaults.Memory, &a.MemoryBytes, false}, {c.Defaults.Scratch, &a.ScratchBytes, false}} {
+		if v.s == "" {
+			continue
+		}
 		n, e := quantity.Parse(v.s, v.cpu)
 		if e != nil {
 			return nil, e
@@ -320,23 +314,11 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 			if p.Overhead == "" {
 				p.Overhead = "256Mi"
 			}
-			overhead, err := quantity.Parse(p.Overhead, false)
-			if err != nil {
+			if _, err := quantity.Parse(p.Overhead, false); err != nil {
 				return nil, err
 			}
-			// Start with a single default-sized job. Larger pools are explicit.
-			if p.Capacity.CPU == "" {
-				p.Capacity.CPU = quantity.CPU((a.CPUMillis + 9) / 10 * 10)
-			}
-			if p.Capacity.Memory == "" {
-				memory := (a.MemoryBytes+4095)/4096*4096 + (a.ScratchBytes+4095)/4096*4096
-				if memory < 6<<20 {
-					memory = 6 << 20
-				}
-				p.Capacity.Memory = quantity.Bytes(memory + overhead)
-			}
-			if p.Capacity.MaxContainers == 0 {
-				p.Capacity.MaxContainers = 1
+			if p.Capacity.MaxContainers < 0 {
+				return nil, fmt.Errorf("max_containers must be nonnegative (zero means unlimited)")
 			}
 			c.Providers[name] = p
 		} else if p.DependencyCache != nil {

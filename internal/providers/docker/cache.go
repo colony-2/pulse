@@ -334,7 +334,7 @@ func (p *Provider) runCacheHelper(ctx context.Context, c dependencyCache, plan n
 	accounting, _ := json.Marshal(cost)
 	labels[accountingLabel] = string(accounting)
 	labels[limitsLabel] = "enforced"
-	cpu, memory := plan.Allocation.CPUMillis*1000000, plan.Allocation.MemoryBytes+plan.Allocation.ScratchBytes
+	cpu, memory := containerLimits(plan.Allocation)
 	if p.unenforced {
 		cpu, memory = 0, 0
 		labels[limitsLabel] = "disabled"

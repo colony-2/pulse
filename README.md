@@ -40,7 +40,7 @@ pulse run --once
 pulse version
 ```
 
-Pulse discovers eligible c2j jobs across every repository in the tenant. Docker is the default provider, and jobs without an image use `ghcr.io/colony-2/base2:latest`. The default job requests 1 CPU, 1 GiB memory, and 1 GiB scratch; the Docker pool runs one job at a time. Docker's native Linux platform is detected automatically.
+Pulse discovers eligible c2j jobs across every repository in the tenant. Docker is the default provider, and jobs without an image use `ghcr.io/colony-2/base2:latest`. Jobs without resource requirements have no CPU, memory, or scratch allocation, and Docker has no default container-count cap. Docker's native Linux platform is detected automatically.
 
 For Colony base images, Docker automatically retains uv, pnpm, and Nix dependencies
 in tenant-scoped volumes across jobs and restarts. No Nix daemon or manual cache
@@ -105,7 +105,7 @@ targets:
 
 Define these service names under `providers` and supply `JOBDB_TOKEN` for authenticated JobDB discovery and lease acquisition. Pulse never passes this broad credential to the executor. Omit `jobdb_token_env` for an unauthenticated deployment. Provider authentication is configured separately.
 
-When `providers` is omitted or empty, Pulse defaults to a local provider named `docker`; targets without `launch_services` use it at priority 1. The default pool runs one job at a time, with a budget sized for the default job plus 256 MiB memory overhead. Start Docker Engine or Docker Desktop. Docker launches c2j directly and supplies its lease over native stdin, with no host mounts or helper installation. See [Docker defaults and overrides](docs/providers.md#local-docker-capacity).
+When `providers` is omitted or empty, Pulse defaults to a local provider named `docker`; targets without `launch_services` use it at priority 1. The default pool uses the daemon’s CPU and memory capacity, with no container-count cap and 256 MiB accounting overhead per container. Start Docker Engine or Docker Desktop. Docker launches c2j directly and supplies its lease over native stdin, with no host mounts or helper installation. See [Docker defaults and overrides](docs/providers.md#local-docker-capacity).
 
 c2j owns recipe and operation timeouts; Pulse imposes no execution timeout by default. Optional infrastructure caps must be configured explicitly and supported by the selected provider. Defaults are a 5-second poll interval, a 5-minute lease duration, 60-second provisioning-failure backoff, and batches of at most 100 jobs. Claims run with up to 8 concurrent calls and a 5-second claim window; configure these with `claim_concurrency`, `claim_timeout`, and `batch_size`. Pulse acquires the lease before submission and does not renew it; c2j renews the supplied lease on startup. Accepted or uncertain starts rely on lease expiry for recovery. Definite non-starts release the lease with backoff. In-memory cooldowns suppress failures only; JobDB ownership survives controller restarts. See [configuration details](docs/configuration.md) and the complete [examples](examples).
 
