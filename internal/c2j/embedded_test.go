@@ -30,12 +30,11 @@ func (r readOnly) ListJobs(ctx context.Context, req jobdb.ListJobsRequest) (jobd
 
 func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 	memory := "8Gi"
-	demand, err := execution.Initial(nil, "digest", execution.Requirements{Resources: execution.Resources{Memory: &memory}})
+	demand, err := execution.Initial(nil, true, execution.Requirements{Resources: execution.Resources{Memory: &memory}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	demand.Revision = 3
-	payload, err := execution.PayloadWithDemand(nil, demand)
+	payload, err := execution.PayloadWithDemand(nil, demand.Demand)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,10 +54,10 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 			t.Errorf("changed opaque token %q", req.PageToken)
 		}
 		return jobdb.ListJobsResponse{Jobs: []jobdb.JobSummary{{
-			JobKey: jobdb.JobKey{TenantId: req.TenantIds[0], JobId: "job"}, JobType: "recipe", Status: jobdb.JobStatusCrashConcern,
+			JobKey: jobdb.JobKey{TenantId: req.TenantIds[0], JobId: "job"}, GoalID: "goal", OtherGoalIDs: []string{}, JobType: "recipe", Status: jobdb.JobStatusCrashConcern,
 			NextRoute: &jobdb.Route{JobType: "recipe", TaskType: "input:opaque"}, AvailableAt: now, CancelRequested: true,
 			ClientPayload: payload, Metadata: json.RawMessage(`{"repo":"https://github.com/acme/app.git"}`),
-		}, {JobKey: jobdb.JobKey{TenantId: req.TenantIds[0], JobId: "bad"}, Status: jobdb.JobStatusReady, Metadata: json.RawMessage(`{"execution":{"schema_version":99}}`)}}}, nil
+		}, {JobKey: jobdb.JobKey{TenantId: req.TenantIds[0], JobId: "bad"}, GoalID: "bad-goal", OtherGoalIDs: []string{}, Status: jobdb.JobStatusReady, Metadata: json.RawMessage(`{"execution":{"schema_version":99}}`)}}}, nil
 	}})
 	t.Setenv("PULSE_TEST_DB_TOKEN", "db-token")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -87,7 +86,7 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 				return
 			}
 			j := page.Jobs[0]
-			if j.Tenant != tenant || j.Repository != "https://github.com/acme/app.git" || j.Next.TaskType != "input:opaque" || !j.AvailableAt.Equal(now) || !j.CancelRequested || j.Execution.Source != "yield" || j.Execution.Demand.Revision != 3 {
+			if j.Tenant != tenant || j.Repository != "https://github.com/acme/app.git" || j.Next.TaskType != "input:opaque" || !j.AvailableAt.Equal(now) || !j.CancelRequested || j.Execution.Source != "yield" || !reflect.DeepEqual(j.Execution.Demand, &demand.Demand) {
 				t.Errorf("lost typed data: %+v", j)
 			}
 			a, err := j.Allocation(compute.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Platform: "linux/amd64", Image: "alpine:3"})

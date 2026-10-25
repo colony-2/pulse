@@ -77,11 +77,11 @@ func TestTenantIsolationPaginationAndLeaseOwnership(t *testing.T) {
 		}
 		claimed[job.ID] = true
 		memory := "8Gi"
-		demand, err := execution.Initial(nil, "digest", execution.Requirements{Resources: execution.Resources{Memory: &memory}})
+		demand, err := execution.Initial(nil, true, execution.Requirements{Resources: execution.Resources{Memory: &memory}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		payload, err := execution.PayloadWithDemand(nil, demand)
+		payload, err := execution.PayloadWithDemand(nil, demand.Demand)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -104,11 +104,11 @@ func TestAvailableRouteDiscoveryAndAdmission(t *testing.T) {
 						}
 						if changed {
 							memory := "8Gi"
-							demand, err := execution.Initial(nil, "changed", execution.Requirements{Resources: execution.Resources{Memory: &memory}})
+							demand, err := execution.Initial(nil, true, execution.Requirements{Resources: execution.Resources{Memory: &memory}})
 							if err != nil {
 								return c2j.Page{}, err
 							}
-							payload, err := execution.PayloadWithDemand(nil, demand)
+							payload, err := execution.PayloadWithDemand(nil, demand.Demand)
 							if err != nil {
 								return c2j.Page{}, err
 							}

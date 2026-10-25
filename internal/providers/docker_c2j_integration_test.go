@@ -119,7 +119,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			key, err := starter.StartRecipeJob(ctx, workflowctl.StartJob{
+			jobRef, err := starter.StartRecipeJob(ctx, workflowctl.StartJob{
 				TenantId: "docker-test", RecipeName: rec.GetMetadata().ID, GitRef: f.hash,
 				JobContext: contextual.JobContext{
 					Workflow: contextual.WorkflowContext{ProjectId: "docker-test", CellName: "."},
@@ -129,6 +129,8 @@ func TestDockerC2JIntegration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
+			key := jobRef.Key()
 
 			// This is exactly the no-config installed CLI invocation. No executor,
 			// provider, image, socket, platform, resource, or environment overrides.

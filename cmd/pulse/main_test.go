@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/colony-2/c2j/pkg/execution"
 	"github.com/colony-2/c2j/pkg/joblist"
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	jobremote "github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
@@ -38,8 +39,12 @@ func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := page.Jobs[0]
-	metadata, _ := json.Marshal(map[string]any{"execution": job.Execution.Demand, "repo": "https://github.com/acme/first.git"})
-	metadata2, _ := json.Marshal(map[string]any{"execution": job.Execution.Demand, "repo": "https://github.com/acme/second.git"})
+	initial, err := execution.Initial(&job.Execution.Demand.Effective, true, execution.Requirements{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, _ := json.Marshal(map[string]any{"execution": initial, "repo": "https://github.com/acme/first.git"})
+	metadata2, _ := json.Marshal(map[string]any{"execution": initial, "repo": "https://github.com/acme/second.git"})
 	for _, source := range []string{"file", "environment"} {
 		t.Run(source, func(t *testing.T) {
 			backend := toy.New()
@@ -50,11 +55,11 @@ func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
 			if _, err := backend.SubmitJob(context.Background(), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: job.TenantID, JobID: "second-job", JobType: "recipe", Metadata: metadata2, Data: jobdb.NewTaskDataOrPanic(1)}}); err != nil {
 				t.Fatal(err)
 			}
-			db := httptest.NewServer(jobremote.NewServer(leasedListRuntime{Runtime: backend, list: func(_ context.Context, req jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
+			db := httptest.NewServer(jobremote.NewServer(leasedListRuntime{Runtime: backend, list: func(ctx context.Context, req jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
 				if req.MetadataFilter != nil || len(req.TenantIds) != 1 || req.TenantIds[0] != job.TenantID {
 					t.Errorf("incorrect tenant query: %+v", req)
 				}
-				return jobdb.ListJobsResponse{Jobs: []jobdb.JobSummary{{JobKey: jobdb.JobKey{TenantId: job.TenantID, JobId: job.JobID}, Status: job.Status, JobType: "recipe", NextRoute: job.NextRoute, Metadata: metadata}, {JobKey: jobdb.JobKey{TenantId: job.TenantID, JobId: "second-job"}, Status: job.Status, JobType: "recipe", NextRoute: job.NextRoute, Metadata: metadata2}}}, nil
+				return backend.ListJobs(ctx, req)
 			}}))
 			defer db.Close()
 			var mu sync.Mutex

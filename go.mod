@@ -9,8 +9,8 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.47.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.5
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.99.0
-	github.com/colony-2/c2j v0.0.87-0.20261020193444-aa03fec8b1c8
-	github.com/colony-2/jobdb v0.0.46
+	github.com/colony-2/c2j v0.0.97-0.20261025211528-fb3a8a114763
+	github.com/colony-2/jobdb v0.0.55
 	github.com/distribution/reference v0.6.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/spf13/cobra v1.10.2
@@ -82,6 +82,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260630182238-925bb5da69e7 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
+	gopkg.in/macaroon.v2 v2.1.0 // indirect
 	gorm.io/gorm v1.31.1 // indirect
 	k8s.io/apimachinery v0.35.0 // indirect
 	modernc.org/libc v1.72.3 // indirect

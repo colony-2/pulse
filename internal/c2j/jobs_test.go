@@ -11,14 +11,13 @@ import (
 
 func TestPackageBearingDemandUsesC2JProjection(t *testing.T) {
 	base := execution.Requirements{Packages: []string{"uv:pyfiglet==1.0.2"}}
-	demand, err := execution.Initial(&base, "recipe-digest", execution.Requirements{})
+	demand, err := execution.Initial(&base, true, execution.Requirements{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	node := execution.Requirements{Packages: []string{"pnpm:typescript@5.8.3"}}
-	demand.NodeRequirements = &node
 	demand.Effective = execution.Overlay(base, node)
-	payload, err := execution.PayloadWithDemand(nil, demand)
+	payload, err := execution.PayloadWithDemand(nil, demand.Demand)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +35,7 @@ func TestPackageBearingDemandUsesC2JProjection(t *testing.T) {
 
 func TestDemandAndRoute(t *testing.T) {
 	var j Job
-	err := json.Unmarshal([]byte(`{"tenant_id":"t","job_id":"j","status":"READY","next_route":{"jobType":"recipe","taskType":"input:with, spaces"},"execution":{"status":"unresolved","source":"submission","demand":{"schema_version":1,"effective":{"resources":{"memory":"4Gi"}}}}}`), &j)
+	err := json.Unmarshal([]byte(`{"tenant_id":"t","job_id":"j","status":"READY","next_route":{"jobType":"recipe","taskType":"input:with, spaces"},"execution":{"status":"unresolved","source":"submission","demand":{"schema_version":3,"recipe_resolution":"unresolved","effective":{"resources":{"memory":"4Gi"}}}}}`), &j)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,8 +69,8 @@ func TestAllocationProcess(t *testing.T) {
 func TestUnspecifiedJobResources(t *testing.T) {
 	for _, raw := range []string{
 		`{"tenant_id":"t","job_id":"j","execution":{"status":"unresolved"}}`,
-		`{"tenant_id":"t","job_id":"j","execution":{"status":"unspecified","demand":{"schema_version":1,"effective":{}}}}`,
-		`{"tenant_id":"t","job_id":"j","execution":{"status":"specified","demand":{"schema_version":1,"effective":{"resources":{"memory":"4Gi"}}}}}`,
+		`{"tenant_id":"t","job_id":"j","execution":{"status":"unspecified","demand":{"schema_version":3,"recipe_resolution":"resolved","effective":{}}}}`,
+		`{"tenant_id":"t","job_id":"j","execution":{"status":"specified","demand":{"schema_version":3,"recipe_resolution":"resolved","effective":{"resources":{"memory":"4Gi"}}}}}`,
 	} {
 		var job Job
 		if err := json.Unmarshal([]byte(raw), &job); err != nil {
@@ -100,7 +99,7 @@ func TestUnspecifiedJobResources(t *testing.T) {
 	}
 }
 
-func TestRecordedC2JList(t *testing.T) {
+func TestRecordedLegacyC2JListRejected(t *testing.T) {
 	b, e := os.ReadFile("testdata/list-v0.0.52.json")
 	if e != nil {
 		t.Fatal(e)
@@ -110,9 +109,9 @@ func TestRecordedC2JList(t *testing.T) {
 	if e != nil || len(page.Jobs) != 1 {
 		t.Fatal(page, e)
 	}
-	a, e := page.Jobs[0].Allocation(compute.Allocation{CPUMillis: 250, MemoryBytes: 1 << 20, ScratchBytes: 1 << 20, Image: "registry.example/runner:1", Platform: "linux/arm64"})
-	if e != nil || a.CPUMillis != 1000 || a.MemoryBytes != 1<<30 || a.ScratchBytes != 1<<30 {
-		t.Fatal(a, e)
+	_, e = page.Jobs[0].Allocation(compute.Allocation{CPUMillis: 250, MemoryBytes: 1 << 20, ScratchBytes: 1 << 20, Image: "registry.example/runner:1", Platform: "linux/arm64"})
+	if e == nil || !strings.Contains(e.Error(), "unsupported demand schema 1") {
+		t.Fatal("legacy demand accepted", e)
 	}
 }
 

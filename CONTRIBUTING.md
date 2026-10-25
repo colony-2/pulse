@@ -13,11 +13,11 @@ make vet
 make test-packaging # npm installer tests
 ```
 
-Job discovery uses `github.com/colony-2/c2j/pkg/joblist`, pinned in `go.mod`. No c2j executable is needed to build or run the controller. Executor job images still need c2j. The integration pins c2j `v0.0.87-0.20261020193444-aa03fec8b1c8` (`aa03fec8b1c8`) and JobDB `v0.0.46` (`20269bd76cd7`), the verified `main` heads; there is no local module replacement.
+Job discovery uses `github.com/colony-2/c2j/pkg/joblist`, pinned in `go.mod`. No c2j executable is needed to build or run the controller. Executor job images still need c2j. The integration pins c2j `v0.0.97-0.20261025211528-fb3a8a114763` (`fb3a8a114763`) and JobDB `v0.0.55` (`9c9d68441990`), the verified `main` heads as of 2026-10-25; there is no local module replacement.
 
 When updating c2j, verify the public listing projection and execution compatibility against the new dependency. Keep the dependency pinned and run `go mod tidy -diff` to check module tidiness.
 
-The default executor image must support the job chapter schema emitted by the pinned c2j library. Updating Go modules does not update the image's installed CLI: c2j `v0.0.72` emits schema v2, which the `v0.0.71` executor cannot write. Refresh the base image with a compatible executor before expecting the supplied-lease integration to pass; keep that test's schema validation enabled.
+The default executor image must support the execution-demand and job chapter schemas emitted by the pinned c2j library. Updating Go modules does not update the image's installed CLI. On 2026-10-25, `ghcr.io/colony-2/base2:latest` at digest `sha256:76ea55c84f154bd72a2a050fe59e23cc5a47e7157efbe58de75f7372a56b774f` ships c2j `0.0.95`; the supplied-lease integration fails with `unsupported execution schema version 3` against the current library. Refresh the base image with a compatible executor before expecting that integration to pass; keep its schema validation enabled. Pulse follows `execution.DemandSchemaVersion` from its pinned c2j dependency and rejects obsolete demand snapshots.
 
 ## Tests and validation
 
@@ -73,9 +73,10 @@ and automatic volume retirement. It removes its containers, volumes, and derived
 image. The upstream base image remains cached. First runs require Python/npm/Nix
 registry access. This test validates storage and the tool manager; it does not
 replace the supplied-lease test of the image's installed c2j binary or test the
-full extension compiler/replay lifecycle. The verified base ships c2j
-0.0.65; its installed binary is tested separately from the pinned library. Its missing `sed` and
-native Python wheel loader are documented in the [cache design](PROPOSAL_DOCKER_DEPENDENCY_CACHES.md).
+full extension compiler/replay lifecycle. The image's installed binary is tested
+separately from the pinned library, with compatibility results recorded above.
+Earlier base-image limitations involving `sed` and the native Python wheel loader
+are documented in the [cache design](PROPOSAL_DOCKER_DEPENDENCY_CACHES.md).
 
 ## Build container images
 

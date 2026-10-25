@@ -54,7 +54,7 @@ func (j Job) Allocation(defaults compute.Allocation) (compute.Allocation, error)
 		}
 		return defaults, defaults.Validate()
 	}
-	if v.Demand.SchemaVersion != 1 {
+	if v.Demand.SchemaVersion != execution.DemandSchemaVersion {
 		return defaults, fmt.Errorf("unsupported demand schema %d", v.Demand.SchemaVersion)
 	}
 	r := v.Demand.Effective
