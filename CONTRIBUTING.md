@@ -17,7 +17,7 @@ Job discovery uses `github.com/colony-2/c2j/pkg/joblist`, pinned in `go.mod`. No
 
 When updating c2j, verify the public listing projection and execution compatibility against the new dependency. Keep the dependency pinned and run `go mod tidy -diff` to check module tidiness.
 
-The default executor image must support the execution-demand and job chapter schemas emitted by the pinned c2j library. Updating Go modules does not update the image's installed CLI. On 2026-10-25, `ghcr.io/colony-2/base2:latest` at digest `sha256:76ea55c84f154bd72a2a050fe59e23cc5a47e7157efbe58de75f7372a56b774f` ships c2j `0.0.95`; the supplied-lease integration fails with `unsupported execution schema version 3` against the current library. Refresh the base image with a compatible executor before expecting that integration to pass; keep its schema validation enabled. Pulse follows `execution.DemandSchemaVersion` from its pinned c2j dependency and rejects obsolete demand snapshots.
+The default executor image must support the execution-demand and job chapter schemas emitted by the pinned c2j library. Updating Go modules does not update the image's installed CLI. Verified on 2026-10-25, `ghcr.io/colony-2/base2:latest` at digest `sha256:57f6e8d9ee9922d68d7e3759ef291cb50c63bd4e6fdc2ce6c328a7da4032a048` ships c2j `0.0.97`, which supports the current library's execution-demand schema 3. Pull the updated image if an older cached executor reports `unsupported execution schema version 3`; keep the supplied-lease integration's schema validation enabled. Pulse follows `execution.DemandSchemaVersion` from its pinned c2j dependency and rejects obsolete demand snapshots.
 
 ## Tests and validation
 
