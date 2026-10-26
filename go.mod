@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.47.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.5
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.99.0
-	github.com/colony-2/c2j v0.0.97-0.20261025211528-fb3a8a114763
+	github.com/colony-2/c2j v0.0.98
 	github.com/colony-2/jobdb v0.0.55
 	github.com/distribution/reference v0.6.0
 	github.com/opencontainers/go-digest v1.0.0
