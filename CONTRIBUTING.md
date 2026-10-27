@@ -36,7 +36,7 @@ python3 -m venv /tmp/pulse-protocol-venv
 Cloud adapter tests use HTTP doubles for native APIs and credential endpoints. Docker unit tests use a fake daemon API. On Linux and macOS, ordinary `go test ./...` also runs real Docker integration tests by default. To confirm container execution with uncached, verbose output:
 
 ```sh
-go test -race -count=1 -timeout=45m -run '^TestDocker(C2J|DependencyCache)?Integration$' -v ./internal/providers
+go test -race -count=1 -timeout=45m -run '^TestDocker(C2J|DependencyCache|NixFetchCache)?Integration$' -v ./internal/providers
 ```
 
 These tests use Pulse's core socket/context discovery. No socket override, opt-in flag, or local c2j installation is required; missing or unusable Docker fails the suite on Linux and macOS.
@@ -77,6 +77,17 @@ full extension compiler/replay lifecycle. The image's installed binary is tested
 separately from the pinned library, with compatibility results recorded above.
 Earlier base-image limitations involving `sed` and the native Python wheel loader
 are documented in the [cache design](PROPOSAL_DOCKER_DEPENDENCY_CACHES.md).
+
+`TestDockerNixFetchCacheIntegration` runs separate Pulse workers against a local
+HTTPS fixture implementing the GitHub Enterprise endpoints used by Nix's real
+`github:` fetcher. Request counters and recorded Nix timestamps verify fresh
+cross-container reuse, unchanged timestamps on warm reads, TTL expiry, and warm
+execution with upstream unavailable. Concurrent cold, warm, and expired lookups
+report request counts. It also checks tenant/generation isolation, restart,
+source/metadata loss recovery, private home caches, and idle retirement. The
+fixture contains a tiny derivation built locally without nixpkgs or substituters;
+the test enables local builds only for that derivation. No public GitHub requests
+or production cache volumes are involved.
 
 ## Build container images
 

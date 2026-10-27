@@ -135,9 +135,34 @@ a private store.
 All workers in the tenant scope share read/write access to the live Nix store and
 its database, including across different `base2` image versions. The image must
 keep its Nix store format compatible; bump `generation` for an incompatible Nix
-upgrade. Profiles and evaluation caches remain container-private. The tools volume
+upgrade. Profiles remain container-private. The tools volume
 uses image-specific subdirectories under `/var/cache/pulse/images/<image-key>` for
-c2j prepared environments, uv downloads, and pnpm's store. Replacing an unready or
+c2j prepared environments, uv downloads, pnpm's store, and Nix's complete cache
+directory ([`NIX_CACHE_HOME`](https://nix.dev/manual/nix/2.34/command-ref/env-common.html)=`<image-root>/nix`). This includes fetch metadata,
+SQLite journals, downloaded source objects, and compatible evaluation caches.
+`HOME` and `XDG_CACHE_HOME` are unchanged; unrelated caches remain private.
+Changing the image starts a fresh fetch/evaluation cache, while retaining the
+shared Nix store. This requires Nix's `NIX_CACHE_HOME` support, verified with the
+supported base image's Nix 2.34.3.
+
+Nix controls freshness using `tarball-ttl`, which defaults to **3600 seconds** in
+the supported image. Pulse preserves explicit image and job `NIX_CONFIG` settings;
+it does not force refresh, offline mode, or a TTL. The TTL is measured from Nix's
+recorded fetch/check time. Warm reads do not extend it, and volume `max_age` is
+an independent cleanup policy. A long-running job can therefore resolve a newer
+branch revision after expiry; this cache does not pin a revision for a whole job.
+
+Separate containers reuse fresh GitHub branch resolutions without another
+upstream lookup when the associated cached data is available. Missing source
+objects or metadata are fetched again on demand. Concurrent misses may each
+contact upstream: two simultaneous cold or expired lookups produced two branch
+requests in the Nix 2.34.3 integration test, while warm lookups produced none.
+Pulse relies on Nix's concurrency support and does not coalesce simultaneous
+refreshes. This is local Docker-volume reuse, not a cross-host cache.
+
+The initializer creates the Nix cache directory for the base image's root runtime
+user. It follows the tools volume's generation rotation, missing
+volume recovery, and idle cleanup. Replacing an unready or
 missing Nix store also clears its tools volume, preventing stale prepared records.
 
 Workers use `NIX_REMOTE=local` with automatic GC disabled. The image-provided
@@ -175,10 +200,11 @@ docker volume rm "$NIX_VOLUME" "${NIX_VOLUME%-nix}-tools"
 ```
 
 Verified on Linux ARM64 with `base2:latest` digest
-`sha256:c786c3d27e5e50464b829f956da7204be4204a20d9a60481a5eff55dbfede556`,
-c2j `0.0.80`, and Nix `2.34.3`: the full race-enabled suite passed, including
-supplied-lease execution, concurrent installs, offline warm reuse after restart,
-and sharing across different images. Native amd64 and macOS/Colima verification
+`sha256:3b4142dc96d494e391e23d3486049e8c6b78cfa85a06a414d634265b7e794d5a`,
+c2j `0.0.105`, and Nix `2.34.3`: coverage includes supplied-lease execution,
+concurrent installs, offline warm reuse after restart, sharing across different
+images, and fetch-cache TTL, isolation, concurrency, and recovery checks.
+Native amd64 and macOS/Colima verification
 remain for CI. The controller library is pinned separately in [go.mod](../go.mod).
 
 ## Docker or a native executable

@@ -133,7 +133,7 @@ func TestCacheIdentityAndEnvironment(t *testing.T) {
 			}
 		})
 	}
-	for k, v := range map[string]string{"C2J_TOOL_CACHE_DIR": "/elsewhere", "UV_CACHE_DIR": "/elsewhere", "pnpm_config_store_dir": "/elsewhere", "NIX_REMOTE": "daemon", "UV_PYTHON_DOWNLOADS": "automatic", "NIX_CONFIG": "min-free = 10"} {
+	for k, v := range map[string]string{"C2J_TOOL_CACHE_DIR": "/elsewhere", "UV_CACHE_DIR": "/elsewhere", "NIX_CACHE_HOME": "/elsewhere", "pnpm_config_store_dir": "/elsewhere", "NIX_REMOTE": "daemon", "UV_PYTHON_DOWNLOADS": "automatic", "NIX_CONFIG": "min-free = 10"} {
 		if _, _, err := p.cachePlan(base, map[string]string{k: v}); err == nil {
 			t.Fatal("accepted conflict", k)
 		}
@@ -160,13 +160,64 @@ func TestCacheSharesNixAcrossImages(t *testing.T) {
 		t.Fatal("image change recreated shared store")
 	}
 	a, b := envMap(first.Config.Env), envMap(second.Config.Env)
-	for _, key := range []string{"C2J_TOOL_CACHE_DIR", "UV_CACHE_DIR", "pnpm_config_store_dir"} {
+	for _, key := range []string{"C2J_TOOL_CACHE_DIR", "UV_CACHE_DIR", "pnpm_config_store_dir", "NIX_CACHE_HOME"} {
 		if a[key] == b[key] {
 			t.Fatalf("images share prepared environment: %s", key)
 		}
 	}
 	if !verifyCacheContainer(second, second.Config.Labels[cacheKeyLabel]) {
 		t.Fatal("second image cache attachment invalid")
+	}
+}
+
+func TestNixFetchCacheEnvironmentAndFreshness(t *testing.T) {
+	d := &daemon{containers: map[string]container{}}
+	p, server := testProvider(t, d)
+	defer server.Close()
+	plan := nativePlan{Request: cachedLaunch("job").Request, ImageID: "image-a"}
+	for _, ttl := range []string{"", "tarball-ttl = 0", "tarball-ttl = 3600", "tarball-ttl = 12"} {
+		_, env, err := p.cachePlan(plan, map[string]string{"NIX_CONFIG": ttl, "HOME": "/private", "XDG_CACHE_HOME": "/private/cache"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if env["NIX_CACHE_HOME"] != cachePath+"/images/"+cacheHash(plan.ImageID)+"/nix" || env["HOME"] != "" || env["XDG_CACHE_HOME"] != "" {
+			t.Fatal("Nix cache redirected unrelated state", env)
+		}
+		if env["NIX_CONFIG"] != ttl+"\nmin-free = 0\n" {
+			t.Fatal("changed freshness policy", env)
+		}
+	}
+	plan.ImageEnv = []string{"NIX_CACHE_HOME=/private", "NIX_CONFIG=tarball-ttl = 12"}
+	if _, _, err := p.cachePlan(plan, nil); err == nil {
+		t.Fatal("accepted image cache conflict")
+	}
+	plan.ImageEnv = []string{"NIX_CONFIG=tarball-ttl = 12"}
+	if _, env, err := p.cachePlan(plan, nil); err != nil || env["NIX_CONFIG"] != "tarball-ttl = 12\nmin-free = 0\n" {
+		t.Fatal(env, err)
+	}
+}
+
+func TestCacheWorkersBeforeFetchSharingRemainInspectable(t *testing.T) {
+	d := &daemon{containers: map[string]container{}}
+	p, server := testProvider(t, d)
+	defer server.Close()
+	if got := submitCached(t, p, cachedLaunch("old")); got.Status != compute.Accepted {
+		t.Fatal(got)
+	}
+	c := d.containers["old"]
+	var env []string
+	for _, entry := range c.Config.Env {
+		if !strings.HasPrefix(entry, "NIX_CACHE_HOME=") {
+			env = append(env, entry)
+		}
+	}
+	c.Config.Env = env
+	if !verifyCacheContainer(c, c.Config.Labels[cacheKeyLabel]) {
+		t.Fatal("old v2 worker rejected")
+	}
+	c.Config.Env = append(c.Config.Env, "NIX_CACHE_HOME=/wrong")
+	if verifyCacheContainer(c, c.Config.Labels[cacheKeyLabel]) {
+		t.Fatal("incorrect fetch cache accepted")
 	}
 }
 
@@ -477,7 +528,7 @@ func TestCacheReadyFileScripts(t *testing.T) {
 	marker := filepath.Join(dir, ".pulse-ready")
 	run := func(script string) error {
 		cmd := exec.Command("/bin/sh", "-ec", strings.ReplaceAll(script, cacheReadyFile, `"`+marker+`"`))
-		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "C2J_TOOL_CACHE_DIR="+dir+"/tools", "UV_CACHE_DIR="+dir+"/uv", "pnpm_config_store_dir="+dir+"/pnpm")
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "C2J_TOOL_CACHE_DIR="+dir+"/tools", "UV_CACHE_DIR="+dir+"/uv", "pnpm_config_store_dir="+dir+"/pnpm", "NIX_CACHE_HOME="+dir+"/nix-cache")
 		out, err := cmd.CombinedOutput()
 		if len(out) != 0 {
 			t.Logf("helper: %s", out)
@@ -501,6 +552,10 @@ func TestCacheReadyFileScripts(t *testing.T) {
 	}
 	if err := run(cacheInitializeScript); err != nil {
 		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(dir, "nix-cache"))
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+		t.Fatal("fetch cache directory must be private to the runtime user", info, err)
 	}
 	if err := os.Remove(nix); err != nil {
 		t.Fatal(err)

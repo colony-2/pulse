@@ -97,7 +97,7 @@ func cacheEnvironment(imageID string) map[string]string {
 	if imageID != "" {
 		root += "/images/" + cacheHash(imageID)
 	}
-	return map[string]string{"C2J_TOOL_CACHE_DIR": root + "/tools", "UV_CACHE_DIR": root + "/uv", "pnpm_config_store_dir": root + "/pnpm", "NIX_REMOTE": "local", "UV_PYTHON_DOWNLOADS": "never"}
+	return map[string]string{"C2J_TOOL_CACHE_DIR": root + "/tools", "UV_CACHE_DIR": root + "/uv", "pnpm_config_store_dir": root + "/pnpm", "NIX_CACHE_HOME": root + "/nix", "NIX_REMOTE": "local", "UV_PYTHON_DOWNLOADS": "never"}
 }
 
 func envMap(env []string) map[string]string {
@@ -192,7 +192,13 @@ func verifyCacheContainer(c container, key string) bool {
 	if legacy {
 		imageID = ""
 	}
-	if !cacheKeyPattern.MatchString(key) || !environmentContains(c.Config.Env, cacheEnvironment(imageID)) {
+	wantEnv := cacheEnvironment(imageID)
+	// Existing v1/v2 workers may predate fetch-cache sharing. New launches
+	// additionally verify the complete planned environment before starting.
+	if _, present := envMap(c.Config.Env)["NIX_CACHE_HOME"]; !present {
+		delete(wantEnv, "NIX_CACHE_HOME")
+	}
+	if !cacheKeyPattern.MatchString(key) || !environmentContains(c.Config.Env, wantEnv) {
 		return false
 	}
 	if !strings.HasSuffix(envMap(c.Config.Env)["NIX_CONFIG"], "\nmin-free = 0\n") {
@@ -392,7 +398,7 @@ func (p *Provider) runCacheHelper(ctx context.Context, c dependencyCache, plan n
 	if err != nil {
 		return 0, err
 	}
-	if init == nil || init.ID != created.ID || !verifyCacheContainer(*init, c.Key) || init.HostConfig.AutoRemove || init.HostConfig.RestartPolicy.Name != "no" || init.HostConfig.NanoCPUs != cpu || init.HostConfig.Memory != memory || init.HostConfig.MemorySwap != memory {
+	if init == nil || init.ID != created.ID || !verifyCacheContainer(*init, c.Key) || !environmentContains(init.Config.Env, values) || init.HostConfig.AutoRemove || init.HostConfig.RestartPolicy.Name != "no" || init.HostConfig.NanoCPUs != cpu || init.HostConfig.Memory != memory || init.HostConfig.MemorySwap != memory {
 		return 0, fmt.Errorf("cache initializer configuration differs")
 	}
 	stage = "start initializer"
@@ -431,7 +437,7 @@ func (p *Provider) runCacheHelper(ctx context.Context, c dependencyCache, plan n
 }
 
 const cacheDirectoriesScript = `umask 077
-mkdir -p "$C2J_TOOL_CACHE_DIR" "$UV_CACHE_DIR" "$pnpm_config_store_dir"
+mkdir -p "$C2J_TOOL_CACHE_DIR" "$UV_CACHE_DIR" "$pnpm_config_store_dir" "$NIX_CACHE_HOME"
 `
 
 const cacheCheckScript = cacheDirectoriesScript + `test -f ` + cacheReadyFile + ` || exit 42

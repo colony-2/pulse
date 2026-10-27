@@ -204,6 +204,13 @@ func TestDockerDependencyCacheIntegration(t *testing.T) {
 	if firstRoot == peerRoot {
 		t.Fatal("different images share prepared environments")
 	}
+	firstNixCache := docker("exec", original, "printenv", "NIX_CACHE_HOME")
+	peerNixCache := docker("exec", peer, "printenv", "NIX_CACHE_HOME")
+	if firstNixCache == peerNixCache {
+		t.Fatal("different images share Nix fetch/evaluation caches")
+	}
+	docker("exec", original, "/bin/sh", "-ec", `mkdir -p "$NIX_CACHE_HOME"; touch "$NIX_CACHE_HOME/image-private"`)
+	docker("exec", peer, "/bin/sh", "-ec", `test ! -e "$NIX_CACHE_HOME/image-private"`)
 	docker("exec", peer, "/bin/sh", "-ec", "test -f /nix/.pulse-ready")
 	concurrentFinish(original, peer)
 	// Reset by changing generation; old volumes survive while the new pair is initialized.
