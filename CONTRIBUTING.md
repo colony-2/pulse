@@ -13,11 +13,11 @@ make vet
 make test-packaging # npm installer tests
 ```
 
-Job discovery uses `github.com/colony-2/c2j/pkg/joblist`, pinned in `go.mod`. No c2j executable is needed to build or run the controller. Executor job images still need c2j. The integration pins c2j `v0.0.100` (`09b9a13cf993`) and JobDB `v0.0.56` (`c38d7149c17c`), the verified `main` heads as of 2026-10-26; there is no local module replacement.
+Job discovery uses `github.com/colony-2/c2j/pkg/joblist`, pinned in `go.mod`. No c2j executable is needed to build or run the controller. Executor job images still need c2j. The integration pins c2j `v0.0.105-0.20261027024848-fbcd5cd24a8a` (`fbcd5cd24a8a`) and JobDB `v0.0.57` (`192d83188d38`), the verified `main` heads as of 2026-10-27; there is no local module replacement.
 
 When updating c2j, verify the public listing projection and execution compatibility against the new dependency. Keep the dependency pinned and run `go mod tidy -diff` to check module tidiness.
 
-The default executor image must support the execution-demand and job chapter schemas emitted by the pinned c2j library. Updating Go modules does not update the image's installed CLI. Verified on 2026-10-26, `ghcr.io/colony-2/base2:latest` at digest `sha256:69dcfbeb4b80d66af3cb334e7468d13dc0cdc34e840cc70b29d086be6cdcc6b1` ships c2j `0.0.99`, which supports the current library's execution-demand schema 3. Pull the updated image if an older cached executor reports `unsupported execution schema version 3`; keep the supplied-lease integration's schema validation enabled. Pulse follows `execution.DemandSchemaVersion` from its pinned c2j dependency and rejects obsolete demand snapshots.
+The default executor image must support the execution-demand and job chapter schemas emitted by the pinned c2j library. Updating Go modules does not update the image's installed CLI. Verified on 2026-10-27, `ghcr.io/colony-2/base2:latest` at digest `sha256:90eba88f8334c52c75081120b68c83cf53b6542637b7dc0e65933a37d5e643d5` ships c2j `0.0.104`, which supports the current library's execution-demand schema 3. Pull the updated image if an older cached executor reports `unsupported execution schema version 3`; keep the supplied-lease integration's schema validation enabled. Pulse follows `execution.DemandSchemaVersion` from its pinned c2j dependency and rejects obsolete demand snapshots.
 
 ## Tests and validation
 
