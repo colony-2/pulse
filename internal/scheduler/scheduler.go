@@ -19,6 +19,9 @@ type Job struct {
 	// Prepare runs after local admission, immediately before placement. The
 	// returned cleanup is called only when execution definitely cannot start.
 	// Prepare may run concurrently for different jobs and must honor cancellation.
+	// A non-nil Prepare explicitly marks an unprepared candidate: Request holds
+	// launch metadata, while Allocation and Process need not be populated yet.
+	// Without Prepare, Request and Process must already form a complete launch.
 	Prepare func(context.Context, compute.Request) (compute.Launch, func(context.Context) error, error)
 }
 
@@ -267,9 +270,15 @@ func (s *Scheduler) prepare(ctx context.Context, jobs []Job) []preparedJob {
 				mu.Unlock()
 				j := jobs[i]
 				result := preparedJob{job: j, started: true}
-				err := j.Request.Validate()
-				if err == nil {
-					err = j.Process.Validate()
+				var err error
+				if j.Prepare != nil {
+					if j.Key.Instance == "" || j.Key.Tenant == "" || j.Key.Job == "" {
+						err = errors.New("missing job identity")
+					} else {
+						err = j.Request.ValidateMetadata()
+					}
+				} else {
+					err = (compute.Launch{Request: j.Request, Process: j.Process}).Validate()
 				}
 				if err == nil && j.Prepare != nil {
 					call, done := context.WithTimeout(ctx, s.CallTimeout)

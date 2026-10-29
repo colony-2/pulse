@@ -85,8 +85,8 @@ func (e *Embedded) Claim(ctx context.Context, uri string, job Job, worker string
 	claimed.Job.Next = &Route{JobType: route.JobType, TaskType: route.TaskType}
 	// The listing contains the immutable submission hints. Current execution
 	// demand, when present, must come from the leased snapshot instead.
-	var metadata json.RawMessage
-	if job.Execution != nil && job.Execution.Initial != nil {
+	metadata := job.Metadata
+	if len(metadata) == 0 && job.Execution != nil && job.Execution.Initial != nil {
 		metadata, _ = json.Marshal(map[string]any{"execution": job.Execution.Initial})
 	}
 	view := execution.Inspect(metadata, lease.ClientPayload())
@@ -151,7 +151,7 @@ func (e *Embedded) List(ctx context.Context, uri, token string, routes []Route) 
 		view := j.Execution
 		job := Job{Tenant: j.TenantID, ID: j.JobID, Repository: j.RepositorySource,
 			Status: string(j.Status), AvailableAt: j.AvailableAt,
-			CancelRequested: j.CancelRequested, Execution: &view}
+			CancelRequested: j.CancelRequested, Execution: &view, Metadata: summary.Metadata}
 		if j.NextRoute != nil {
 			job.Next = &Route{JobType: j.NextRoute.JobType, TaskType: j.NextRoute.TaskType}
 		}

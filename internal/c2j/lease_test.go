@@ -78,3 +78,53 @@ func TestClaimExportSnapshotAndRelease(t *testing.T) {
 		t.Fatal("released capability still authorized")
 	}
 }
+
+func TestCompactClaimCapabilityExpires(t *testing.T) {
+	ctx := t.Context()
+	backend := toy.New()
+	_, err := backend.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobType: "recipe", Data: jobdb.NewTaskDataOrPanic(nil)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(remote.NewServer(backend))
+	defer server.Close()
+	uri := server.URL + "/tenant"
+	client, err := NewEmbedded([]Connection{{URI: uri}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := []Route{{JobType: "recipe"}}
+	page, err := client.List(ctx, uri, "", routes)
+	if err != nil || len(page.Jobs) != 1 || page.Jobs[0].Execution.Status != "not_loaded" {
+		t.Fatal("compact discovery", err)
+	}
+	claimed, err := client.Claim(ctx, uri, page.Jobs[0], "launch", time.Second, routes)
+	if err != nil || claimed == nil {
+		t.Fatal("claim", err)
+	}
+	capability, err := remote.DecodeLeaseCapability(claimed.Encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiring, ok := claimed.Lease.(interface{ LeaseExpiry() time.Time })
+	if !ok {
+		t.Fatal("remote lease does not expose expiry")
+	}
+	timer := time.NewTimer(time.Until(expiring.LeaseExpiry()) + time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	runtime, err := remote.New(server.URL, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.ImportLease(ctx, capability); err == nil {
+		t.Fatal("expired capability remained authorized")
+	}
+	if err := claimed.Release(ctx, time.Minute); err == nil {
+		t.Fatal("expired capability could reschedule work")
+	}
+}

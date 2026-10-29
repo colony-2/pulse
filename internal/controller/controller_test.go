@@ -68,7 +68,7 @@ func TestTenantIsolationPaginationAndLeaseOwnership(t *testing.T) {
 			id = "b"
 			next = ""
 		}
-		return c2j.Page{Jobs: []c2j.Job{{Tenant: "t", ID: id, Repository: "github.com/acme/" + id, Status: "READY", Next: &c2j.Route{JobType: "recipe"}, Execution: &c2j.View{Status: "unresolved", Source: "absent"}}}, Next: next}, nil
+		return c2j.Page{Jobs: []c2j.Job{{Tenant: "t", ID: id, Repository: "github.com/acme/" + id, Status: "READY", Next: &c2j.Route{JobType: "recipe"}, Execution: &c2j.View{Status: "not_loaded", Source: "unavailable"}}}, Next: next}, nil
 	})
 	claimed := map[string]bool{}
 	claimer := claimFunc(func(_ context.Context, _ string, job c2j.Job, _ string, _ time.Duration, _ []c2j.Route) (*c2j.Claimed, error) {
@@ -121,22 +121,28 @@ func TestConfiguredBatchSizeBoundsClaimCount(t *testing.T) {
 	cfg.Defaults.Routes = []c2j.Route{{JobType: "recipe"}}
 	cfg.Targets = []config.Target{{Instance: "db", JobDB: "https://db/t", Tenant: "t", Services: []config.Service{{Name: "p", Priority: 1}}}}
 	var claims atomic.Int32
+	lists := 0
 	list := listFunc(func(context.Context, string, string, []c2j.Route) (c2j.Page, error) {
+		lists++
+		if claims.Load() != 0 {
+			t.Error("claimed during discovery")
+		}
 		page := c2j.Page{}
-		for i := range 7 {
-			page.Jobs = append(page.Jobs, c2j.Job{Tenant: "t", ID: string(rune('a' + i)), Status: "READY", Next: &c2j.Route{JobType: "recipe"}, Execution: &c2j.View{Status: "unresolved", Source: "absent"}})
+		for i := range 200 {
+			page.Jobs = append(page.Jobs, c2j.Job{Tenant: "t", ID: string(rune('a' + i)), Status: "READY", Next: &c2j.Route{JobType: "recipe"}, Execution: &c2j.View{Status: "not_loaded", Source: "unavailable"}})
 		}
 		return page, nil
 	})
 	claimer := claimFunc(func(_ context.Context, _ string, j c2j.Job, _ string, _ time.Duration, _ []c2j.Route) (*c2j.Claimed, error) {
 		claims.Add(1)
+		j.Execution = &c2j.View{Status: "unresolved", Source: "absent"}
 		return &c2j.Claimed{Job: j, Lease: testLease{}, Encoded: []byte("private-capability")}, nil
 	})
 	c := Controller{Config: cfg, Lister: list, Claimer: claimer, Scheduler: scheduler.New(time.Minute, time.Second), Providers: map[string]compute.Provider{"p": p}, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	if err := c.Once(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if claims.Load() != 7 || len(p.batchSizes) != 4 {
+	if lists != 1 || claims.Load() != 7 || len(p.batchSizes) != 4 {
 		t.Fatal("incorrect claim batching", claims.Load(), p.batchSizes)
 	}
 	for i, size := range p.batchSizes {

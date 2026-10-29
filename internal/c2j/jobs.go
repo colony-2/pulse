@@ -2,6 +2,7 @@
 package c2j
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -26,6 +27,9 @@ type Job struct {
 	Execution       *View     `json:"execution"`
 	CancelRequested bool      `json:"cancel_requested"`
 	AvailableAt     time.Time `json:"available_at"`
+	// Metadata retains immutable submission data, including parsing errors, for
+	// interpreting a genuinely absent demand in the acquired lease.
+	Metadata json.RawMessage `json:"-"`
 }
 type Page struct {
 	Jobs []Job  `json:"jobs"`

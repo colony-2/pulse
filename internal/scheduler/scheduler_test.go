@@ -439,3 +439,59 @@ func TestOversizedBatchNeverClaims(t *testing.T) {
 		t.Fatal("oversized batch accepted", err)
 	}
 }
+
+func TestDeferredPreparationValidation(t *testing.T) {
+	for _, mode := range []string{"valid", "missing identity", "invalid launch ID", "missing metadata", "invalid timeout", "invalid allocation", "invalid process", "changed launch ID", "no prepare"} {
+		t.Run(mode, func(t *testing.T) {
+			batch := jobs(1)
+			allocation, process := batch[0].Request.Allocation, batch[0].Process
+			batch[0].Request.Allocation = compute.Allocation{}
+			batch[0].Process = compute.Process{}
+			prepared, released := false, false
+			batch[0].Prepare = func(_ context.Context, r compute.Request) (compute.Launch, func(context.Context) error, error) {
+				prepared = true
+				r.Allocation = allocation
+				switch mode {
+				case "invalid allocation":
+					r.Image = ""
+				case "invalid process":
+					process.Command = nil
+				case "changed launch ID":
+					r.LaunchID = "other"
+				}
+				return compute.Launch{Request: r, Process: process}, func(context.Context) error { released = true; return nil }, nil
+			}
+			wantPrepare := true
+			switch mode {
+			case "missing identity":
+				batch[0].Key.Job = ""
+				wantPrepare = false
+			case "invalid launch ID":
+				batch[0].Request.LaunchID = "invalid id"
+				wantPrepare = false
+			case "missing metadata":
+				batch[0].Request.Metadata = nil
+				wantPrepare = false
+			case "invalid timeout":
+				batch[0].Request.TimeoutSeconds = -1
+				wantPrepare = false
+			case "no prepare":
+				batch[0].Prepare = nil
+				wantPrepare = false
+			}
+			calls := [][]string{}
+			s := New(time.Minute, time.Second)
+			results, err := s.Run(t.Context(), "scope", []Service{{"p", 1, &fake{calls: &calls}}}, batch)
+			if err != nil || len(results) != 1 {
+				t.Fatal(results, err)
+			}
+			valid := mode == "valid"
+			if prepared != wantPrepare || released != (wantPrepare && !valid) || (len(calls) == 1) != valid || (results[0].Submission.Status == compute.Accepted) != valid {
+				t.Fatalf("prepared=%v released=%v submissions=%d status=%s", prepared, released, len(calls), results[0].Submission.Status)
+			}
+			if !valid && s.Eligible(batch[0].Key) {
+				t.Fatal("invalid preparation did not back off")
+			}
+		})
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -34,7 +35,7 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := execution.PayloadWithDemand(nil, demand.Demand)
+	metadata, err := json.Marshal(map[string]any{"execution": demand, "repo": "https://github.com/acme/app.git"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +57,7 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 		return jobdb.ListJobsResponse{Jobs: []jobdb.JobSummary{{
 			JobKey: jobdb.JobKey{TenantId: req.TenantIds[0], JobId: "job"}, GoalID: "goal", OtherGoalIDs: []string{}, JobType: "recipe", Status: jobdb.JobStatusCrashConcern,
 			NextRoute: &jobdb.Route{JobType: "recipe", TaskType: "input:opaque"}, AvailableAt: now, CancelRequested: true,
-			ClientPayload: payload, Metadata: json.RawMessage(`{"repo":"https://github.com/acme/app.git"}`),
+			Metadata: metadata,
 		}, {JobKey: jobdb.JobKey{TenantId: req.TenantIds[0], JobId: "bad"}, GoalID: "bad-goal", OtherGoalIDs: []string{}, Status: jobdb.JobStatusReady, Metadata: json.RawMessage(`{"execution":{"schema_version":99}}`)}}}, nil
 	}})
 	t.Setenv("PULSE_TEST_DB_TOKEN", "db-token")
@@ -86,14 +87,14 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 				return
 			}
 			j := page.Jobs[0]
-			if j.Tenant != tenant || j.Repository != "https://github.com/acme/app.git" || j.Next.TaskType != "input:opaque" || !j.AvailableAt.Equal(now) || !j.CancelRequested || j.Execution.Source != "yield" || !reflect.DeepEqual(j.Execution.Demand, &demand.Demand) {
+			if j.Tenant != tenant || j.Repository != "https://github.com/acme/app.git" || j.Next.TaskType != "input:opaque" || !j.AvailableAt.Equal(now) || !j.CancelRequested || j.Execution.Status != "not_loaded" || j.Execution.Demand != nil || !reflect.DeepEqual(j.Execution.Initial, &demand) || !reflect.DeepEqual(execution.Inspect(j.Metadata, nil).Initial, &demand) {
 				t.Errorf("lost typed data: %+v", j)
 			}
 			a, err := j.Allocation(compute.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Platform: "linux/amd64", Image: "alpine:3"})
-			if err != nil || a.MemoryBytes != 8<<30 {
-				t.Error(a, err)
+			if err == nil {
+				t.Error("compact discovery supplied an allocation")
 			}
-			if page.Jobs[1].Execution.Status != "unsupported" {
+			if page.Jobs[1].Execution.Status != "not_loaded" || page.Jobs[1].Execution.Diagnostic == "" {
 				t.Error(page.Jobs[1].Execution)
 			}
 			if _, err = page.Jobs[1].Allocation(a); err == nil {
@@ -153,5 +154,34 @@ func TestEmbeddedInputValidation(t *testing.T) {
 	}
 	if _, err := NewEmbedded([]Connection{{URI: "https://example.com/t"}, {"https://example.com/t", "OTHER"}}); err == nil {
 		t.Fatal("conflicting auth ignored")
+	}
+}
+
+func TestCompactDiscoveryMakesOneRequest(t *testing.T) {
+	requests := 0
+	handler := remote.NewServer(readOnly{Runtime: toy.New(), list: func(_ context.Context, req jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
+		jobs := make([]jobdb.JobSummary, 100)
+		for i := range jobs {
+			jobs[i] = jobdb.JobSummary{JobKey: jobdb.JobKey{TenantId: "tenant", JobId: fmt.Sprint(i)}, GoalID: "goal", Status: jobdb.JobStatusReady}
+		}
+		return jobdb.ListJobsResponse{Jobs: jobs, NextPageToken: "next"}, nil
+	}})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		handler.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	client, err := NewEmbedded([]Connection{{URI: server.URL + "/tenant"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := client.List(t.Context(), server.URL+"/tenant", "", []Route{{JobType: "recipe"}})
+	if err != nil || len(page.Jobs) != 100 || page.Next != "next" || requests != 1 {
+		t.Fatalf("jobs=%d requests=%d next=%q error=%v", len(page.Jobs), requests, page.Next, err)
+	}
+	for _, job := range page.Jobs {
+		if job.Execution.Status != "not_loaded" || job.Execution.Demand != nil {
+			t.Fatal("discovery fabricated current demand")
+		}
 	}
 }

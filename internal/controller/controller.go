@@ -101,26 +101,19 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 				if selected[k] || !c.Scheduler.Eligible(k) {
 					continue
 				}
-				a, e := j.Allocation(c.Config.Allocation)
-				if e != nil {
-					c.Log.Error("invalid execution demand", "job", j.ID, "error", e)
-					errs = append(errs, e)
+				if j.ID == "" {
+					errs = append(errs, errors.New("missing job identity"))
 					continue
 				}
 				id := compute.NewID()
 				metadata := map[string]string{"pulse_metadata_version": "1", "pulse_managed_by": "pulse", "pulse_jobdb_instance_id": t.Instance, "pulse_tenant_id": j.Tenant, "pulse_job_id": j.ID, "pulse_launch_id": id}
-				req := compute.Request{LaunchID: id, Allocation: a, TimeoutSeconds: int64(c.Config.ExecutionTimeout / time.Second), Metadata: metadata}
+				req := compute.Request{LaunchID: id, TimeoutSeconds: int64(c.Config.ExecutionTimeout / time.Second), Metadata: metadata}
 				if c.Config.StartWindow > 0 {
 					deadline := time.Now().Add(c.Config.StartWindow)
 					req.StartBefore = &deadline
 				}
 
-				process, e := c2j.Process(t.JobDB, j.ID, req.Allocation, c.Config.Defaults.Env, metadata)
-				if e != nil {
-					errs = append(errs, e)
-					continue
-				}
-				jobs = append(jobs, scheduler.Job{Key: k, Request: req, Process: process, Prepare: func(ctx context.Context, request compute.Request) (compute.Launch, func(context.Context) error, error) {
+				jobs = append(jobs, scheduler.Job{Key: k, Request: req, Prepare: func(ctx context.Context, request compute.Request) (compute.Launch, func(context.Context) error, error) {
 					if c.Claimer == nil {
 						return compute.Launch{}, nil, errors.New("JobDB lease client is required")
 					}
@@ -137,6 +130,7 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 					}
 					allocation, err := claimed.Job.Allocation(c.Config.Allocation)
 					if err != nil {
+						c.Log.Error("invalid leased execution demand", "job", j.ID, "error", err)
 						return compute.Launch{}, release, err
 					}
 					request.Allocation = allocation

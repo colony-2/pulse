@@ -153,11 +153,10 @@ func TestAvailableRouteDiscoveryAndAdmission(t *testing.T) {
 				if controller.Scheduler.Eligible(key) {
 					t.Fatal("provisioning rejection did not retain local cooldown")
 				}
-				page, err := backend.ListJobs(ctx, jobdb.ListJobsRequest{TenantIds: []string{"tenant"}, JobKeys: []jobdb.JobKey{handle.JobKey}})
-				if err != nil || len(page.Jobs) != 1 {
+				released, err := backend.GetJob(ctx, handle.JobKey)
+				if err != nil {
 					t.Fatal("inspect released job", err)
 				}
-				released := page.Jobs[0]
 				if released.NextRoute == nil || *released.NextRoute != wantRoute || (released.ExecutionState.TaskWait != nil) != (wantRoute.TaskType != "") {
 					t.Fatalf("release lost effective route or task coordinates: %+v", released)
 				}

@@ -60,7 +60,7 @@ Read `next_route` as independent `jobType` and optional `taskType` fields. `{"jo
 
 ## Read effective demand through c2j
 
-Pulse consumes the list entry's `execution` view: `status`, `source`, `published`, `demand`, and the initial snapshot when available. `execution.demand.effective` supplies the current known requirements. Sources are `submission`, `yield`, and `absent`; statuses are `specified`, `unspecified`, `unresolved`, `malformed`, and `unsupported`. Listing supplies candidates. Pulse refreshes demand from the leased client payload using the same c2j projection before placement; it does not load recipe artifacts, resolve recipe sources, or replay chapters.
+Pulse discovers candidates through compact lists, using one `ListJobs` request per page and no detail reads. Waiting rows report `not_loaded`: their current demand is unavailable, while immutable submission metadata remains available. Only candidates admitted within the tenant, batch, and cooldown limits are claimed. After acquisition, Pulse uses c2j's execution projection on the lease payload and retained submission metadata to calculate allocation and construct the process. It does not load recipe artifacts, resolve recipe sources, or replay chapters.
 
 c2j owns the overlay and read precedence:
 
@@ -71,7 +71,7 @@ c2j owns the overlay and read precedence:
 
 Pulse uses the published values instead of interpreting raw payloads or task history. Listings need not reflect requirement changes satisfied by a running executor. Those changes are recorded in the task steps and recovered by c2j during replay. A replacement launched from an older published snapshot may need one further handoff if replay discovers requirements it cannot satisfy.
 
-| Listing state | Pulse action |
+| Loaded lease execution state | Pulse action |
 | --- | --- |
 | `specified`, from submission or yield | Provision from `demand.effective`; fill unspecified fields from defaults. |
 | `unresolved` | Bootstrap using defaults for missing facts and retain any explicit valid known overrides. c2j resolves the recipe inside the executor. |
@@ -187,9 +187,9 @@ Pulse lists candidates through c2j, then acquires an ordinary JobDB lease before
 For each bounded polling pass:
 
 1. Query configured tenant targets, page through results, and deduplicate by instance/tenant/job. Rotate tenant order and bound work per tenant.
-2. Skip unsupported routes and invalid demand. Locally exclude in-flight attempts and provisioning failures still in cooldown.
-3. Acquire a lease for each selected job and route, with at most `claim_concurrency` calls in flight (default 8), a `claim_timeout` window (default 5 seconds), and at most `batch_size` candidate attempts (default 100). Stop starting claims once the time or count limit is met, let in-flight calls finish under their normal request timeout, and submit the successful subset. Candidates whose calls never started remain eligible without cooldown. A stale listing or competing controller can yield no lease; submit nothing in that case. An uncertain claim is never followed by compute submission; any acquired lease expires.
-4. Recompute allocation from the leased client payload and immutable submission hints using c2j's execution projection. Export with JobDB's public capability API. Pulse starts no heartbeat.
+2. Use `AvailableRoutes` to discover currently leaseable work, including due alternate routes. Validate identity and launch metadata, and locally exclude in-flight attempts and failures still in cooldown. Do not require current demand or a complete process before claiming.
+3. Acquire a lease for each selected job using the full configured supported route set, with at most `claim_concurrency` calls in flight (default 8), a `claim_timeout` window (default 5 seconds), and at most `batch_size` candidate attempts (default 100). Stop starting claims once the time or count limit is met, let in-flight calls finish under their normal request timeout, and submit the successful subset. Candidates whose calls never started remain eligible without cooldown. A stale listing or competing controller can yield no lease; submit nothing in that case. An uncertain claim is never followed by compute submission; any acquired lease expires.
+4. Compute allocation from the leased client payload and immutable submission hints using c2j's execution projection, then construct and validate the complete launch. Malformed or unsupported demand fails preparation, is logged, and releases the lease with backoff. Export with JobDB's public capability API. Pulse starts no heartbeat.
 5. Submit the complete launch with `c2j run with-lease`, the selected job ID, and sensitive stdin. Traverse numeric priority tiers and rotate equal-priority services. Preserve the same lease, launch ID, and process on fallback after definite non-start.
 6. On `accepted` or `unknown`, stop placement and leave the lease alone. Never release or retry a lease whose container might start. The executor renews it; a lost launch recovers through expiry.
 7. On a final definite non-start, release the unused lease by rescheduling the same route with `cooldown` backoff. Preserve task wait coordinates and client payload. Cleanup uses a bounded context even when the submission batch was cancelled before any possible start.

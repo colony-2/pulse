@@ -108,11 +108,18 @@ type Request struct {
 }
 
 func (r Request) Validate() error {
+	if err := r.ValidateMetadata(); err != nil {
+		return err
+	}
+	return r.Allocation.Validate()
+}
+
+// ValidateMetadata checks the demand-independent part of a launch request.
+// Deferred jobs use this before acquiring a lease; Validate is still required
+// once the lease supplies the allocation.
+func (r Request) ValidateMetadata() error {
 	if !regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`).MatchString(r.LaunchID) {
 		return errors.New("invalid launch ID")
-	}
-	if err := r.Allocation.Validate(); err != nil {
-		return err
 	}
 	if r.TimeoutSeconds < 0 || r.TimeoutSeconds > int64((365*24*time.Hour)/time.Second) {
 		return errors.New("timeout must be zero (executor-managed) or positive and at most one year")
