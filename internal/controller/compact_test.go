@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -22,9 +23,9 @@ import (
 	"github.com/colony-2/pulse/pkg/compute"
 )
 
-// Use real compact HTTP discovery and leases, including a yield between the
+// Use real HTTP discovery and leases, including a yield between the
 // two. No detail reads are permitted during the controller pass.
-func TestCompactDiscoveryUsesLeasedDemand(t *testing.T) {
+func TestDiscoveryUsesLeasedDemand(t *testing.T) {
 	for _, mode := range []string{"changed demand", "absent demand", "unresolved overrides", "no metadata", "malformed demand", "unsupported demand", "malformed metadata", "unsupported metadata", "cancelled after discovery"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := t.Context()
@@ -68,8 +69,12 @@ func TestCompactDiscoveryUsesLeasedDemand(t *testing.T) {
 				if err != nil {
 					return page, err
 				}
-				if requests.Load() != 1 || claims.Load() != 0 || len(page.Jobs) != 1 || page.Jobs[0].Execution.Status != "not_loaded" || page.Jobs[0].Execution.Demand != nil {
-					t.Error("discovery fetched details, claimed work, or supplied demand")
+				if requests.Load() != 1 || claims.Load() != 0 || len(page.Jobs) != 1 {
+					t.Fatal("discovery fetched details, claimed work, or lost the job")
+				}
+				wantView := execution.Inspect(metadata, nil)
+				if !reflect.DeepEqual(page.Jobs[0].Execution, &wantView) {
+					t.Error("discovery lost the submission/absence projection")
 				}
 				if mode == "cancelled after discovery" {
 					return page, backend.CancelJob(ctx, jobdb.CancelJobRequest{JobKey: handle.JobKey})

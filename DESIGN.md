@@ -60,7 +60,7 @@ Read `next_route` as independent `jobType` and optional `taskType` fields. `{"jo
 
 ## Read effective demand through c2j
 
-Pulse discovers candidates through compact lists, using one `ListJobs` request per page and no detail reads. Waiting rows report `not_loaded`: their current demand is unavailable, while immutable submission metadata remains available. Only candidates admitted within the tenant, batch, and cooldown limits are claimed. After acquisition, Pulse uses c2j's execution projection on the lease payload and retained submission metadata to calculate allocation and construct the process. It does not load recipe artifacts, resolve recipe sources, or replay chapters.
+Pulse discovers candidates using one `ListJobs` request per page and no detail reads. The pinned c2j/JobDB versions restore stored client payloads in list responses: the execution projection uses published demand when present and submission/absence semantics otherwise. Listings remain advisory and may become stale before acquisition. Only candidates admitted within the tenant, batch, and cooldown limits are claimed; admission does not depend on the listed demand. After acquisition, Pulse uses c2j's execution projection on the lease payload and retained submission metadata to calculate allocation and construct the process. It does not load recipe artifacts, resolve recipe sources, or replay chapters.
 
 c2j owns the overlay and read precedence:
 

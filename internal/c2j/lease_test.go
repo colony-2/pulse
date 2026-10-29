@@ -79,7 +79,7 @@ func TestClaimExportSnapshotAndRelease(t *testing.T) {
 	}
 }
 
-func TestCompactClaimCapabilityExpires(t *testing.T) {
+func TestDiscoveredClaimCapabilityExpires(t *testing.T) {
 	ctx := t.Context()
 	backend := toy.New()
 	_, err := backend.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobType: "recipe", Data: jobdb.NewTaskDataOrPanic(nil)}})
@@ -95,8 +95,8 @@ func TestCompactClaimCapabilityExpires(t *testing.T) {
 	}
 	routes := []Route{{JobType: "recipe"}}
 	page, err := client.List(ctx, uri, "", routes)
-	if err != nil || len(page.Jobs) != 1 || page.Jobs[0].Execution.Status != "not_loaded" {
-		t.Fatal("compact discovery", err)
+	if err != nil || len(page.Jobs) != 1 || page.Jobs[0].Execution.Status != "unresolved" {
+		t.Fatal("discovery", err)
 	}
 	claimed, err := client.Claim(ctx, uri, page.Jobs[0], "launch", time.Second, routes)
 	if err != nil || claimed == nil {

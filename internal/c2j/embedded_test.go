@@ -39,6 +39,15 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	currentMemory := "16Gi"
+	current, err := execution.Initial(nil, true, execution.Requirements{Resources: execution.Resources{Memory: &currentMemory}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := execution.PayloadWithDemand(nil, current.Demand)
+	if err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	handler := remote.NewServer(readOnly{Runtime: toy.New(), list: func(_ context.Context, req jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
 		if req.MetadataFilter != nil {
@@ -57,7 +66,7 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 		return jobdb.ListJobsResponse{Jobs: []jobdb.JobSummary{{
 			JobKey: jobdb.JobKey{TenantId: req.TenantIds[0], JobId: "job"}, GoalID: "goal", OtherGoalIDs: []string{}, JobType: "recipe", Status: jobdb.JobStatusCrashConcern,
 			NextRoute: &jobdb.Route{JobType: "recipe", TaskType: "input:opaque"}, AvailableAt: now, CancelRequested: true,
-			Metadata: metadata,
+			Metadata: metadata, ClientPayload: payload,
 		}, {JobKey: jobdb.JobKey{TenantId: req.TenantIds[0], JobId: "bad"}, GoalID: "bad-goal", OtherGoalIDs: []string{}, Status: jobdb.JobStatusReady, Metadata: json.RawMessage(`{"execution":{"schema_version":99}}`)}}}, nil
 	}})
 	t.Setenv("PULSE_TEST_DB_TOKEN", "db-token")
@@ -87,14 +96,14 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 				return
 			}
 			j := page.Jobs[0]
-			if j.Tenant != tenant || j.Repository != "https://github.com/acme/app.git" || j.Next.TaskType != "input:opaque" || !j.AvailableAt.Equal(now) || !j.CancelRequested || j.Execution.Status != "not_loaded" || j.Execution.Demand != nil || !reflect.DeepEqual(j.Execution.Initial, &demand) || !reflect.DeepEqual(execution.Inspect(j.Metadata, nil).Initial, &demand) {
+			if j.Tenant != tenant || j.Repository != "https://github.com/acme/app.git" || j.Next.TaskType != "input:opaque" || !j.AvailableAt.Equal(now) || !j.CancelRequested || j.Execution.Status != "specified" || j.Execution.Source != "yield" || !reflect.DeepEqual(j.Execution.Demand, &current.Demand) || !reflect.DeepEqual(j.Execution.Initial, &demand) || !reflect.DeepEqual(execution.Inspect(j.Metadata, nil).Initial, &demand) {
 				t.Errorf("lost typed data: %+v", j)
 			}
 			a, err := j.Allocation(compute.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Platform: "linux/amd64", Image: "alpine:3"})
-			if err == nil {
-				t.Error("compact discovery supplied an allocation")
+			if err != nil || a.MemoryBytes != 16<<30 {
+				t.Error("list projection lost stored demand", a, err)
 			}
-			if page.Jobs[1].Execution.Status != "not_loaded" || page.Jobs[1].Execution.Diagnostic == "" {
+			if page.Jobs[1].Execution.Status != "unsupported" || page.Jobs[1].Execution.Diagnostic == "" {
 				t.Error(page.Jobs[1].Execution)
 			}
 			if _, err = page.Jobs[1].Allocation(a); err == nil {
@@ -157,7 +166,7 @@ func TestEmbeddedInputValidation(t *testing.T) {
 	}
 }
 
-func TestCompactDiscoveryMakesOneRequest(t *testing.T) {
+func TestDiscoveryMakesOneRequest(t *testing.T) {
 	requests := 0
 	handler := remote.NewServer(readOnly{Runtime: toy.New(), list: func(_ context.Context, req jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
 		jobs := make([]jobdb.JobSummary, 100)
@@ -180,7 +189,7 @@ func TestCompactDiscoveryMakesOneRequest(t *testing.T) {
 		t.Fatalf("jobs=%d requests=%d next=%q error=%v", len(page.Jobs), requests, page.Next, err)
 	}
 	for _, job := range page.Jobs {
-		if job.Execution.Status != "not_loaded" || job.Execution.Demand != nil {
+		if job.Execution.Status != "unresolved" || job.Execution.Source != "absent" || job.Execution.Demand != nil {
 			t.Fatal("discovery fabricated current demand")
 		}
 	}
