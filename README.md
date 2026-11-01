@@ -151,3 +151,7 @@ Lists include queued, starting, and running instances and exclude terminal insta
 ## License
 
 [Apache-2.0](LICENSE).
+
+## Local provider plugins
+
+Use `type: plugin` to run a trusted, independently installed compute provider. Pulse starts and supervises the executable, delivers only its configuration, and preserves uncertain submission outcomes without replay. See [installation and the public SDK](docs/implementing-a-provider-plugin.md) and the [separate-module reference provider](examples/provider-plugin).

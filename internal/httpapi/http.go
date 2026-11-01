@@ -15,6 +15,7 @@ import (
 	"github.com/colony-2/pulse/internal/controller"
 	"github.com/colony-2/pulse/internal/scheduler"
 	"github.com/colony-2/pulse/pkg/compute"
+	"github.com/colony-2/pulse/pkg/providerplugin"
 )
 
 type API struct {
@@ -55,7 +56,7 @@ func write(w http.ResponseWriter, status int, value any) {
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		write(w, 200, map[string]any{"endpoints": []string{"/status", "/config", "/instances", "/providers/{provider}/instances", "/scheduler/cooldowns", "/scheduler/round-robin"}})
+		write(w, 200, map[string]any{"endpoints": []string{"/status", "/providers/health", "/config", "/instances", "/providers/{provider}/instances", "/scheduler/cooldowns", "/scheduler/round-robin"}})
 	})
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		status := a.Controller.Status()
@@ -67,6 +68,16 @@ func (a *API) Handler() http.Handler {
 			}
 		}
 		write(w, 200, map[string]any{"status": state, "version": a.Version, "started_at": a.StartedAt, "uptime_seconds": time.Since(a.StartedAt).Seconds(), "providers": len(a.Controller.Providers), "poll": status})
+	})
+	mux.HandleFunc("GET /providers/health", func(w http.ResponseWriter, r *http.Request) {
+		items := []providerplugin.Health{}
+		for _, p := range a.Controller.Providers {
+			if h, ok := p.(interface{ Health() providerplugin.Health }); ok {
+				items = append(items, h.Health())
+			}
+		}
+		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+		write(w, 200, map[string]any{"items": items})
 	})
 	mux.HandleFunc("GET /config", func(w http.ResponseWriter, r *http.Request) { write(w, 200, a.config) })
 	mux.HandleFunc("GET /scheduler/cooldowns", func(w http.ResponseWriter, r *http.Request) {

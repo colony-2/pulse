@@ -47,4 +47,15 @@ COPY --from=cloud-smoke-build /out/cloud.test /usr/local/bin/cloud.test
 ENTRYPOINT ["/usr/local/bin/cloud.test"]
 CMD ["-test.v"]
 
+# Verify local plugin RPC, mTLS, process cleanup and isolation in distroless.
+# The test binary serves as its own independently launched provider fixture.
+FROM pulse-build AS provider-smoke-build
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go test -c \
+      -o /out/providerplugin.test ./pkg/providerplugin
+
+FROM runtime AS provider-smoke
+COPY --from=provider-smoke-build /out/providerplugin.test /usr/local/bin/providerplugin.test
+ENTRYPOINT ["/usr/local/bin/providerplugin.test"]
+CMD ["-test.v"]
+
 FROM runtime AS final

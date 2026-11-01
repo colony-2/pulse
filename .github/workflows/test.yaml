@@ -49,6 +49,8 @@ jobs:
           docker ps -a --no-trunc || true
           docker stats --no-stream || true
           docker system df || true
+      - run: go test -race ./...
+        working-directory: examples/provider-plugin
       - run: make vet build
       - run: node --test scripts/npm.test.js
       - uses: actions/setup-python@v5

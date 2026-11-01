@@ -136,3 +136,7 @@ Useful references:
 - [Docker capacity design](LOCAL_DOCKER_PROVIDER.md)
 - [c2j execution tracking guide](GUIDE-Execution-Tracking.md)
 - [c2j public listing API contract](C2J_FEATURE_REQUESTS_RESPONSE.md)
+
+## Instance provider SDK
+
+The protobuf contract and generated Go sources are committed. Run `(cd examples/provider-plugin && go test -race ./...)` in addition to the root suite to validate an independently built provider using only public packages. See the [plugin guide](docs/implementing-a-provider-plugin.md) for regeneration and conformance instructions.

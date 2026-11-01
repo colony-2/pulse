@@ -10,7 +10,19 @@ import (
 // Public returns configuration with environment values and URL credentials
 // removed. Do not expose the process environment or native credential objects.
 func (c *Config) Public() (map[string]any, error) {
-	data, err := yaml.Marshal(c)
+	// Remove arbitrary plugin data before serialization, including arguments.
+	copyConfig := *c
+	copyConfig.Providers = make(map[string]Provider, len(c.Providers))
+	for name, p := range c.Providers {
+		if p.Plugin != nil {
+			safe := *p.Plugin
+			safe.Config = yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "[REDACTED]"}
+			safe.Args = []string{"[REDACTED]"}
+			p.Plugin = &safe
+		}
+		copyConfig.Providers[name] = p
+	}
+	data, err := yaml.Marshal(&copyConfig)
 	if err != nil {
 		return nil, err
 	}

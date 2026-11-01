@@ -24,11 +24,17 @@ import (
 	"time"
 )
 
-func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
+func TestCLIThroughListingAndProviderProtocols(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "pulse")
 	if out, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %s %v", out, err)
+	}
+	pluginBinary := filepath.Join(dir, "provider")
+	buildPlugin := exec.Command("go", "build", "-o", pluginBinary, ".")
+	buildPlugin.Dir = "../../examples/provider-plugin"
+	if b, e := buildPlugin.CombinedOutput(); e != nil {
+		t.Fatalf("plugin build: %s %v", b, e)
 	}
 	fixture, err := os.ReadFile("../../internal/c2j/testdata/list-v0.0.52.json")
 	if err != nil {
@@ -45,8 +51,9 @@ func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
 	}
 	metadata, _ := json.Marshal(map[string]any{"execution": initial, "repo": "https://github.com/acme/first.git"})
 	metadata2, _ := json.Marshal(map[string]any{"execution": initial, "repo": "https://github.com/acme/second.git"})
-	for _, source := range []string{"file", "environment"} {
+	for _, source := range []string{"file", "environment", "plugin-file", "plugin-environment"} {
 		t.Run(source, func(t *testing.T) {
+			isPlugin := strings.HasPrefix(source, "plugin-")
 			backend := toy.New()
 			_, err := backend.SubmitJob(context.Background(), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: job.TenantID, JobID: job.JobID, JobType: "recipe", Metadata: metadata, Data: jobdb.NewTaskDataOrPanic(1)}})
 			if err != nil {
@@ -69,7 +76,11 @@ func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
 					t.Error("missing auth")
 				}
 				w.Header().Set("Content-Type", "application/json")
-				if r.URL.Path != "/v1/submit" {
+				if isPlugin && r.URL.Path == "/health" {
+					json.NewEncoder(w).Encode(map[string]bool{"ready": true})
+					return
+				}
+				if r.URL.Path != "/v1/submit" && !(isPlugin && r.URL.Path == "/submit") {
 					t.Error(r.URL.Path)
 					w.WriteHeader(404)
 					return
@@ -77,7 +88,11 @@ func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
 				var in struct {
 					Items []compute.Launch `json:"items"`
 				}
-				if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+				var target any = &in
+				if isPlugin {
+					target = &in.Items
+				}
+				if err := json.NewDecoder(r.Body).Decode(target); err != nil {
 					t.Error(err)
 					return
 				}
@@ -110,18 +125,26 @@ func TestCLIThroughListingAndRemoteProtocol(t *testing.T) {
 				mu.Lock()
 				submitted += len(in.Items)
 				mu.Unlock()
-				json.NewEncoder(w).Encode(map[string]any{"results": results})
+				if isPlugin {
+					json.NewEncoder(w).Encode(results)
+				} else {
+					json.NewEncoder(w).Encode(map[string]any{"results": results})
+				}
 			}))
 			defer server.Close()
 			cfg := map[string]any{
 				"providers": map[string]any{"remote": map[string]any{"type": "remote", "endpoint": server.URL, "allow_http": true, "token_env": "PULSE_TEST_PROVIDER_TOKEN"}},
 				"targets":   []any{map[string]any{"launch_services": []any{map[string]any{"name": "remote", "priority": 1}}}},
 			}
+			if isPlugin {
+				cfg["defaults"] = map[string]any{"platform": "linux/amd64"}
+				cfg["providers"] = map[string]any{"remote": map[string]any{"type": "plugin", "plugin": map[string]any{"command": pluginBinary, "pass_env": []string{"PULSE_TEST_PROVIDER_TOKEN"}, "config": map[string]any{"endpoint": server.URL, "token_env": "PULSE_TEST_PROVIDER_TOKEN"}}}}
+			}
 			data, _ := yaml.Marshal(cfg)
 			cmd := exec.Command(binary, "run", "--once")
 			cmd.Dir = t.TempDir()
 			cmd.Env = []string{"PATH=" + t.TempDir(), "PULSE_TEST_PROVIDER_TOKEN=test-token", "C2J_JOBDB=" + db.URL + "/acme"}
-			if source == "file" {
+			if strings.HasSuffix(source, "file") {
 				path := filepath.Join(dir, "pulse.yaml")
 				if err := os.WriteFile(path, data, 0600); err != nil {
 					t.Fatal(err)

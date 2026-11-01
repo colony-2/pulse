@@ -7,6 +7,7 @@ import (
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/providers/cloud"
 	"github.com/colony-2/pulse/internal/providers/docker"
+	providerplugin "github.com/colony-2/pulse/internal/providers/plugin"
 	"github.com/colony-2/pulse/internal/providers/remote"
 	"github.com/colony-2/pulse/internal/quantity"
 	"github.com/colony-2/pulse/pkg/compute"
@@ -31,6 +32,13 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]compute.Provider
 	locals := map[string]local{}
 	for name, p := range cfg.Providers {
 		switch p.Type {
+		case "plugin":
+			c, e := providerplugin.New(ctx, name, p.Plugin, cfg.BaseDir, cfg.Call)
+			if e != nil {
+				return fail(e)
+			}
+			out[name] = c
+			closers = append(closers, c.Close)
 		case "remote":
 			if p.TokenEnv == "" {
 				return fail(fmt.Errorf("remote provider %s requires token_env", name))

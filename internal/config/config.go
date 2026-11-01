@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -32,6 +33,7 @@ type Target struct {
 	Tenant        string    `yaml:"-"`
 }
 type Provider struct {
+	Plugin             *PluginConfig     `yaml:"plugin,omitempty"`
 	DependencyCache    *DependencyCache  `yaml:"dependency_cache"`
 	SupervisorPath     string            `yaml:"supervisor_path"`
 	ImageStorageBounds map[string]string `yaml:"image_storage_bounds"`
@@ -73,7 +75,8 @@ type DependencyCache struct {
 	MaxAge     string `yaml:"max_age"`
 }
 type Config struct {
-	HTTP struct {
+	BaseDir string `yaml:"-"`
+	HTTP    struct {
 		Listen string `yaml:"listen"`
 	} `yaml:"http"`
 	PollInterval     string `yaml:"poll_interval"`
@@ -111,7 +114,12 @@ func Load(path string) (*Config, error) {
 	if e != nil {
 		return nil, e
 	}
-	return Parse(b)
+	c, e := Parse(b)
+	if e != nil {
+		return nil, e
+	}
+	c.BaseDir, e = filepath.Abs(filepath.Dir(path))
+	return c, e
 }
 
 func Parse(b []byte) (*Config, error) {
@@ -119,11 +127,15 @@ func Parse(b []byte) (*Config, error) {
 }
 
 func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
-	c := &Config{}
+	base, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	c := &Config{BaseDir: base}
 	d := yaml.NewDecoder(bytes.NewReader(b))
 	d.KnownFields(true)
 	if e := d.Decode(c); e != nil {
-		return nil, e
+		return nil, fmt.Errorf("invalid Pulse YAML configuration")
 	}
 	var extra any
 	if e := d.Decode(&extra); e != io.EOF {
@@ -286,9 +298,12 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 			return nil, fmt.Errorf("empty provider name")
 		}
 		switch p.Type {
-		case "remote", "docker", "cloudrun", "ecs", "azurejobs":
+		case "remote", "docker", "cloudrun", "ecs", "azurejobs", "plugin":
 		default:
 			return nil, fmt.Errorf("unknown provider type %q", p.Type)
+		}
+		if err := validatePlugin(p); err != nil {
+			return nil, err
 		}
 		if p.Type == "docker" {
 			if p.DependencyCache == nil {

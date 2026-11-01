@@ -1,0 +1,31 @@
+syntax = "proto3";
+package pulse.providerplugin.v1;
+option go_package = "github.com/colony-2/pulse/pkg/providerplugin/proto/v1;providerv1";
+import "google/protobuf/timestamp.proto";
+service InstanceProvider {
+  rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+  rpc Submit(SubmitRequest) returns (SubmitResponse);
+  rpc List(ListRequest) returns (ListResponse);
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+}
+message ConfigureRequest { string provider_name = 1; bytes config_yaml = 2; string base_dir = 3; }
+message ConfigureResponse { string implementation = 1; string version = 2; repeated string features = 3; int64 max_message_bytes = 4; }
+message Launch {
+  string launch_id = 1; string image = 2; string platform = 3;
+  int64 cpu_millis = 4; int64 memory_bytes = 5; int64 scratch_bytes = 6;
+  string image_digest = 7; string image_id = 8; int64 timeout_seconds = 9;
+  google.protobuf.Timestamp start_before = 10; map<string,string> metadata = 11; Process process = 12;
+}
+message Process { repeated string command = 1; repeated string args = 2; map<string,string> env = 3; string working_dir = 4; bytes stdin = 5; }
+enum Status { STATUS_UNSPECIFIED = 0; ACCEPTED = 1; NO_CAPACITY = 2; UNSUPPORTED = 3; UNAVAILABLE = 4; REJECTED = 5; UNKNOWN = 6; }
+message Submission { string launch_id = 1; Status status = 2; string reason = 3; }
+message SubmitRequest { repeated Launch items = 1; }
+message SubmitResponse { repeated Submission results = 1; string diagnostic_code = 2; }
+message ListRequest { int32 page_size = 1; string page_token = 2; string launch_id = 3; }
+message Instance {
+  string id = 1; string launch_id = 2; string state = 3; map<string,string> metadata = 4;
+  repeated string refs = 5; google.protobuf.Timestamp created_at = 6; google.protobuf.Timestamp started_at = 7;
+}
+message ListResponse { repeated Instance items = 1; string next_page_token = 2; }
+message ShutdownRequest {}
+message ShutdownResponse {}

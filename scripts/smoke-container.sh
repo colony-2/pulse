@@ -30,3 +30,9 @@ docker buildx build --platform "$platform" --target cloud-smoke --load \
   --build-arg "VERSION=$version" --tag "$image-cloud-smoke" .
 docker run --rm --platform "$platform" --read-only --tmpfs /tmp \
   "$image-cloud-smoke"
+
+# Exercise go-plugin subprocesses inside the same non-root, read-only runtime.
+docker buildx build --platform "$platform" --target provider-smoke --load \
+  --build-arg "VERSION=$version" --tag "$image-provider-smoke" .
+docker run --rm --platform "$platform" --read-only --tmpfs /tmp \
+  "$image-provider-smoke"

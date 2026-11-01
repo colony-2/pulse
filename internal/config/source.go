@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	c2jconfig "github.com/colony-2/c2j/pkg/config"
@@ -42,6 +43,12 @@ func LoadOptions(ctx context.Context, path, jobdb string) (*Config, error) {
 	cfg, err := parse(ctx, data, strings.TrimSpace(jobdb))
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
+	}
+	if source != "PULSE_CONFIG" && source != "defaults" {
+		cfg.BaseDir, err = filepath.Abs(filepath.Dir(source))
+		if err != nil {
+			return nil, err
+		}
 	}
 	return cfg, nil
 }
