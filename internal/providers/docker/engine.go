@@ -22,6 +22,12 @@ type apiError struct {
 	message string // Only synthetic startup probes may expose daemon details.
 }
 
+type pullError struct {
+	message string // Retained only for synthetic startup probe diagnostics.
+}
+
+func (e *pullError) Error() string { return "Docker image pull failed" }
+
 func (e *apiError) Error() string { return fmt.Sprintf("Docker API returned HTTP %d", e.code) }
 
 func readAPIError(resp *http.Response) error {
@@ -85,7 +91,7 @@ func (e *engine) pull(ctx context.Context, image, platform string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return &apiError{code: resp.StatusCode}
+		return readAPIError(resp)
 	}
 	d := json.NewDecoder(io.LimitReader(resp.Body, 64<<20))
 	for {
@@ -100,8 +106,12 @@ func (e *engine) pull(ctx context.Context, image, platform string) error {
 		if err != nil {
 			return err
 		}
-		if item.Error != "" || item.ErrorDetail != nil {
-			return fmt.Errorf("Docker image pull failed")
+		message := item.Error
+		if item.ErrorDetail != nil && item.ErrorDetail.Message != "" {
+			message = item.ErrorDetail.Message
+		}
+		if message != "" {
+			return &pullError{message: message}
 		}
 	}
 }

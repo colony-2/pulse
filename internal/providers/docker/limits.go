@@ -21,7 +21,7 @@ func (p *Provider) checkLimits(ctx context.Context) error {
 		return err
 	}
 	name := "pulse-limits-probe-" + hex.EncodeToString(nonce[:])
-	image, err := p.e.resolveImage(ctx, probeImage, p.platform)
+	image, err := p.e.resolveImage(ctx, probeImageForPlatform(p.platform), p.platform)
 	if err != nil {
 		return probeDiagnostic("resolve probe image", err)
 	}
@@ -99,6 +99,10 @@ func probeDiagnostic(stage string, err error) error {
 	var api *apiError
 	if errors.As(err, &api) && api.message != "" {
 		return fmt.Errorf("Docker probe %s: %w: daemon message %q", stage, err, api.message)
+	}
+	var pull *pullError
+	if errors.As(err, &pull) && pull.message != "" {
+		return fmt.Errorf("Docker probe %s: %w: daemon message %q", stage, err, pull.message)
 	}
 	return fmt.Errorf("Docker probe %s: %w", stage, err)
 }

@@ -96,6 +96,9 @@ func TestLimitProbe(t *testing.T) {
 				enc := json.NewEncoder(w)
 				switch {
 				case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/images/"):
+					if r.URL.Path != "/images/"+probeImageForPlatform("linux/arm64")+"/json" {
+						t.Error("limit probe used wrong image", r.URL)
+					}
 					enc.Encode(map[string]string{"Id": "sha256:probe", "Os": "linux", "Architecture": "arm64"})
 				case r.Method == "POST" && r.URL.Path == "/containers/create":
 					var body struct {

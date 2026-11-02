@@ -92,7 +92,7 @@ func (p *Provider) probePlatform(ctx context.Context, platform string) platformP
 		}
 		return platformProbe{Status: status, Stage: stage, Err: probeDiagnostic(stage, err)}
 	}
-	image, err := p.e.resolveImage(ctx, probeImage, platform)
+	image, err := p.e.resolveImage(ctx, probeImageForPlatform(platform), platform)
 	if err != nil {
 		return failure("resolve image", err)
 	}

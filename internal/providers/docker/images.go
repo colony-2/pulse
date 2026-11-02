@@ -10,10 +10,23 @@ import (
 	"strings"
 )
 
-// Docker Official Image: scratch plus the /hello executable. Pin the Linux
-// multi-platform index so both probes use reproducible, tiny image variants.
-const probeImage = "docker.io/library/hello-world@sha256:5e22040d441e5fb3aed38368acbe8486b575d7018df38dbdfbc7311fbb2ef3a9"
+// Docker Official Image: scratch plus the /hello executable. The classic image
+// store cannot associate one index digest with two different platform images.
+// Pin each candidate's child manifest so native and emulated probes can coexist.
+const probeImageIndex = "docker.io/library/hello-world@sha256:5e22040d441e5fb3aed38368acbe8486b575d7018df38dbdfbc7311fbb2ef3a9"
 const probeCommand = "/hello"
+
+func probeImageForPlatform(platform string) string {
+	switch platform {
+	case "linux/arm64":
+		return "docker.io/library/hello-world@sha256:5099b89d7666cc2186cad769ddc262ddc7c335b33f5fe79f9ffe50a01282b23e"
+	case "linux/amd64":
+		return "docker.io/library/hello-world@sha256:d1a8d0a4eeb63aff09f5f34d4d80505e0ba81905f36158cc3970d8e07179e59e"
+	default:
+		// Other native architectures use the index; neither candidate uses it.
+		return probeImageIndex
+	}
+}
 
 var errImagePlatform = errors.New("image platform differs")
 

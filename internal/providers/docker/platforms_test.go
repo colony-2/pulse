@@ -23,6 +23,7 @@ type probeDaemon struct {
 	fail                     string
 	created, deleted, starts int
 	name, platform           string
+	imageRef                 string
 	base                     *daemon
 }
 
@@ -33,6 +34,9 @@ func (d *probeDaemon) serve(w http.ResponseWriter, r *http.Request) {
 	enc := json.NewEncoder(w)
 	switch {
 	case strings.HasPrefix(path, "/images/") && (strings.Contains(path, "hello-world") || strings.Contains(path, "sha256:probe")):
+		if strings.Contains(path, "hello-world") {
+			d.imageRef = strings.TrimSuffix(strings.TrimPrefix(path, "/images/"), "/json")
+		}
 		if d.fail == "resolve" {
 			w.WriteHeader(404)
 			return
@@ -50,6 +54,9 @@ func (d *probeDaemon) serve(w http.ResponseWriter, r *http.Request) {
 		d.created++
 		d.name = r.URL.Query().Get("name")
 		d.platform = r.URL.Query().Get("platform")
+		if d.imageRef != probeImageForPlatform(d.platform) {
+			d.t.Error("probe did not use its architecture's manifest", d.imageRef, d.platform)
+		}
 		var body struct {
 			Image      string
 			Entrypoint []string

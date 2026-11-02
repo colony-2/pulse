@@ -61,13 +61,90 @@ func TestResolveImagePlatform(t *testing.T) {
 }
 
 func TestPullErrorDetail(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		status     int
+		wantError  bool
+	}{
+		{"detail", `{"errorDetail":{"message":"private registry error"}}`, 200, true},
+		{"legacy", `{"error":"private registry error"}`, 200, true},
+		{"HTTP error", `{"message":"private registry error"}`, 403, true},
+		{"empty detail", `{"status":"done","errorDetail":{}}`, 200, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			e := &engine{base: server.URL, client: server.Client()}
+			err := e.pull(context.Background(), "runner:1", "linux/arm64")
+			if (err != nil) != tc.wantError {
+				t.Fatal(err)
+			}
+			if err != nil {
+				if strings.Contains(err.Error(), "private") {
+					t.Fatal("job error exposed registry details", err)
+				}
+				if !strings.Contains(probeDiagnostic("resolve image", err).Error(), "private registry error") {
+					t.Fatal("probe lost daemon diagnostic", err)
+				}
+			}
+		})
+	}
+}
+
+func TestProbeManifestsCoexistInClassicImageStore(t *testing.T) {
+	// Reproduce a native probe already associated with the shared index digest.
+	stored := map[string]string{probeImageIndex: "arm64", "sha256:config-arm64": "arm64"}
+	pulls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"errorDetail":{"message":"private registry error"}}`))
+		enc := json.NewEncoder(w)
+		if r.URL.Path == "/v1.49/images/create" {
+			pulls++
+			ref := r.URL.Query().Get("fromImage")
+			arch := strings.TrimPrefix(r.URL.Query().Get("platform"), "linux/")
+			if prior, ok := stored[ref]; ok && prior != arch {
+				enc.Encode(map[string]any{"errorDetail": map[string]string{"message": "cannot overwrite digest sha256:index"}})
+				return
+			}
+			stored[ref] = arch
+			stored["sha256:config-"+arch] = arch
+			enc.Encode(map[string]string{"status": "done"})
+			return
+		}
+		ref := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1.49/images/"), "/json")
+		arch, ok := stored[ref]
+		if !ok {
+			w.WriteHeader(404)
+			return
+		}
+		if r.URL.Query().Has("platform") {
+			var platform struct{ Architecture string }
+			if err := json.Unmarshal([]byte(r.URL.Query().Get("platform")), &platform); err != nil {
+				t.Error(err)
+			}
+			if platform.Architecture != arch {
+				w.WriteHeader(404)
+				return
+			}
+		}
+		enc.Encode(map[string]string{"Id": "sha256:config-" + arch, "Os": "linux", "Architecture": arch})
 	}))
 	defer server.Close()
-	e := &engine{base: server.URL, client: server.Client()}
-	if err := e.pull(context.Background(), "runner:1", "linux/arm64"); err == nil || strings.Contains(err.Error(), "private") {
-		t.Fatal("pull must fail without exposing registry error", err)
+	e := &engine{base: server.URL, client: server.Client(), version: "/v1.49"}
+	if _, err := e.resolveImage(t.Context(), probeImageIndex, "linux/amd64"); err == nil || !strings.Contains(probeDiagnostic("resolve image", err).Error(), "cannot overwrite digest") {
+		t.Fatal("fixture did not reproduce the reported collision", err)
+	}
+	// Both pins must work in the same store, including with the old index present.
+	for _, platform := range []string{"linux/arm64", "linux/amd64", "linux/arm64", "linux/amd64"} {
+		image, err := e.resolveImage(t.Context(), probeImageForPlatform(platform), platform)
+		if err != nil || !image.matches(platform) {
+			t.Fatal(platform, image, err)
+		}
+	}
+	if pulls != 3 || stored[probeImageIndex] != "arm64" {
+		t.Fatal("unexpected pull or index mutation", pulls, stored)
 	}
 }
 

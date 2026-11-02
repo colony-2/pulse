@@ -55,7 +55,7 @@ containers on the selected daemon can execute a particular architecture.
 
 At startup, and during `pulse check`, probe each non-native candidate:
 
-1. Resolve the digest-pinned Docker Official `hello-world` Linux image for that
+1. Resolve the architecture-specific, digest-pinned Docker Official `hello-world` Linux image for that
    exact platform with the common platform-aware resolver. It consists of a
    single executable on `scratch`; Docker reports approximately 15 KB per variant.
    Verify image OS and architecture before executing it. Resource-limit probes
@@ -245,6 +245,22 @@ comparison for aliases.
 - [Docker Buildx inspect](https://docs.docker.com/reference/cli/docker/buildx/inspect/)
 - [Docker Official hello-world source](https://github.com/docker-library/hello-world)
 
-Probe image: `docker.io/library/hello-world@sha256:5e22040d441e5fb3aed38368acbe8486b575d7018df38dbdfbc7311fbb2ef3a9`.
-The pinned amd64 variant has a single 2,415-byte compressed layer. The pin is the
-Linux multi-platform index, not one architecture's manifest.
+Probe repository: `docker.io/library/hello-world`. Pin the individual manifests:
+
+- `linux/arm64`: `sha256:5099b89d7666cc2186cad769ddc262ddc7c335b33f5fe79f9ffe50a01282b23e`
+- `linux/amd64`: `sha256:d1a8d0a4eeb63aff09f5f34d4d80505e0ba81905f36158cc3970d8e07179e59e`
+
+Both come from Linux index
+`sha256:5e22040d441e5fb3aed38368acbe8486b575d7018df38dbdfbc7311fbb2ef3a9`,
+which remains the fallback for other native architectures. The amd64 variant has
+a single 2,415-byte compressed layer.
+
+Do not pull both probe architectures through the same index digest. Docker's
+classic image store associates that digest with one platform image and rejects
+the second with `cannot overwrite digest`. Separate child manifests coexist
+without changing Docker settings or removing existing images. See the
+[Docker issue](https://github.com/moby/moby/issues/43188).
+
+Preserve daemon pull errors for synthetic probe diagnostics while keeping
+ordinary job errors redacted. A failed pull must not hide the underlying cause
+behind only `Docker image pull failed`.
