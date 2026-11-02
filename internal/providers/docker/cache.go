@@ -384,7 +384,7 @@ func (p *Provider) runCacheHelper(ctx context.Context, c dependencyCache, plan n
 		Warnings []string
 	}
 	stage = "create initializer"
-	if err = p.e.call(ctx, "POST", "/containers/create?name="+c.initializer(), body, &created); err != nil {
+	if err = p.e.call(ctx, "POST", containerCreatePath(c.initializer(), plan.Request.Platform), body, &created); err != nil {
 		var api *apiError
 		if errors.As(err, &api) && api.code >= 400 && api.code < 500 && api.code != 409 {
 			delete(p.uncertain, helperID)

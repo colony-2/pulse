@@ -90,7 +90,8 @@ func (e *engine) pull(ctx context.Context, image, platform string) error {
 	d := json.NewDecoder(io.LimitReader(resp.Body, 64<<20))
 	for {
 		var item struct {
-			Error string `json:"error"`
+			Error       string                    `json:"error"`
+			ErrorDetail *struct{ Message string } `json:"errorDetail"`
 		}
 		err = d.Decode(&item)
 		if err == io.EOF {
@@ -99,7 +100,7 @@ func (e *engine) pull(ctx context.Context, image, platform string) error {
 		if err != nil {
 			return err
 		}
-		if item.Error != "" {
+		if item.Error != "" || item.ErrorDetail != nil {
 			return fmt.Errorf("Docker image pull failed")
 		}
 	}

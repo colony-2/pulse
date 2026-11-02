@@ -4,7 +4,7 @@ call_timeout: 2m
 batch_timeout: 5m
 defaults:
   image: pulse-runner:local
-  platform: linux/amd64  # Use linux/arm64 on an arm64 Docker daemon.
+  platform: linux/amd64  # Omit to default to the daemon's native platform; emulation is detected automatically.
   cpu: "1"
   memory: 1Gi
   scratch: 1Gi

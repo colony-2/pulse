@@ -96,7 +96,7 @@ func TestLimitProbe(t *testing.T) {
 				enc := json.NewEncoder(w)
 				switch {
 				case r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/images/"):
-					enc.Encode(map[string]string{"Id": "sha256:probe"})
+					enc.Encode(map[string]string{"Id": "sha256:probe", "Os": "linux", "Architecture": "arm64"})
 				case r.Method == "POST" && r.URL.Path == "/containers/create":
 					var body struct {
 						HostConfig hostConfig
@@ -105,7 +105,7 @@ func TestLimitProbe(t *testing.T) {
 					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 						t.Error(err)
 					}
-					if len(body.Entrypoint) != 1 || body.Entrypoint[0] != "/bin/true" {
+					if len(body.Entrypoint) != 1 || body.Entrypoint[0] != "/hello" {
 						t.Error("probe must use image executable")
 					}
 					if body.HostConfig.NanoCPUs != 0 && tc.createError != "" {

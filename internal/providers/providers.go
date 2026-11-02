@@ -126,12 +126,20 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]compute.Provider
 			out[name] = c
 		}
 	}
-	if cfg.AutoPlatform && len(out) == 1 {
+	if cfg.AutoPlatform {
+		var native *docker.Provider
+		singleDaemon := len(out) > 0
 		for _, provider := range out {
-			if dockerProvider, ok := provider.(*docker.Provider); ok {
-				cfg.Defaults.Platform = dockerProvider.Platform()
-				cfg.Allocation.Platform = dockerProvider.Platform()
+			dockerProvider, ok := provider.(*docker.Provider)
+			if !ok || (native != nil && native != dockerProvider) {
+				singleDaemon = false
+				break
 			}
+			native = dockerProvider
+		}
+		if singleDaemon {
+			cfg.Defaults.Platform = native.NativePlatform()
+			cfg.Allocation.Platform = native.NativePlatform()
 		}
 	}
 	return out, closeAll, nil

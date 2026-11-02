@@ -45,6 +45,7 @@ type Provider struct {
 	cfg             Config
 	e               *engine
 	platform        string
+	platformProbes  map[string]platformProbe
 	gate            chan struct{}
 	uncertain       map[string]charge
 	readyCaches     map[string]bool
@@ -112,7 +113,11 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 			return nil, err
 		}
 	}
-	slog.Info("Docker provider ready", "platform", p.platform, "resource_limits_enforced", !p.unenforced)
+	if err := p.discoverPlatforms(ctx); err != nil {
+		p.Close()
+		return nil, err
+	}
+	slog.Info("Docker provider ready", "native_platform", p.platform, "supported_platforms", p.SupportedPlatforms(), "resource_limits_enforced", !p.unenforced)
 	if err := p.Maintain(ctx); err != nil {
 		slog.Warn("Docker cache maintenance deferred", "error", err)
 	}
@@ -335,9 +340,9 @@ func (p *Provider) resolve(ctx context.Context, r compute.Request, used charge) 
 	case r.TimeoutSeconds != 0:
 		result.Status = compute.Unsupported
 		result.Reason = "Docker runs the executor directly; configure execution timeouts in c2j instead of defaults.timeout"
-	case r.Platform != p.platform:
+	case !p.supportsPlatform(r.Platform):
 		result.Status = compute.Unsupported
-		result.Reason = "Docker native platform differs"
+		result.Reason = p.platformReason(r.Platform)
 	case !p.fits(cost):
 		result.Status = compute.Unsupported
 		result.Reason = "request exceeds Docker pool budget"
@@ -345,33 +350,14 @@ func (p *Provider) resolve(ctx context.Context, r compute.Request, used charge) 
 		result.Status = compute.NoCapacity
 		result.Reason = "Docker pool full"
 	default:
-		var image struct {
-			ID           string   `json:"Id"`
-			RepoDigests  []string `json:"RepoDigests"`
-			OS           string   `json:"Os"`
-			Architecture string   `json:"Architecture"`
-			Config       struct {
-				User string
-				Env  []string
-			}
-		}
-		imagePath := "/images/" + url.PathEscape(r.Image) + "/json"
-		e := p.e.call(ctx, "GET", imagePath, nil, &image)
-		var ae *apiError
-		if errors.As(e, &ae) && ae.code == 404 {
-			e = p.e.pull(ctx, r.Image, r.Platform)
-			if e == nil {
-				e = p.e.call(ctx, "GET", imagePath, nil, &image)
-			}
-		}
+		image, e := p.e.resolveImage(ctx, r.Image, r.Platform)
 		if e != nil {
 			result.Status = compute.Unavailable
 			result.Reason = "Docker image resolution failed"
-			return nativePlan{}, result.Status, result.Reason
-		}
-		if image.ID == "" || image.OS+"/"+image.Architecture != r.Platform {
-			result.Status = compute.Unsupported
-			result.Reason = "image platform differs"
+			if errors.Is(e, errImagePlatform) {
+				result.Status = compute.Unsupported
+				result.Reason = "image platform differs"
+			}
 			return nativePlan{}, result.Status, result.Reason
 		}
 		a.ImageID = image.ID
@@ -527,7 +513,7 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 			ID       string   `json:"Id"`
 			Warnings []string `json:"Warnings"`
 		}
-		err = p.e.call(ctx, "POST", "/containers/create?name="+name, body, &created)
+		err = p.e.call(ctx, "POST", containerCreatePath(name, plan.Request.Platform), body, &created)
 		if err != nil {
 			var api *apiError
 			if errors.As(err, &api) && api.code >= 400 && api.code < 500 && api.code != 409 {
@@ -580,6 +566,3 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 	}
 	return out, nil
 }
-
-// Platform reports the Linux platform supported natively by the Docker daemon.
-func (p *Provider) Platform() string { return p.platform }

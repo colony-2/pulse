@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"time"
 )
 
@@ -15,30 +14,16 @@ var errLimitsDiscarded = errors.New("Docker discarded probe resource limits")
 
 // checkLimits tests the daemon rather than the controller's cgroup namespace.
 // Some nested daemons advertise limits in /info but cannot apply them. Use a
-// disposable Alpine container, with no host mounts or installed helper.
+// disposable hello-world container, with no host mounts or installed helper.
 func (p *Provider) checkLimits(ctx context.Context) error {
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return err
 	}
 	name := "pulse-limits-probe-" + hex.EncodeToString(nonce[:])
-	const probeImage = "alpine:3.21"
-	var image struct {
-		ID string `json:"Id"`
-	}
-	imagePath := "/images/" + url.PathEscape(probeImage) + "/json"
-	err := p.e.call(ctx, "GET", imagePath, nil, &image)
-	var api *apiError
-	if errors.As(err, &api) && api.code == 404 {
-		if err = p.e.pull(ctx, probeImage, p.platform); err == nil {
-			err = p.e.call(ctx, "GET", imagePath, nil, &image)
-		}
-	}
+	image, err := p.e.resolveImage(ctx, probeImage, p.platform)
 	if err != nil {
 		return probeDiagnostic("resolve probe image", err)
-	}
-	if image.ID == "" {
-		return fmt.Errorf("Docker probe image has no ID")
 	}
 	containers := []string{}
 	defer func() {
@@ -60,17 +45,17 @@ func (p *Provider) checkLimits(ctx context.Context) error {
 	start := func(limited bool) error {
 		containerName := fmt.Sprintf("%s-%t", name, limited)
 		containers = append(containers, containerName)
-		host := map[string]any{"NetworkMode": "none"}
+		host := map[string]any{"NetworkMode": "none", "LogConfig": map[string]string{"Type": "none"}}
 		if limited {
 			host["NanoCpus"] = int64(100000000)
 			host["Memory"] = int64(32 << 20)
 			host["MemorySwap"] = int64(32 << 20)
 		}
-		body := map[string]any{"Image": image.ID, "Entrypoint": []string{"/bin/true"}, "HostConfig": host}
+		body := map[string]any{"Image": image.ID, "Entrypoint": []string{probeCommand}, "Cmd": []string{}, "HostConfig": host}
 		var created struct {
 			ID string `json:"Id"`
 		}
-		if err := p.e.call(ctx, "POST", "/containers/create?name="+containerName, body, &created); err != nil {
+		if err := p.e.call(ctx, "POST", containerCreatePath(containerName, p.platform), body, &created); err != nil {
 			return probeDiagnostic("create container", err)
 		}
 		if created.ID == "" {

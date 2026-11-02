@@ -14,23 +14,26 @@ import (
 )
 
 type daemon struct {
-	mu            sync.Mutex
-	containers    map[string]container
-	creates       []map[string]any
-	startError    bool
-	createError   bool
-	noLimits      bool
-	inspectError  int
-	stdin         map[string]string
-	volumes       map[string]cacheVolume
-	cacheFailure  string
-	initExitCode  int
-	initRunning   bool
-	dropMount     bool
-	deleteError   bool
-	readyVolumes  map[string]bool
-	helperScripts map[string]string
-	imageID       string
+	mu              sync.Mutex
+	containers      map[string]container
+	creates         []map[string]any
+	startError      bool
+	createError     bool
+	noLimits        bool
+	inspectError    int
+	stdin           map[string]string
+	volumes         map[string]cacheVolume
+	cacheFailure    string
+	initExitCode    int
+	initRunning     bool
+	dropMount       bool
+	deleteError     bool
+	readyVolumes    map[string]bool
+	helperScripts   map[string]string
+	imageID         string
+	apiVersion      string
+	multiPlatform   bool
+	createPlatforms []string
 }
 
 func TestExplicitInfrastructureDeadlinesAreNotSilentlyIgnored(t *testing.T) {
@@ -48,7 +51,11 @@ func TestExplicitInfrastructureDeadlinesAreNotSilentlyIgnored(t *testing.T) {
 }
 
 func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/v1.47")
+	version := d.apiVersion
+	if version == "" {
+		version = "1.47"
+	}
+	path := strings.TrimPrefix(r.URL.Path, "/v"+version)
 	if strings.HasSuffix(path, "/attach") {
 		conn, rw, err := w.(http.Hijacker).Hijack()
 		if err != nil {
@@ -75,15 +82,24 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case path == "/version":
-		enc.Encode(map[string]any{"ApiVersion": "1.47"})
+		enc.Encode(map[string]any{"ApiVersion": version})
 	case path == "/info":
 		enc.Encode(map[string]any{"ID": "test", "NCPU": 8, "MemTotal": int64(16 << 30), "OSType": "linux", "Architecture": "arm64", "MemoryLimit": !d.noLimits, "SwapLimit": !d.noLimits, "CpuCfsQuota": !d.noLimits})
 	case strings.HasPrefix(path, "/images/"):
+		arch := "arm64"
+		if d.multiPlatform && r.URL.Query().Has("platform") {
+			var platform struct{ Architecture string }
+			if err := json.Unmarshal([]byte(r.URL.Query().Get("platform")), &platform); err != nil || platform.Architecture == "" {
+				http.Error(w, "missing platform", 400)
+				return
+			}
+			arch = platform.Architecture
+		}
 		imageID := d.imageID
 		if imageID == "" {
 			imageID = "sha256:config"
 		}
-		enc.Encode(map[string]any{"Id": imageID, "Os": "linux", "Architecture": "arm64", "RepoDigests": []string{}})
+		enc.Encode(map[string]any{"Id": imageID, "Os": "linux", "Architecture": arch, "RepoDigests": []string{}})
 	case path == "/containers/json":
 		var filters map[string][]string
 		json.Unmarshal([]byte(r.URL.Query().Get("filters")), &filters)
@@ -145,6 +161,7 @@ func (d *daemon) serve(w http.ResponseWriter, r *http.Request) {
 			panic(e)
 		}
 		d.creates = append(d.creates, body)
+		d.createPlatforms = append(d.createPlatforms, r.URL.Query().Get("platform"))
 		if d.createError {
 			w.WriteHeader(500)
 			return

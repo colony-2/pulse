@@ -40,7 +40,7 @@ pulse run --once
 pulse version
 ```
 
-Pulse discovers eligible c2j jobs across every repository in the tenant. Docker is the default provider, and jobs without an image use `ghcr.io/colony-2/base2:latest`. Jobs without resource requirements have no CPU, memory, or scratch allocation, and Docker has no default container-count cap. Docker's native Linux platform is detected automatically.
+Pulse discovers eligible c2j jobs across every repository in the tenant. Docker is the default provider, and jobs without an image use `ghcr.io/colony-2/base2:latest`. Jobs without resource requirements have no CPU, memory, or scratch allocation, and Docker has no default container-count cap. Docker's native Linux platform is detected automatically. Pulse also probes arm64/amd64 execution and enables working emulation without configuration; jobs without a platform continue to default to native.
 
 For Colony base images, Docker automatically retains uv, pnpm, and Nix dependencies
 in tenant-scoped volumes across jobs and restarts. No Nix daemon or manual cache

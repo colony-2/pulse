@@ -65,7 +65,7 @@ Bound logs and reserve operational disk headroom for images, container layers, a
 
 ## Lifetime and allocation facts
 
-Resolve images for the host's native platform, bind the launch to the resolved content, and keep reference/manifest/config identities distinct. Unsupported platforms return `unsupported` rather than silently using emulation. Preserve c2j's required image-reference matching when pinning content.
+Resolve images for the requested platform, bind the launch to the resolved content and explicit platform, and keep reference/manifest/config identities distinct. Native execution is always eligible; additional arm64/amd64 execution is enabled only after successful startup probes. Undetected platforms return `unsupported`. Preserve c2j's required image-reference matching when pinning content. See the [multi-platform specification](docs/docker-multi-platform-spec.md).
 
 Docker launches the supplied c2j process directly and delivers the finite lease capability through Docker's native stdin attachment. No Pulse helper or host bind mount is required. c2j owns recipe and operation timeouts and cancellation. Pulse imposes no default execution cap. Requests with a positive infrastructure timeout or future actual-start deadline are unsupported by this adapter; already-expired starts are rejected.
 
