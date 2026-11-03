@@ -17,10 +17,10 @@ import (
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
+	compute "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/c2j"
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/scheduler"
-	"github.com/colony-2/pulse/pkg/compute"
 )
 
 // Use real HTTP discovery and leases, including a yield between the
@@ -113,7 +113,7 @@ func TestDiscoveryUsesLeasedDemand(t *testing.T) {
 				return client.Claim(ctx, uri, j, worker, duration, routes)
 			})
 			cfg := &config.Config{Call: time.Second, Batch: time.Second, Lease: time.Minute, Cool: time.Minute, BatchSize: 10, PerTenant: 10, MaxPages: 1,
-				Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, Image: "registry.example/default:1", Platform: "linux/amd64"}}
+				Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, Base: "oci:linux/amd64:registry.example/default:1"}}
 			cfg.Defaults.Routes = []c2j.Route{{JobType: "recipe"}}
 			cfg.Targets = []config.Target{{Instance: "db", JobDB: uri, Tenant: "tenant", Services: []config.Service{{Name: "p", Priority: 1}}}}
 			provider := &accept{}
@@ -154,19 +154,19 @@ func TestDiscoveryUsesLeasedDemand(t *testing.T) {
 				t.Fatal("missing launch")
 			}
 			wantCPU, wantMemory, wantImage := int64(2000), int64(2<<30), image
-			wantCPUEnv, wantMemoryEnv := "2000m", "2097152Ki"
+
 			if mode == "changed demand" {
 				wantCPU, wantMemory, wantImage = 4000, 8<<30, "registry.example/leased:2"
-				wantCPUEnv, wantMemoryEnv = "4000m", "8388608Ki"
+
 			} else if mode == "no metadata" {
 				wantCPU, wantMemory, wantImage = 1000, 1<<30, "registry.example/default:1"
-				wantCPUEnv, wantMemoryEnv = "1000m", "1048576Ki"
+
 			}
-			request, process := provider.requests[0], provider.process[0]
-			if request.CPUMillis != wantCPU || request.MemoryBytes != wantMemory || request.Image != wantImage || process.Env["C2J_EXECUTION_CPU"] != wantCPUEnv || process.Env["C2J_EXECUTION_MEMORY"] != wantMemoryEnv || process.Env["C2J_EXECUTION_IMAGE"] != wantImage {
+			request := provider.requests[0]
+			if request.CPUMillis != wantCPU || request.MemoryBytes != wantMemory || request.Base != "oci:linux/amd64:"+wantImage {
 				t.Fatal("provider request or executor environment did not use loaded demand")
 			}
-			if process.Stdin == "" || strings.Contains(logs.String(), string(process.Stdin)) {
+			if request.Lease == "" || strings.Contains(logs.String(), string(request.Lease)) {
 				t.Fatal("lease capability missing or logged")
 			}
 		})

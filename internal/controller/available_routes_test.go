@@ -15,10 +15,10 @@ import (
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
+	compute "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/c2j"
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/scheduler"
-	"github.com/colony-2/pulse/pkg/compute"
 )
 
 type routeProvider struct {
@@ -31,6 +31,7 @@ func (p *routeProvider) Submit(ctx context.Context, launches []compute.Launch) (
 	if p.reject {
 		for i := range out {
 			out[i].Status = compute.NoCapacity
+			out[i].Reason = "no capacity"
 		}
 	}
 	return out, err
@@ -75,7 +76,7 @@ func TestAvailableRouteDiscoveryAndAdmission(t *testing.T) {
 			}
 
 			cfg := &config.Config{Call: time.Second, Batch: time.Second, Lease: time.Minute, Cool: time.Minute, BatchSize: 10, PerTenant: 10, MaxPages: 10, ExecutionTimeout: time.Hour,
-				Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Image: "runner:1", Platform: "linux/arm64"}}
+				Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Base: "oci:linux/arm64:docker.io/library/runner:1"}}
 			cfg.Defaults.Routes = []c2j.Route{{JobType: "recipe"}}
 			wantRoute := jobRoute
 			if changed {
@@ -145,8 +146,8 @@ func TestAvailableRouteDiscoveryAndAdmission(t *testing.T) {
 			} else if mode == "competing claim" {
 				wantLaunches = 0
 			}
-			if claims.Load() != wantClaims || len(provider.process) != wantLaunches {
-				t.Fatalf("claims=%d launches=%d; want %d/%d", claims.Load(), len(provider.process), wantClaims, wantLaunches)
+			if claims.Load() != wantClaims || len(provider.requests) != wantLaunches {
+				t.Fatalf("claims=%d launches=%d; want %d/%d", claims.Load(), len(provider.requests), wantClaims, wantLaunches)
 			}
 			key := scheduler.Key{Instance: "db", Tenant: "tenant", Job: handle.JobKey.JobId}
 			if rejected {
@@ -164,7 +165,7 @@ func TestAvailableRouteDiscoveryAndAdmission(t *testing.T) {
 					t.Fatal("provisioning rejection did not persist backoff", err)
 				}
 			} else if wantLaunches == 1 {
-				capability, err := remote.DecodeLeaseCapability([]byte(provider.process[0].Stdin))
+				capability, err := remote.DecodeLeaseCapability([]byte(provider.requests[0].Lease))
 				if err != nil {
 					t.Fatal(err)
 				}

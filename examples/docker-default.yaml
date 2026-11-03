@@ -1,4 +1,5 @@
-# Optional: Pulse already uses Docker and ghcr.io/colony-2/base2:latest.
+# Optional: Pulse uses Docker and base selector ubuntu-26*arm64 by default.
+# Ubuntu 26.04 bases use ghcr.io/colony-2/base2:latest on the selected architecture.
 # Without this file, the tenant comes from C2J_JOBDB or .c2/config.yaml.
 # Only pulse is needed on the host; c2j comes from the executor image.
 targets:

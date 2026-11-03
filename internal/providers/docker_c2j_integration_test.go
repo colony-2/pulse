@@ -46,7 +46,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 	pullCtx, stopPull := context.WithTimeout(t.Context(), 30*time.Minute)
 	started := time.Now()
 	t.Logf("pulling %s (image preparation timeout: 30m)", c2jIntegrationImage)
-	pullOutput, pullErr := exec.CommandContext(pullCtx, "docker", "--host", socket, "pull", c2jIntegrationImage).CombinedOutput()
+	pullOutput, pullErr := exec.CommandContext(pullCtx, "docker", "--host", socket, "pull", "--platform", "linux/arm64", c2jIntegrationImage).CombinedOutput()
 	pullContextErr := pullCtx.Err()
 	stopPull()
 	if pullErr != nil {
@@ -66,9 +66,11 @@ func TestDockerC2JIntegration(t *testing.T) {
 		}
 	}
 	docker := dockerFor(ctx)
+	// The provider pins the locally addressable root ID and selects ARM64 at
+	// creation; containerd's platform-specific child ID may not be addressable.
 	imageID := docker(t, "image", "inspect", "--format", "{{.Id}}", c2jIntegrationImage)
 	t.Logf("executor image: %s", docker(t, "image", "inspect", "--format", "{{json .RepoDigests}}", c2jIntegrationImage))
-	t.Log(docker(t, "run", "--rm", "--entrypoint", "c2j", c2jIntegrationImage, "version"))
+	t.Log(docker(t, "run", "--rm", "--platform", "linux/arm64", "--entrypoint", "c2j", c2jIntegrationImage, "version"))
 	binary := filepath.Join(t.TempDir(), "pulse")
 	if out, err := exec.CommandContext(ctx, "go", "build", "-o", binary, "../../cmd/pulse").CombinedOutput(); err != nil {
 		t.Fatalf("build Pulse: %v\n%s", err, out)
@@ -306,7 +308,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 					t.Fatal("loopback JobDB endpoint was not adapted and logged", c.Config.Cmd, string(out))
 				}
 			}
-			if !c.HostConfig.AutoRemove || c.Config.Image != imageID || strings.Join(c.Config.Entrypoint, " ") != "c2j" || !strings.Contains(strings.Join(c.Config.Cmd, " "), "run with-lease") || len(c.HostConfig.Binds) != 0 || !strings.Contains(strings.Join(c.Config.Env, "\n"), "C2J_EXECUTION_IMAGE="+c2jIntegrationImage) {
+			if !c.HostConfig.AutoRemove || c.Config.Image != imageID || strings.Join(c.Config.Entrypoint, " ") != "c2j" || !strings.Contains(strings.Join(c.Config.Cmd, " "), "run with-lease") || len(c.HostConfig.Binds) != 0 || !strings.Contains(strings.Join(c.Config.Env, "\n"), "C2J_EXECUTION_IMAGE="+c2jIntegrationImage) || !strings.Contains(strings.Join(c.Config.Env, "\n"), "PULSE_EXECUTION_BASE=ubuntu-26.04-arm64") || !strings.Contains(strings.Join(c.Config.Env, "\n"), "C2J_EXECUTION_PLATFORM=linux/arm64") {
 				t.Fatal("executor did not use the unmodified default image and direct c2j entrypoint")
 			}
 			if strings.Contains(strings.Join(c.Config.Env, "\n")+strings.Join(c.Config.Cmd, " "), "leaseToken") {

@@ -12,7 +12,8 @@ import (
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
-	"github.com/colony-2/pulse/pkg/compute"
+
+	provider "github.com/colony-2/pulse-provider-api"
 )
 
 func TestClaimExportSnapshotAndRelease(t *testing.T) {
@@ -43,7 +44,7 @@ func TestClaimExportSnapshotAndRelease(t *testing.T) {
 	if err != nil || claimed == nil {
 		t.Fatal(err)
 	}
-	a, err := claimed.Job.Allocation(compute.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Image: "runner:1", Platform: "linux/amd64"})
+	a, err := claimed.Job.Allocation(provider.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Base: "oci:linux/amd64:docker.io/library/runner:1"})
 	if err != nil || a.MemoryBytes != 8<<30 {
 		t.Fatal("did not use leased demand", a, err)
 	}

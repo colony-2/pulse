@@ -83,13 +83,11 @@ Example response (a remote launch awaiting a runner):
       "id": "instance-001",
       "launch_id": "launch-001",
       "state": "queued",
-      "metadata": {
-        "pulse_metadata_version": "1",
-        "pulse_managed_by": "pulse",
-        "pulse_jobdb_instance_id": "production",
-        "pulse_tenant_id": "acme",
-        "pulse_job_id": "job-123",
-        "pulse_launch_id": "launch-001"
+      "job": {
+        "jobdb": "https://jobdb.example/acme",
+        "instance_id": "production",
+        "tenant_id": "acme",
+        "job_id": "job-123"
       },
       "refs": [],
       "created_at": "2026-10-01T12:00:00Z"
@@ -99,13 +97,13 @@ Example response (a remote launch awaiting a runner):
 }
 ```
 
-An instance has a provider-local `id`, originating `launch_id`, state, correlation metadata, and native `refs`. Creation/start timestamps are optional. Multiple native instances may share a launch ID. Native references can be empty before assignment.
+An instance has a provider-local `id`, originating `launch_id`, state, a typed `job` reference, and native `refs`. Creation/start timestamps are optional. Multiple native instances may share a launch ID. Native references can be empty before assignment.
 
-**Include queued, starting, and running instances; exclude terminal instances.** Paused/stopping compute is also included where the provider reports it. Terminal includes succeeded, failed, stopped, cancelled, expired, and timed out. Unknown state is not an active instance. The public API returns only the six correlation metadata fields shown above, never process environments or arbitrary provider metadata.
+**Include queued, starting, and running instances; exclude terminal instances.** Paused/stopping compute is also included where the provider reports it. Terminal includes succeeded, failed, stopped, cancelled, expired, and timed out. Unknown state is not an active instance. The public API returns the credential-free JobDB endpoint and instance/tenant/job identities in `job`. It never returns leases, process environments, or arbitrary provider metadata. This replaces the previous public `metadata` field; v1 remote/plugin wire formats retain their existing metadata shape.
 
 Always follow `next_page_token`, including after an empty `items` page: native pages may contain only terminal or unrelated resources. Omission ends pagination. Lists reflect current provider observations and can change between requests. They are not a snapshot or history. Native cloud APIs may briefly lag submission/state changes; absence does not prove non-acceptance, completion, or free capacity.
 
-Scope comes from each configured service: remote endpoint/principal, Docker daemon, Cloud Run project/region, ECS cluster, or Azure resource group. Lists include managed resources from previous Pulse processes and other controllers in the same scope. They are not limited to current target tenants. See [provider listing details and read permissions](providers.md#active-instances-and-retention).
+Scope comes from each configured service: remote endpoint/principal, Docker daemon, Cloud Run project/region, ECS cluster, or Azure resource group. Lists include managed resources from previous Pulse processes and other controllers in the same scope. New resources retain their endpoint independently of current targets. Pre-migration resources without an endpoint label need a matching configured instance/tenant target to produce a complete job reference; otherwise listing reports an error. See [provider listing details and read permissions](providers.md#active-instances-and-retention).
 
 ### All providers
 
@@ -119,11 +117,11 @@ Scope comes from each configured service: remote endpoint/principal, Docker daem
       "id": "instance-001",
       "launch_id": "launch-001",
       "state": "starting",
-      "metadata": {
-        "pulse_jobdb_instance_id": "production",
-        "pulse_tenant_id": "acme",
-        "pulse_job_id": "job-123",
-        "pulse_launch_id": "launch-001"
+      "job": {
+        "jobdb": "https://jobdb.example/acme",
+        "instance_id": "production",
+        "tenant_id": "acme",
+        "job_id": "job-123"
       },
       "refs": ["pool/runner-17/container-456"]
     }

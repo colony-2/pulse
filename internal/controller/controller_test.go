@@ -5,10 +5,10 @@ import (
 	"errors"
 	"github.com/colony-2/c2j/pkg/execution"
 	"github.com/colony-2/jobdb/pkg/jobdb"
+	compute "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/c2j"
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/scheduler"
-	"github.com/colony-2/pulse/pkg/compute"
 	"io"
 	"log/slog"
 	"sync/atomic"
@@ -36,23 +36,21 @@ func (f listFunc) List(c context.Context, u, token string, routes []c2j.Route) (
 
 type accept struct {
 	batchSizes []int
-	requests   []compute.Request
-	process    []compute.Process
+	requests   []compute.Launch
 }
 
 func (p *accept) Submit(_ context.Context, ls []compute.Launch) ([]compute.Submission, error) {
 	p.batchSizes = append(p.batchSizes, len(ls))
 	out := []compute.Submission{}
 	for _, l := range ls {
-		p.requests = append(p.requests, l.Request)
-		p.process = append(p.process, l.Process)
+		p.requests = append(p.requests, l)
 		out = append(out, compute.Submission{LaunchID: l.LaunchID, Status: compute.Accepted})
 	}
 	return out, nil
 }
 func TestTenantIsolationPaginationAndLeaseOwnership(t *testing.T) {
 	p := &accept{}
-	cfg := &config.Config{Call: time.Second, Batch: time.Second, Cool: time.Minute, BatchSize: 1, PerTenant: 10, MaxPages: 10, ExecutionTimeout: time.Hour, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Image: "registry.example/runner:1", Platform: "linux/arm64"}}
+	cfg := &config.Config{Call: time.Second, Batch: time.Second, Cool: time.Minute, BatchSize: 1, PerTenant: 10, MaxPages: 10, ExecutionTimeout: time.Hour, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Base: "oci:linux/arm64:registry.example/runner:1"}}
 	cfg.Defaults.Routes = []c2j.Route{{JobType: "recipe"}}
 	cfg.Targets = []config.Target{{Instance: "db", JobDB: "https://db/t", Tenant: "t", Services: []config.Service{{Name: "p", Priority: 1}}}}
 	cfg.Targets = append([]config.Target{{Instance: "db", JobDB: "https://db/bad", Tenant: "bad", Services: cfg.Targets[0].Services}}, cfg.Targets...)
@@ -96,14 +94,14 @@ func TestTenantIsolationPaginationAndLeaseOwnership(t *testing.T) {
 	if len(p.requests) != 2 || calls != 2 {
 		t.Fatal(p.requests, calls)
 	}
-	if p.requests[0].Metadata["pulse_job_id"] != "a" || p.requests[1].Metadata["pulse_job_id"] != "b" {
+	if p.requests[0].Job.JobID != "a" || p.requests[1].Job.JobID != "b" {
 		t.Fatal("wrong closures")
 	}
-	if p.requests[0].MemoryBytes != 8<<30 || p.process[0].Env["C2J_EXECUTION_MEMORY"] != "8388608Ki" || p.process[0].Stdin != "private-capability" {
+	if p.requests[0].MemoryBytes != 8<<30 || p.requests[0].Lease != "private-capability" {
 		t.Fatal("did not use claimed allocation or lease")
 	}
-	if p.process[1].Env["PULSE_JOB_ID"] != "b" {
-		t.Fatal(p.process)
+	if p.requests[1].Job.JobID != "b" {
+		t.Fatal(p.requests)
 	}
 	c.Once(context.Background())
 	if len(p.requests) != 2 {
@@ -117,7 +115,7 @@ func (p *accept) List(context.Context, compute.ListRequest) (compute.ListRespons
 
 func TestConfiguredBatchSizeBoundsClaimCount(t *testing.T) {
 	p := &accept{}
-	cfg := &config.Config{Call: time.Second, Batch: time.Second, Lease: time.Minute, Cool: time.Minute, BatchSize: 2, PerTenant: 7, MaxPages: 1, ExecutionTimeout: time.Hour, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Image: "runner:1", Platform: "linux/amd64"}}
+	cfg := &config.Config{Call: time.Second, Batch: time.Second, Lease: time.Minute, Cool: time.Minute, BatchSize: 2, PerTenant: 7, MaxPages: 1, ExecutionTimeout: time.Hour, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Base: "oci:linux/amd64:docker.io/library/runner:1"}}
 	cfg.Defaults.Routes = []c2j.Route{{JobType: "recipe"}}
 	cfg.Targets = []config.Target{{Instance: "db", JobDB: "https://db/t", Tenant: "t", Services: []config.Service{{Name: "p", Priority: 1}}}}
 	var claims atomic.Int32

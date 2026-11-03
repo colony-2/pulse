@@ -8,9 +8,11 @@ import (
 	"time"
 
 	"github.com/colony-2/c2j/pkg/execution"
+	provider "github.com/colony-2/pulse-provider-api"
+	"github.com/colony-2/pulse/internal/bases"
+	"github.com/colony-2/pulse/internal/providerutil"
 	"github.com/colony-2/pulse/internal/quantity"
 	"github.com/colony-2/pulse/pkg/compute"
-	"github.com/distribution/reference"
 )
 
 type Route struct {
@@ -36,7 +38,7 @@ type Page struct {
 	Next string `json:"next_page_token"`
 }
 
-func (j Job) Allocation(defaults compute.Allocation) (compute.Allocation, error) {
+func (j Job) Allocation(defaults provider.Allocation) (provider.Allocation, error) {
 	if j.Tenant == "" || j.ID == "" {
 		return defaults, fmt.Errorf("missing job identity")
 	}
@@ -56,7 +58,7 @@ func (j Job) Allocation(defaults compute.Allocation) (compute.Allocation, error)
 		if v.Status != "unresolved" {
 			return defaults, fmt.Errorf("resolved execution view lacks demand")
 		}
-		return defaults, defaults.Validate()
+		return defaults, providerutil.Allocation(defaults)
 	}
 	if v.Demand.SchemaVersion != execution.DemandSchemaVersion {
 		return defaults, fmt.Errorf("unsupported demand schema %d", v.Demand.SchemaVersion)
@@ -76,21 +78,33 @@ func (j Job) Allocation(defaults compute.Allocation) (compute.Allocation, error)
 			*field.dest = n
 		}
 	}
+	a.Capabilities = append(append([]string(nil), defaults.Capabilities...), r.Capabilities...)
 	if r.Image != nil {
-		a.Image = *r.Image
+		platform := "linux/arm64"
+		if r.Platform != nil {
+			platform = strings.ToLower(*r.Platform)
+		} else if b, err := bases.Resolve(defaults.Base, nil); err == nil {
+			platform = b.Platform
+		}
+		var err error
+		a.Base, err = bases.OCI(*r.Image, platform)
+		if err != nil {
+			return a, err
+		}
+	} else if r.Platform != nil {
+		platform := strings.ToLower(*r.Platform)
+		selector := a.Base
+		// An explicit platform overrides the architecture in the built-in default.
+		if selector == bases.Default {
+			selector = "ubuntu-26*"
+		}
+		var err error
+		a.Base, err = bases.Constrain(selector, platform)
+		if err != nil {
+			return a, err
+		}
 	}
-	if r.Platform != nil {
-		a.Platform = strings.ToLower(*r.Platform)
-	}
-	image, err := reference.ParseNormalizedNamed(a.Image)
-	if err != nil {
-		return a, err
-	}
-	a.Image = reference.TagNameOnly(image).String()
-	// Requested identity is not evidence of an actual pulled image.
-	a.ImageDigest = ""
-	a.ImageID = ""
-	return a, a.Validate()
+	return a, providerutil.Allocation(a)
 }
 func Process(jobdb, job string, a compute.Allocation, extra map[string]string, metadata map[string]string) (compute.Process, error) {
 	env := map[string]string{}

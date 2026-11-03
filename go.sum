@@ -64,10 +64,12 @@ github.com/buger/jsonparser v1.1.1 h1:2PnMjfWD7wBILjqQbt530v576A/cAbQvEW9gGIpYMU
 github.com/buger/jsonparser v1.1.1/go.mod h1:6RYKKt7H4d4+iWqouImQ9R2FZql3VbhNgx27UK13J/0=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
-github.com/colony-2/c2j v0.0.108-0.20261029180024-7af6c5c2f09a h1:GGgWuB0kf2jNmZTUKGyUmxZ+3e1wi3DeVs5dJDVm9Jg=
-github.com/colony-2/c2j v0.0.108-0.20261029180024-7af6c5c2f09a/go.mod h1:qE0kzzTABb9PYZrXIkU3YVNKVuzl8wxn4nJPXKRbLsc=
-github.com/colony-2/jobdb v0.0.64 h1:rsPrXQFKw5GJqKVb1BiRsJkHm+/WmdhUu/M3KUqE3gs=
-github.com/colony-2/jobdb v0.0.64/go.mod h1:45c4NbbKzZt8uRHgWUktOoGhsTkO8ogELlfxdqXJ4Ek=
+github.com/colony-2/c2j v0.0.117-0.20261103043421-f1a153b898c5 h1:4j++g/rZ44q3j4Jm8nAZAz7orGids8DEu25SMC7gm5A=
+github.com/colony-2/c2j v0.0.117-0.20261103043421-f1a153b898c5/go.mod h1:C6tJ8w/kcC33EqUQ8IOzS7N3eEad9US7fwpEh2NruEc=
+github.com/colony-2/jobdb v0.0.65-0.20261029235121-6d86c38fc234 h1:mtzPLsdYo8fpenss1QrRcRaot5IDCNTwT6aPZOVPUJE=
+github.com/colony-2/jobdb v0.0.65-0.20261029235121-6d86c38fc234/go.mod h1:45c4NbbKzZt8uRHgWUktOoGhsTkO8ogELlfxdqXJ4Ek=
+github.com/colony-2/pulse-provider-api v0.0.0-20261103203509-9991fd574083 h1:hmDhHyRsdvtTdQ3Tno6+6XosjcbfMX5VQJRBTfWXOxg=
+github.com/colony-2/pulse-provider-api v0.0.0-20261103203509-9991fd574083/go.mod h1:k+Xog7z+dE1wxvl9fN4rfsptevZ5ANIH37j0xKZ8YJo=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

@@ -3,8 +3,11 @@ package c2j
 import (
 	"encoding/json"
 	"github.com/colony-2/c2j/pkg/execution"
+	provider "github.com/colony-2/pulse-provider-api"
+	"github.com/colony-2/pulse/internal/bases"
 	"github.com/colony-2/pulse/pkg/compute"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -26,9 +29,9 @@ func TestPackageBearingDemandUsesC2JProjection(t *testing.T) {
 		t.Fatal(view)
 	}
 	job := Job{Tenant: "tenant", ID: "job", Execution: &view}
-	want := compute.Allocation{Image: "ghcr.io/colony-2/base2:latest", Platform: "linux/arm64", CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30}
+	want := provider.Allocation{Base: "oci:linux/arm64:ghcr.io/colony-2/base2:latest", CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30}
 	got, err := job.Allocation(want)
-	if err != nil || got != want {
+	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatal(got, err)
 	}
 }
@@ -42,8 +45,8 @@ func TestDemandAndRoute(t *testing.T) {
 	if j.Next == nil || j.Next.TaskType != "input:with, spaces" {
 		t.Fatal("opaque route not preserved")
 	}
-	a, e := j.Allocation(compute.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Platform: "linux/amd64", Image: "alpine:3"})
-	if e != nil || a.MemoryBytes != 4<<30 || a.Image != "docker.io/library/alpine:3" {
+	a, e := j.Allocation(provider.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Base: "oci:linux/amd64:docker.io/library/alpine:3"})
+	if e != nil || a.MemoryBytes != 4<<30 || a.Base != "oci:linux/amd64:docker.io/library/alpine:3" {
 		t.Fatal(a, e)
 	}
 	j.Execution.Status = "unsupported"
@@ -55,17 +58,6 @@ func TestDemandAndRoute(t *testing.T) {
 		t.Fatal("missing view accepted")
 	}
 }
-func TestAllocationProcess(t *testing.T) {
-	p, e := Process("https://db/t", "job", compute.Allocation{CPUMillis: 1500, MemoryBytes: 1025, ScratchBytes: 2048, Image: "runner:1", Platform: "linux/amd64"}, nil, map[string]string{"pulse_job_id": "job"})
-	if e != nil || p.Env["C2J_EXECUTION_CPU"] != "1500m" || p.Env["PULSE_JOB_ID"] != "job" {
-		t.Fatal(p, e)
-	}
-	_, e = Process("", "", compute.Allocation{}, map[string]string{"C2J_EXECUTION_MEMORY": "1Gi"}, nil)
-	if e == nil {
-		t.Fatal("allocation override accepted")
-	}
-}
-
 func TestUnspecifiedJobResources(t *testing.T) {
 	for _, raw := range []string{
 		`{"tenant_id":"t","job_id":"j","execution":{"status":"unresolved"}}`,
@@ -76,11 +68,15 @@ func TestUnspecifiedJobResources(t *testing.T) {
 		if err := json.Unmarshal([]byte(raw), &job); err != nil {
 			t.Fatal(err)
 		}
-		a, err := job.Allocation(compute.Allocation{Image: "ghcr.io/colony-2/base2:latest", Platform: "linux/arm64"})
+		a, err := job.Allocation(provider.Allocation{Base: "oci:linux/arm64:ghcr.io/colony-2/base2:latest"})
 		if err != nil || a.CPUMillis != 0 || a.ScratchBytes != 0 {
 			t.Fatal(a, err)
 		}
-		p, err := Process("https://db/t", "j", a, nil, nil)
+		b, err := bases.Resolve(a.Base, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := Process("https://db/t", "j", compute.Allocation{Image: b.Image, Platform: b.Platform, CPUMillis: a.CPUMillis, MemoryBytes: a.MemoryBytes, ScratchBytes: a.ScratchBytes}, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -109,9 +105,20 @@ func TestRecordedLegacyC2JListRejected(t *testing.T) {
 	if e != nil || len(page.Jobs) != 1 {
 		t.Fatal(page, e)
 	}
-	_, e = page.Jobs[0].Allocation(compute.Allocation{CPUMillis: 250, MemoryBytes: 1 << 20, ScratchBytes: 1 << 20, Image: "registry.example/runner:1", Platform: "linux/arm64"})
+	_, e = page.Jobs[0].Allocation(provider.Allocation{CPUMillis: 250, MemoryBytes: 1 << 20, ScratchBytes: 1 << 20, Base: "oci:linux/arm64:registry.example/runner:1"})
 	if e == nil || !strings.Contains(e.Error(), "unsupported demand schema 1") {
 		t.Fatal("legacy demand accepted", e)
+	}
+}
+
+func TestAllocationProcess(t *testing.T) {
+	p, e := Process("https://db/t", "job", compute.Allocation{CPUMillis: 1500, MemoryBytes: 1025, ScratchBytes: 2048, Image: "runner:1", Platform: "linux/amd64"}, nil, map[string]string{"pulse_job_id": "job"})
+	if e != nil || p.Env["C2J_EXECUTION_CPU"] != "1500m" || p.Env["PULSE_JOB_ID"] != "job" {
+		t.Fatal(p, e)
+	}
+	_, e = Process("", "", compute.Allocation{}, map[string]string{"C2J_EXECUTION_MEMORY": "1Gi"}, nil)
+	if e == nil {
+		t.Fatal("allocation override accepted")
 	}
 }
 
@@ -136,6 +143,33 @@ func TestRequestedPinnedImagePassesC2JCompatibility(t *testing.T) {
 		mismatches, err := execution.Compare(execution.Requirements{Image: &ref}, execution.Allocation{SchemaVersion: execution.SchemaVersion, Image: execution.Image{Reference: p.Env["C2J_EXECUTION_IMAGE"], ManifestDigest: p.Env["C2J_EXECUTION_IMAGE_DIGEST"]}})
 		if err != nil || len(mismatches) != 0 {
 			t.Fatal(mismatches, err)
+		}
+	}
+}
+
+func TestCapabilitiesAndBaseDefaultFromClaimedDemand(t *testing.T) {
+	image, platform := "alpine:3", "linux/amd64"
+	for _, tt := range []struct {
+		req  execution.Requirements
+		want string
+	}{
+		{execution.Requirements{Capabilities: []string{"docker"}}, "ubuntu-26*arm64"},
+		{execution.Requirements{Platform: &platform}, "ubuntu-26.04-amd64"},
+		{execution.Requirements{Image: &image, Platform: &platform}, "oci:linux/amd64:docker.io/library/alpine:3"},
+	} {
+		demand, err := execution.Initial(nil, true, tt.req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload, err := execution.PayloadWithDemand(nil, demand.Demand)
+		if err != nil {
+			t.Fatal(err)
+		}
+		view := execution.Inspect(nil, payload)
+		job := Job{Tenant: "tenant", ID: "job", Execution: &view}
+		got, err := job.Allocation(provider.Allocation{Base: bases.Default})
+		if err != nil || got.Base != tt.want || !reflect.DeepEqual(got.Capabilities, tt.req.Capabilities) {
+			t.Fatal(got, err)
 		}
 	}
 }

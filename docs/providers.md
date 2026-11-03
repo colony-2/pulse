@@ -2,6 +2,11 @@
 
 ## Providers
 
+Pulse schedules through [pulse-provider-api](https://github.com/colony-2/pulse-provider-api).
+Independent Go implementations can be [linked and registered](implementing-a-go-provider.md)
+in a custom Pulse host. Built-in engines and v1 transports use adapters for base
+resolution, executor construction, and typed job identity.
+
 | Configuration type | Implementation and prerequisites |
 | --- | --- |
 | `remote` | Authenticated HTTPS implementing [protocol v1](../REMOTE_PROVIDER_PROTOCOL.md). Uses `endpoint` and `token_env`. `allow_http` is an explicit development option. |
@@ -20,7 +25,7 @@ Omitting `providers` (or setting it to an empty map) creates a provider named `d
 
 Pulse discovers the Docker socket in its core provider code, without invoking the Docker CLI. An explicit provider `socket` wins; otherwise Pulse uses a named `DOCKER_CONTEXT`, `DOCKER_HOST`, or the saved current context from Docker's configuration (`DOCKER_CONFIG` or `~/.docker`). The `default` context uses `DOCKER_HOST` when set, otherwise `/var/run/docker.sock`. With no selected context or host, Pulse uses Docker Desktop's `~/.docker/run/docker.sock` on macOS when present, otherwise `/var/run/docker.sock`. Socket symlinks are resolved so aliases share admission ownership. Selected contexts must use a local Unix socket; invalid or remote configurations fail instead of falling back to another daemon. Docker Desktop normally selects its `desktop-linux` context; a system `/var/run/docker.sock` symlink is optional ([Docker Desktop socket setup](https://docs.docker.com/desktop/setup/install/mac-permission-requirements/)).
 
-Docker requires no `pulse-exec`, host filesystem sharing, or `helper` configuration. The controller can run on Linux or macOS. Pulse detects the daemon's native Linux platform and automatically probes the other `linux/arm64` or `linux/amd64` platform. A successful probe enables that platform without configuration, including amd64 emulation on an arm64 daemon. Jobs without a platform still default to the daemon's native architecture when using a single Docker daemon (including aliases). Pulse launches the supplied command directly and attaches its finite stdin before startup.
+Docker requires no `pulse-exec`, host filesystem sharing, or `helper` configuration. The controller can run on Linux or macOS. Pulse detects the daemon's native Linux platform and automatically probes the other `linux/arm64` or `linux/amd64` platform. A successful probe enables that platform without configuration, including amd64 emulation on an arm64 daemon. The default selector `ubuntu-26*arm64` selects ARM64 regardless of the daemon's native architecture; use `ubuntu-26.04-amd64` for AMD64 or `ubuntu-26*` to allow either supported architecture. Pulse launches the supplied command directly and attaches its finite stdin before startup.
 
 On native Linux Engine, Pulse automatically adds `host.docker.internal:host-gateway` to worker containers, using the daemon's gateway address rather than a hard-coded IP ([Docker host-gateway configuration](https://docs.docker.com/reference/cli/dockerd/#configure-host-gateway-ip)). On macOS, Docker Desktop, and identified Colima daemons, Pulse preserves the runtime's built-in host DNS: replacing it with the Linux bridge gateway can incorrectly target the VM instead of the outer host. Pulse uses the configured JobDB URL for discovery and claiming. For local Docker workers, it replaces a loopback hostname (`localhost`, a loopback IPv4 address, or `::1`) with `host.docker.internal`, preserving the scheme, port, and tenant path. For example, `http://localhost:9047/c2` becomes `http://host.docker.internal:9047/c2` only in the worker command. The controller logs both addresses at submission. Remote JobDB URLs and cloud/remote-provider commands remain unchanged.
 
@@ -54,7 +59,7 @@ All cloud executor images need the updated `pulse-exec` helper to deliver lease 
 
 ## Lease transport
 
-Executor images must support `c2j run with-lease --lease-file -`. Pulse pins the c2j and JobDB integration APIs in [go.mod](../go.mod). Deploy a matching or compatible c2j binary and a JobDB server supporting authoritative supplied-lease renewal. The verified Colony base image includes c2j 0.0.65 with execution-tool support for addon jobs.
+Executor images must support `c2j run with-lease --lease-file -`. Pulse pins the c2j and JobDB integration APIs in [go.mod](../go.mod). Deploy a matching or compatible c2j binary and a JobDB server supporting authoritative supplied-lease renewal. The Ubuntu 26.04 base image checked during this migration includes c2j 0.0.116; `latest` can change. Providers advertising capability facts need an executor version supporting those facts.
 
 Remote providers receive an optional sensitive `process.stdin` field and must pipe it to the child exactly, then EOF. Upgrade existing provider implementations before deploying this controller. Unsupported stdin must produce a definite decline before side effects; silently dropping it is invalid.
 
@@ -68,7 +73,7 @@ Prefer prompt handoff to native compute. Deliberate provider-owned runner queues
 
 ## Active instances and retention
 
-Every launch carries the complete jobdb instance/tenant/job/launch correlation envelope. Docker stores it in labels; Cloud Run stores it in annotations and container environment; ECS stores tags/environment; Azure stores tags/environment; remote services attach it to native resources or provider-owned queue entries. The process environment also exposes `PULSE_*` identity values.
+Every structured launch carries a JobDB endpoint, instance/tenant/job identity, and launch ID. Native adapters encode these as correlation metadata. Docker stores it in labels; Cloud Run stores it in annotations and container environment; ECS stores tags/environment; Azure stores tags/environment; remote services attach it to native resources or provider-owned queue entries. The process environment also exposes `PULSE_*` identity values.
 
 The [public HTTP API](http-api.md) lists active instances through every configured provider. Lists include queued/starting/running work and exclude terminal instances; paused/stopping compute is included where reported. Only Pulse-managed native resources are returned, within each configured provider's scope. A service can show launches made before Pulse restarted or by another controller using the same scope. Duplicate configurations pointing at the same native scope can show the same resource under both provider names.
 

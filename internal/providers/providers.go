@@ -3,41 +3,47 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	provider "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/config"
+	"github.com/colony-2/pulse/internal/providers/adapter"
 	"github.com/colony-2/pulse/internal/providers/cloud"
 	"github.com/colony-2/pulse/internal/providers/docker"
-	providerplugin "github.com/colony-2/pulse/internal/providers/plugin"
+	pluginprovider "github.com/colony-2/pulse/internal/providers/plugin"
 	"github.com/colony-2/pulse/internal/providers/remote"
 	"github.com/colony-2/pulse/internal/quantity"
 	"github.com/colony-2/pulse/pkg/compute"
+	"github.com/colony-2/pulse/pkg/providerplugin"
+	"github.com/colony-2/pulse/pkg/providerregistry"
 	"github.com/distribution/reference"
+	"maps"
 	"os"
 	"time"
 )
 
-func Build(ctx context.Context, cfg *config.Config) (map[string]compute.Provider, func(), error) {
-	out := map[string]compute.Provider{}
+func Build(ctx context.Context, cfg *config.Config) (map[string]provider.Provider, func(), error) {
+	out := map[string]provider.Provider{}
 	closers := []func(){}
 	closeAll := func() {
 		for _, f := range closers {
 			f()
 		}
 	}
-	fail := func(e error) (map[string]compute.Provider, func(), error) { closeAll(); return nil, func() {}, e }
+	fail := func(e error) (map[string]provider.Provider, func(), error) { closeAll(); return nil, func() {}, e }
 	type local struct {
-		config   docker.Config
-		provider *docker.Provider
+		config docker.Config
+		name   string
 	}
 	locals := map[string]local{}
 	for name, p := range cfg.Providers {
 		switch p.Type {
 		case "plugin":
-			c, e := providerplugin.New(ctx, name, p.Plugin, cfg.BaseDir, cfg.Call)
+			c, e := pluginprovider.New(ctx, name, p.Plugin, cfg.BaseDir, cfg.Call)
 			if e != nil {
 				return fail(e)
 			}
-			out[name] = c
+			out[name] = wrap(c, p.Type, cfg)
 			closers = append(closers, c.Close)
 		case "remote":
 			if p.TokenEnv == "" {
@@ -57,7 +63,7 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]compute.Provider
 			if e != nil {
 				return fail(e)
 			}
-			out[name] = c
+			out[name] = wrap(c, p.Type, cfg)
 		case "docker":
 			socket, e := docker.ResolveSocket(p.Socket)
 			if e != nil {
@@ -96,17 +102,36 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]compute.Provider
 				if prior.config != dc {
 					return fail(fmt.Errorf("Docker aliases must share an identical budget/configuration"))
 				}
-				out[name] = prior.provider
+				out[name] = out[prior.name]
 				continue
 			}
 			c, e := docker.New(ctx, dc)
 			if e != nil {
 				return fail(e)
 			}
-			out[name] = c
-			locals[socket] = local{dc, c}
+			out[name] = wrap(c, p.Type, cfg)
+			locals[socket] = local{dc, name}
 			closers = append(closers, c.Close)
 		default:
+			if factory, ok := providerregistry.Lookup(p.Type); ok {
+				options := p.Options
+				if options == nil {
+					options = map[string]any{}
+				}
+				raw, err := json.Marshal(options)
+				if err != nil {
+					return fail(fmt.Errorf("invalid provider configuration for %s", name))
+				}
+				instance, cleanup, err := factory(ctx, providerregistry.Options{Name: name, BaseDir: cfg.BaseDir, Config: raw, Env: maps.Clone(cfg.Defaults.Env)})
+				if cleanup != nil {
+					closers = append(closers, cleanup)
+				}
+				if err != nil || instance == nil {
+					return fail(fmt.Errorf("Go provider %s initialization failed", name))
+				}
+				out[name] = instance
+				continue
+			}
 			bounds := map[string]int64{}
 			for image, value := range p.ImageStorageBounds {
 				ref, e := reference.ParseNormalizedNamed(image)
@@ -123,24 +148,36 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]compute.Provider
 			if e != nil {
 				return fail(e)
 			}
-			out[name] = c
-		}
-	}
-	if cfg.AutoPlatform {
-		var native *docker.Provider
-		singleDaemon := len(out) > 0
-		for _, provider := range out {
-			dockerProvider, ok := provider.(*docker.Provider)
-			if !ok || (native != nil && native != dockerProvider) {
-				singleDaemon = false
-				break
-			}
-			native = dockerProvider
-		}
-		if singleDaemon {
-			cfg.Defaults.Platform = native.NativePlatform()
-			cfg.Allocation.Platform = native.NativePlatform()
+			out[name] = wrap(c, p.Type, cfg)
 		}
 	}
 	return out, closeAll, nil
 }
+
+func wrap(native compute.Provider, kind string, cfg *config.Config) provider.Provider {
+	targets := map[string]string{}
+	for _, t := range cfg.Targets {
+		targets[t.Instance+"\x00"+t.Tenant] = t.JobDB
+	}
+	p := &adapter.Provider{Native: native, Env: cfg.Defaults.Env, Targets: targets}
+	switch kind {
+	case "cloudrun", "azurejobs":
+		p.Platforms = []string{"linux/amd64"}
+	case "ecs":
+		p.Platforms = []string{"linux/arm64", "linux/amd64"}
+	case "docker":
+		d := native.(*docker.Provider)
+		p.Platforms = d.SupportedPlatforms()
+	}
+	if h, ok := native.(interface{ Health() providerplugin.Health }); ok {
+		return &pluginAdapter{Provider: p, health: h}
+	}
+	return p
+}
+
+type pluginAdapter struct {
+	*adapter.Provider
+	health interface{ Health() providerplugin.Health }
+}
+
+func (p *pluginAdapter) Health() providerplugin.Health { return p.health.Health() }

@@ -36,9 +36,10 @@ Pulse needs an HTTP(S) JobDB service with a tenant path. A missing tenant produc
 | Setting | Default |
 | --- | --- |
 | Provider | Local Docker, discovered using the active Docker context/socket |
-| Image | `ghcr.io/colony-2/base2:latest` |
+| Base selector | `ubuntu-26*arm64` |
+| Native image | `ghcr.io/colony-2/base2:latest` for Ubuntu 26.04 bases |
 | CPU / memory / scratch | Unspecified; no implicit resource requirements |
-| Platform | Docker daemon's native Linux platform for a single Docker provider; otherwise `linux/<host architecture>` |
+| Architecture | ARM64 by default; selected by the base label, not the controller/daemon architecture |
 | Execution timeout | Managed by c2j; no Pulse cap |
 | Docker capacity | Daemon CPU/memory capacity; `256Mi` accounting overhead per container |
 | Docker `capacity.max_containers` | `0` (unlimited) |
@@ -46,6 +47,43 @@ Pulse needs an HTTP(S) JobDB service with a tenant path. A missing tenant produc
 | `max_pages_per_tenant` | `1000` per poll |
 
 Job execution requirements override explicitly configured allocation defaults. Omitted resources remain unspecified; Docker applies no corresponding CPU or memory limit, and creates a scratch tmpfs only when scratch is requested. `defaults` in optional YAML changes the fallback values. When providers are explicitly configured, targets specify their `launch_services`. For advanced deployments, keep `instance_id` explicit if it must survive changes to the deployment URL. Executor images still provide c2j and recipe dependencies.
+
+## Base selection and capabilities
+
+```yaml
+defaults:
+  base: 'ubuntu-26*arm64'
+  capabilities: []
+```
+
+The native catalog contains `ubuntu-26.04-arm64` and `ubuntu-26.04-amd64`, both
+backed by `ghcr.io/colony-2/base2:latest` with an explicit matching platform.
+Their family aliases are `ubuntu` and `linux`. Each `*` anywhere matches zero or
+more characters, so `ubuntu-26*arm64`, `ubuntu*`, and `linux*` work. Matching is
+case-sensitive against the entire name or alias; all characters other than `*`
+are literal. Any supported match satisfying the other requirements is acceptable.
+There is no newest-match ordering. Broad selectors can resolve differently across
+providers or attempts. Concrete labels select OS/release/architecture together.
+
+The default is ARM64 even on an AMD64 daemon. Unsupported platforms decline
+before launching. Use `base: ubuntu-26.04-amd64` for AMD64-only backends such as
+the current Cloud Run and Azure adapters, or `base: 'ubuntu-26*'` to permit either
+architecture. Docker's startup probes determine which candidates it can execute.
+
+`defaults.capabilities` and c2j's claimed capability requirements are combined.
+Providers must supply all names exactly; capabilities are not glob selectors.
+Current native/v1 transport adapters decline nonempty capability requirements
+because they do not provision and verify those optional interfaces. Registered
+Go providers can implement them; see [Go providers](implementing-a-go-provider.md).
+
+Legacy `defaults.image` and `defaults.platform` are translated into an exact
+`oci:<platform>:<normalized-image>` base. `base` and `image` are mutually exclusive.
+When an explicit image has no platform, the default is `linux/arm64`. An explicit
+c2j image requirement overrides the default base; c2j still uses image/platform
+requirements in its execution schema. An explicit c2j platform overrides the
+architecture in the built-in default, or constrains a configured base without
+broadening it. `defaults.platform` remains a compatibility constraint for existing
+configuration. Unknown custom base names are passed to registered Go providers.
 
 ## Execution lifetime
 

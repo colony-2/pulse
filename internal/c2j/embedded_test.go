@@ -17,7 +17,8 @@ import (
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
-	"github.com/colony-2/pulse/pkg/compute"
+
+	provider "github.com/colony-2/pulse-provider-api"
 )
 
 type readOnly struct {
@@ -99,7 +100,7 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 			if j.Tenant != tenant || j.Repository != "https://github.com/acme/app.git" || j.Next.TaskType != "input:opaque" || !j.AvailableAt.Equal(now) || !j.CancelRequested || j.Execution.Status != "specified" || j.Execution.Source != "yield" || !reflect.DeepEqual(j.Execution.Demand, &current.Demand) || !reflect.DeepEqual(j.Execution.Initial, &demand) || !reflect.DeepEqual(execution.Inspect(j.Metadata, nil).Initial, &demand) {
 				t.Errorf("lost typed data: %+v", j)
 			}
-			a, err := j.Allocation(compute.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Platform: "linux/amd64", Image: "alpine:3"})
+			a, err := j.Allocation(provider.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Base: "oci:linux/amd64:docker.io/library/alpine:3"})
 			if err != nil || a.MemoryBytes != 16<<30 {
 				t.Error("list projection lost stored demand", a, err)
 			}

@@ -14,24 +14,24 @@ import (
 	"testing"
 	"time"
 
+	compute "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/controller"
 	"github.com/colony-2/pulse/internal/scheduler"
-	"github.com/colony-2/pulse/pkg/compute"
 )
 
-type provider struct {
+type fakeProvider struct {
 	list func(context.Context, compute.ListRequest) (compute.ListResponse, error)
 }
 
-func (p provider) Submit(context.Context, []compute.Launch) ([]compute.Submission, error) {
+func (p fakeProvider) Submit(context.Context, []compute.Launch) ([]compute.Submission, error) {
 	panic("read-only endpoint submitted work")
 }
-func (p provider) List(ctx context.Context, q compute.ListRequest) (compute.ListResponse, error) {
+func (p fakeProvider) List(ctx context.Context, q compute.ListRequest) (compute.ListResponse, error) {
 	return p.list(ctx, q)
 }
 func row(id string) compute.Instance {
-	return compute.Instance{ID: id, LaunchID: id, State: "running", Metadata: map[string]string{"pulse_job_id": "job", "secret": "do-not-expose"}, Refs: []string{id}}
+	return compute.Instance{ID: id, LaunchID: id, State: "running", Job: compute.JobRef{JobDB: "https://db/tenant", InstanceID: "db", TenantID: "tenant", JobID: "job"}, Refs: []string{id}}
 }
 func newAPI(t *testing.T, providers map[string]compute.Provider) *API {
 	t.Helper()
@@ -70,7 +70,7 @@ func TestPublicReadOnlyEndpointsAndConfigRedaction(t *testing.T) {
 		t.Fatal(w)
 	}
 	for _, path := range []string{"/instances?page_token=x", "/providers/p/instances?page_size=0"} {
-		// Unknown provider is checked before its query parameters.
+		// Unknown fakeProvider is checked before its query parameters.
 		w := get(h, path)
 		if w.Code != 400 && w.Code != 404 {
 			t.Fatal(w)
@@ -83,7 +83,7 @@ func TestPublicReadOnlyEndpointsAndConfigRedaction(t *testing.T) {
 func TestAggregatePagesPartialFailureAndProviderSelection(t *testing.T) {
 	var mu sync.Mutex
 	calls := []string{}
-	good := provider{list: func(ctx context.Context, q compute.ListRequest) (compute.ListResponse, error) {
+	good := fakeProvider{list: func(ctx context.Context, q compute.ListRequest) (compute.ListResponse, error) {
 		mu.Lock()
 		calls = append(calls, q.PageToken)
 		mu.Unlock()
@@ -92,7 +92,7 @@ func TestAggregatePagesPartialFailureAndProviderSelection(t *testing.T) {
 		}
 		return compute.ListResponse{Items: []compute.Instance{row("a")}, NextPageToken: "next"}, nil
 	}}
-	bad := provider{list: func(context.Context, compute.ListRequest) (compute.ListResponse, error) {
+	bad := fakeProvider{list: func(context.Context, compute.ListRequest) (compute.ListResponse, error) {
 		return compute.ListResponse{}, errors.New("do-not-expose")
 	}}
 	a := newAPI(t, map[string]compute.Provider{"good": good, "bad": bad})
@@ -119,7 +119,7 @@ func TestAggregatePagesPartialFailureAndProviderSelection(t *testing.T) {
 	}
 }
 func TestReadDoesNotAdvanceRoundRobin(t *testing.T) {
-	good := provider{list: func(context.Context, compute.ListRequest) (compute.ListResponse, error) {
+	good := fakeProvider{list: func(context.Context, compute.ListRequest) (compute.ListResponse, error) {
 		return compute.ListResponse{Items: []compute.Instance{}}, nil
 	}}
 	a := newAPI(t, map[string]compute.Provider{"b": good, "a": good})
@@ -139,7 +139,7 @@ func TestReadDoesNotAdvanceRoundRobin(t *testing.T) {
 	}
 }
 func TestAggregateDeadlineAndPaginationCycle(t *testing.T) {
-	p := provider{list: func(ctx context.Context, q compute.ListRequest) (compute.ListResponse, error) {
+	p := fakeProvider{list: func(ctx context.Context, q compute.ListRequest) (compute.ListResponse, error) {
 		return compute.ListResponse{Items: []compute.Instance{}, NextPageToken: "same"}, nil
 	}}
 	a := newAPI(t, map[string]compute.Provider{"p": p})

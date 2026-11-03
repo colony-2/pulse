@@ -14,7 +14,10 @@ import (
 	"testing"
 	"time"
 
+	provider "github.com/colony-2/pulse-provider-api"
+	"github.com/colony-2/pulse/internal/bases"
 	"github.com/colony-2/pulse/internal/config"
+	"github.com/colony-2/pulse/internal/providers/adapter"
 	"github.com/colony-2/pulse/internal/scheduler"
 	"github.com/colony-2/pulse/pkg/compute"
 )
@@ -492,8 +495,13 @@ func TestColdCacheCreationBeyondThirtySeconds(t *testing.T) {
 	defer cancel()
 	l := cachedLaunch("slow-copy")
 	sched := scheduler.New(cfg.Cool, cfg.Call)
-	results, err := sched.Run(ctx, "test", []scheduler.Service{{Name: "docker", Priority: 1, Provider: p}}, []scheduler.Job{{Key: scheduler.Key{Instance: "db", Tenant: "tenant", Job: "slow-copy"}, Request: l.Request, Process: l.Process}})
-	if err != nil || len(results) != 1 || results[0].Submission.Status != compute.Accepted {
+	base, err := bases.OCI(l.Image, l.Platform)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment := provider.Launch{LaunchID: l.LaunchID, Allocation: provider.Allocation{Base: base, CPUMillis: l.CPUMillis, MemoryBytes: l.MemoryBytes, ScratchBytes: l.ScratchBytes}, Job: provider.JobRef{JobDB: "http://localhost:8080/tenant", InstanceID: "db", TenantID: "tenant", JobID: "slow-copy"}, Lease: "test-lease"}
+	results, err := sched.Run(ctx, "test", []scheduler.Service{{Name: "docker", Priority: 1, Provider: &adapter.Provider{Native: p}}}, []scheduler.Job{{Key: scheduler.Key{Instance: "db", Tenant: "tenant", Job: "slow-copy"}, Request: assignment}})
+	if err != nil || len(results) != 1 || results[0].Submission.Status != provider.Accepted {
 		t.Fatal(results, err)
 	}
 }

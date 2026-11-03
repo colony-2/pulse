@@ -8,21 +8,22 @@ import (
 	"sync"
 	"time"
 
+	provider "github.com/colony-2/pulse-provider-api"
+	"github.com/colony-2/pulse/internal/providerutil"
 	"github.com/colony-2/pulse/pkg/compute"
 )
 
 type Key struct{ Instance, Tenant, Job string }
 type Job struct {
 	Key     Key
-	Request compute.Request
-	Process compute.Process
+	Request provider.Launch
 	// Prepare runs after local admission, immediately before placement. The
 	// returned cleanup is called only when execution definitely cannot start.
 	// Prepare may run concurrently for different jobs and must honor cancellation.
 	// A non-nil Prepare explicitly marks an unprepared candidate: Request holds
-	// launch metadata, while Allocation and Process need not be populated yet.
-	// Without Prepare, Request and Process must already form a complete launch.
-	Prepare func(context.Context, compute.Request) (compute.Launch, func(context.Context) error, error)
+	// job identity, while Allocation and Lease need not be populated yet.
+	// Without Prepare, Request must already be a complete launch.
+	Prepare func(context.Context, provider.Launch) (provider.Launch, func(context.Context) error, error)
 }
 
 var ErrNotEligible = errors.New("job is no longer eligible for a lease")
@@ -30,12 +31,12 @@ var ErrNotEligible = errors.New("job is no longer eligible for a lease")
 type Service struct {
 	Name     string
 	Priority int
-	Provider compute.Provider
+	Provider provider.Provider
 }
 type Result struct {
 	Key        Key
 	Service    string
-	Submission compute.Submission
+	Submission provider.Submission
 }
 type entry struct {
 	at     time.Time
@@ -85,10 +86,10 @@ func (s *Scheduler) order(scope string, services []Service) ([]Service, error) {
 
 // Run performs one bounded batch attempt. Unknown outcomes never fall through.
 func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, jobs []Job) ([]Result, error) {
-	if s.ClaimConcurrency < 1 || s.ClaimConcurrency > compute.MaxBatch || s.ClaimTimeout <= 0 {
+	if s.ClaimConcurrency < 1 || s.ClaimConcurrency > provider.MaxBatch || s.ClaimTimeout <= 0 {
 		return nil, errors.New("invalid claim limits")
 	}
-	if len(jobs) > compute.MaxBatch {
+	if len(jobs) > provider.MaxBatch {
 		return nil, fmt.Errorf("batch too large")
 	}
 	ordered, err := s.order(scope, services)
@@ -124,7 +125,7 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 		defer s.mu.Unlock()
 		for _, j := range reserved {
 			status := results[j.Key].Submission.Status
-			if status == compute.Accepted || status == compute.Unknown || notEligible[j.Key] || deferred[j.Key] {
+			if status == provider.Accepted || status == provider.Unknown || notEligible[j.Key] || deferred[j.Key] {
 				delete(s.entries, j.Key)
 				continue
 			}
@@ -147,7 +148,7 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 		}
 		if err != nil {
 			notEligible[j.Key] = errors.Is(err, ErrNotEligible)
-			results[j.Key] = Result{Key: j.Key, Submission: compute.Submission{LaunchID: j.Request.LaunchID, Status: compute.Rejected, Reason: err.Error()}}
+			results[j.Key] = Result{Key: j.Key, Submission: provider.Submission{LaunchID: j.Request.LaunchID, Status: provider.Rejected, Reason: err.Error()}}
 		} else {
 			validPending = append(validPending, j)
 		}
@@ -183,18 +184,18 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 		p := ordered[index]
 
 		next := []Job{}
-		launches := make([]compute.Launch, len(pending))
+		launches := make([]provider.Launch, len(pending))
 		launchJobs := map[string]Job{}
 		for i, j := range pending {
-			launches[i] = compute.Launch{Request: j.Request, Process: j.Process}
+			launches[i] = j.Request
 			launchJobs[j.Request.LaunchID] = j
 		}
 
 		if len(launches) > 0 {
 			c, cancel := context.WithTimeout(ctx, s.CallTimeout)
-			submitted, submitErr := p.Provider.Submit(c, launches)
+			submitted, _ := p.Provider.Submit(c, launches)
 			cancel()
-			subs := map[string]compute.Submission{}
+			subs := map[string]provider.Submission{}
 			dups := map[string]bool{}
 			for _, r := range submitted {
 				if _, ok := subs[r.LaunchID]; ok {
@@ -205,11 +206,11 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 			for _, launch := range launches {
 				j := launchJobs[launch.LaunchID]
 				r, ok := subs[launch.LaunchID]
-				if !ok || dups[launch.LaunchID] || !r.Status.Valid() {
-					r = compute.Submission{LaunchID: launch.LaunchID, Status: compute.Unknown, Reason: fmt.Sprintf("missing or invalid submission result: %v", submitErr)}
+				if !ok || dups[launch.LaunchID] || !providerutil.ValidSubmission(r) {
+					r = provider.Submission{LaunchID: launch.LaunchID, Status: provider.Unknown, Reason: "missing or invalid submission result"}
 				}
 				results[j.Key] = Result{j.Key, p.Name, r}
-				if r.Status.Fallback() {
+				if providerutil.Fallback(r.Status) {
 					next = append(next, j)
 				}
 			}
@@ -224,10 +225,10 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 		}
 		r, ok := results[j.Key]
 		if !ok {
-			r = Result{Key: j.Key, Submission: compute.Submission{LaunchID: j.Request.LaunchID, Status: compute.Rejected, Reason: "attempt cancelled before submission"}}
+			r = Result{Key: j.Key, Submission: provider.Submission{LaunchID: j.Request.LaunchID, Status: provider.Rejected, Reason: "attempt cancelled before submission"}}
 		}
 		results[j.Key] = r
-		if release := cleanup[j.Key]; release != nil && r.Submission.Status != compute.Accepted && r.Submission.Status != compute.Unknown {
+		if release := cleanup[j.Key]; release != nil && r.Submission.Status != provider.Accepted && r.Submission.Status != provider.Unknown {
 			call, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.CallTimeout)
 			if err := release(call); err != nil {
 				cleanupErrs = append(cleanupErrs, errors.New("failed to release unused job lease"))
@@ -275,10 +276,10 @@ func (s *Scheduler) prepare(ctx context.Context, jobs []Job) []preparedJob {
 					if j.Key.Instance == "" || j.Key.Tenant == "" || j.Key.Job == "" {
 						err = errors.New("missing job identity")
 					} else {
-						err = j.Request.ValidateMetadata()
+						err = providerutil.Identity(j.Request)
 					}
 				} else {
-					err = (compute.Launch{Request: j.Request, Process: j.Process}).Validate()
+					err = providerutil.Launch(j.Request)
 				}
 				if err == nil && j.Prepare != nil {
 					call, done := context.WithTimeout(ctx, s.CallTimeout)
@@ -287,11 +288,11 @@ func (s *Scheduler) prepare(ctx context.Context, jobs []Job) []preparedJob {
 					result.release = release
 					err = prepareErr
 					if err == nil {
-						if launch.LaunchID != j.Request.LaunchID {
-							err = errors.New("preparation changed launch identity")
+						if launch.LaunchID != j.Request.LaunchID || launch.Job != j.Request.Job {
+							err = errors.New("preparation changed launch or job identity")
 						} else {
-							result.job.Request, result.job.Process = launch.Request, launch.Process
-							err = launch.Validate()
+							result.job.Request = launch
+							err = providerutil.Launch(launch)
 						}
 					}
 				}

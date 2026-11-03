@@ -200,7 +200,7 @@ func TestCLIHTTPAndShutdown(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(compute.ListResponse{Items: []compute.Instance{{ID: "queued-one", LaunchID: "launch-one", State: "queued", Metadata: map[string]string{"pulse_launch_id": "launch-one"}, Refs: []string{}}}})
+		json.NewEncoder(w).Encode(compute.ListResponse{Items: []compute.Instance{{ID: "queued-one", LaunchID: "launch-one", State: "queued", Metadata: map[string]string{"pulse_launch_id": "launch-one", "pulse_jobdb_instance_id": "test", "pulse_tenant_id": "acme", "pulse_job_id": "job-one"}, Refs: []string{}}}})
 	}))
 	defer provider.Close()
 	cfg := map[string]any{

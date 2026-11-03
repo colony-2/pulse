@@ -36,12 +36,14 @@ The initial candidate set is `linux/arm64` and `linux/amd64`, excluding the nati
 platform. Preserve existing support for other native Linux platforms. This is a
 bounded discovery policy, not a claim to enumerate every possible architecture.
 
-There is no `platforms` setting in the initial implementation. Keep
-`defaults.platform` as the existing way to choose a platform for jobs that omit
-one; it does not restrict the provider's detected capabilities.
+There is no `platforms` setting in the initial implementation. Use `defaults.base`
+to select an execution environment; legacy
+`defaults.platform` remains a compatibility constraint. Neither restricts the
+provider's detected execution support.
 
 This intentionally expands admission on capable daemons. Jobs without an
-explicit platform continue to default to the native architecture.
+image/base request now default to `ubuntu-26*arm64`, independently of the native
+architecture.
 
 ## Execution capability validation
 
@@ -102,18 +104,17 @@ NativePlatform() string
 SupportedPlatforms() []string
 ```
 
-A job with an explicit platform must run on exactly that platform. A job without
-one continues to use `defaults.platform`, or the daemon's native platform under
-the existing automatic-default behavior.
-
-Successful discovery never changes the automatic default from the native
-platform. An explicit `defaults.platform` remains authoritative; if a Docker
-provider cannot execute it, that provider declines the request through the
-existing fallback flow. Other configured providers may still satisfy it.
+A job with an explicit platform must run on exactly that platform. Base selectors
+resolve only against environments whose platforms the provider can execute.
+The default selector `ubuntu-26*arm64` remains ARM64; discovery does not rewrite
+it to the daemon's architecture. `ubuntu-26*` permits either architecture.
+If no supported environment matches, the provider declines through the existing
+fallback flow. Legacy `defaults.platform` remains an explicit constraint.
 
 Both architectures can be submitted to the same provider. There is no
-architecture rewriting or automatic retry on another architecture. The existing
-request already carries a platform, so this requires no provider-protocol or
+architecture rewriting or automatic retry on another architecture. The native
+request carries the platform resolved from the base, so discovery requires no v1
+provider-protocol or
 JobDB route change.
 
 ## Image resolution and container creation
@@ -193,7 +194,8 @@ application or instruction-set requirement.
 
 ## Implementation scope
 
-- `internal/providers/providers.go`: preserve native default selection and share
+- `internal/providers/providers.go`: resolve base selectors against supported
+  platforms and share
   discovery results through the existing provider reuse for aliases.
 - `internal/providers/docker/docker.go`: represent native and supported
   platforms separately, admit enabled platforms, and create workers with an
@@ -214,8 +216,8 @@ comparison for aliases.
 
 ## Acceptance criteria
 
-- Existing configurations continue to work without edits; jobs without a
-  platform retain native default selection.
+- Legacy image/platform configuration remains supported. The new default base
+  selects ARM64, and explicit architecture constraints are never broadened.
 - Apple Silicon automatically discovers working amd64 execution and runs arm64
   and amd64 jobs concurrently.
 - Discovery depends on the selected daemon, including when the controller runs

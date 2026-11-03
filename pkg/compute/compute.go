@@ -1,4 +1,6 @@
-// Package compute defines Pulse's provider-neutral, batch-only launch contract.
+// Package compute contains native process and legacy v1 transport types.
+// Pulse scheduling uses github.com/colony-2/pulse-provider-api; these types remain
+// at the native-engine and v1 wire compatibility boundary.
 package compute
 
 import (
@@ -198,6 +200,9 @@ type Submission struct {
 	Status   Status `json:"status"`
 	Reason   string `json:"reason,omitempty"`
 }
+
+// Provider is the native process backend contract, not the scheduling API.
+// New Go implementations should implement pulse-provider-api.Provider.
 type Provider interface {
 	Submit(context.Context, []Launch) ([]Submission, error)
 	List(context.Context, ListRequest) (ListResponse, error)

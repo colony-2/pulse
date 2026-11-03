@@ -311,3 +311,18 @@ func TestDockerContainerLimit(t *testing.T) {
 		}
 	}
 }
+
+func TestBaseSelectorsAndCapabilities(t *testing.T) {
+	for _, selector := range []string{"ubuntu-26*arm64", "ubuntu-26.04-amd64", "linux*", "*ubuntu*arm64*"} {
+		cfg, err := Parse([]byte("targets: [{jobdb: 'https://db/tenant'}]\ndefaults:\n  base: '" + selector + "'\n  capabilities: [docker, docker.workspace-mounts]\n"))
+		if err != nil || cfg.Allocation.Base != selector || len(cfg.Allocation.Capabilities) != 2 {
+			t.Fatal(cfg, err)
+		}
+	}
+	if _, err := Parse([]byte("targets: [{jobdb: 'https://db/tenant'}]\ndefaults: {base: ubuntu*, image: alpine:3}")); err == nil {
+		t.Fatal("ambiguous base/image accepted")
+	}
+	if _, err := Parse([]byte("targets: [{jobdb: 'https://db/tenant'}]\ndefaults: {capabilities: [INVALID]}")); err == nil {
+		t.Fatal("invalid c2j capability accepted")
+	}
+}

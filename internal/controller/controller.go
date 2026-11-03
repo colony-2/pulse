@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	provider "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/c2j"
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/scheduler"
@@ -26,7 +27,7 @@ type Controller struct {
 	Lister    Lister
 	Claimer   Claimer
 	Scheduler *scheduler.Scheduler
-	Providers map[string]compute.Provider
+	Providers map[string]provider.Provider
 	Log       *slog.Logger
 	pass      int
 	statusMu  sync.RWMutex
@@ -106,16 +107,16 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 					continue
 				}
 				id := compute.NewID()
-				metadata := map[string]string{"pulse_metadata_version": "1", "pulse_managed_by": "pulse", "pulse_jobdb_instance_id": t.Instance, "pulse_tenant_id": j.Tenant, "pulse_job_id": j.ID, "pulse_launch_id": id}
-				req := compute.Request{LaunchID: id, TimeoutSeconds: int64(c.Config.ExecutionTimeout / time.Second), Metadata: metadata}
+				jobRef := provider.JobRef{JobDB: t.JobDB, InstanceID: t.Instance, TenantID: j.Tenant, JobID: j.ID}
+				req := provider.Launch{LaunchID: id, TimeoutSeconds: int64(c.Config.ExecutionTimeout / time.Second), Job: jobRef}
 				if c.Config.StartWindow > 0 {
 					deadline := time.Now().Add(c.Config.StartWindow)
 					req.StartBefore = &deadline
 				}
 
-				jobs = append(jobs, scheduler.Job{Key: k, Request: req, Prepare: func(ctx context.Context, request compute.Request) (compute.Launch, func(context.Context) error, error) {
+				jobs = append(jobs, scheduler.Job{Key: k, Request: req, Prepare: func(ctx context.Context, request provider.Launch) (provider.Launch, func(context.Context) error, error) {
 					if c.Claimer == nil {
-						return compute.Launch{}, nil, errors.New("JobDB lease client is required")
+						return provider.Launch{}, nil, errors.New("JobDB lease client is required")
 					}
 					claimed, err := c.Claimer.Claim(ctx, t.JobDB, j, request.LaunchID, c.Config.Lease, c.Config.Defaults.Routes)
 					var release func(context.Context) error
@@ -123,26 +124,22 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 						release = func(ctx context.Context) error { return claimed.Release(ctx, c.Config.Cool) }
 					}
 					if err != nil {
-						return compute.Launch{}, release, err
+						return provider.Launch{}, release, err
 					}
 					if claimed == nil {
-						return compute.Launch{}, nil, scheduler.ErrNotEligible
+						return provider.Launch{}, nil, scheduler.ErrNotEligible
 					}
 					allocation, err := claimed.Job.Allocation(c.Config.Allocation)
 					if err != nil {
 						c.Log.Error("invalid leased execution demand", "job", j.ID, "error", err)
-						return compute.Launch{}, release, err
+						return provider.Launch{}, release, err
 					}
 					request.Allocation = allocation
-					process, err := c2j.Process(t.JobDB, j.ID, allocation, c.Config.Defaults.Env, request.Metadata)
-					if err != nil {
-						return compute.Launch{}, release, err
+					request.Lease = provider.Lease(claimed.Encoded)
+					if request.Lease == "" {
+						return provider.Launch{}, release, errors.New("empty exported lease")
 					}
-					process.Stdin = compute.SecretInput(claimed.Encoded)
-					if process.Stdin == "" {
-						return compute.Launch{}, release, errors.New("empty exported lease")
-					}
-					return compute.Launch{Request: request, Process: process}, release, nil
+					return request, release, nil
 				}})
 				selected[k] = true
 				if len(jobs) >= c.Config.PerTenant {

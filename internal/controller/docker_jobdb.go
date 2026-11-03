@@ -7,49 +7,45 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/colony-2/pulse/pkg/compute"
+	provider "github.com/colony-2/pulse-provider-api"
 )
 
-// Discovery and claiming use the controller's URL. Only the command handed to
+// Discovery and claiming use the controller's URL. Only the job reference handed to
 // a local Docker worker needs the container-to-host address. Adapt at provider
-// selection so a cloud/remote fallback still receives the original command.
-func dockerJobDBEndpoint(kind string, provider compute.Provider, endpoint string, log *slog.Logger) compute.Provider {
+// selection so a cloud/remote fallback still receives the original job reference.
+func dockerJobDBEndpoint(kind string, p provider.Provider, endpoint string, log *slog.Logger) provider.Provider {
 	if kind != "docker" {
-		return provider
+		return p
 	}
 	u, err := url.Parse(endpoint)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return provider
+		return p
 	}
 	host := u.Hostname()
 	if !strings.EqualFold(strings.TrimSuffix(host, "."), "localhost") && !net.ParseIP(host).IsLoopback() {
-		return provider
+		return p
 	}
 	port := u.Port()
 	u.Host = "host.docker.internal"
 	if port != "" {
 		u.Host = net.JoinHostPort(u.Host, port)
 	}
-	return &dockerJobDBProvider{Provider: provider, source: endpoint, destination: u.String(), log: log}
+	return &dockerJobDBProvider{Provider: p, source: endpoint, destination: u.String(), log: log}
 }
 
 type dockerJobDBProvider struct {
-	compute.Provider
+	provider.Provider
 	source, destination string
 	log                 *slog.Logger
 }
 
-func (p *dockerJobDBProvider) Submit(ctx context.Context, launches []compute.Launch) ([]compute.Submission, error) {
-	adapted := append([]compute.Launch(nil), launches...)
+func (p *dockerJobDBProvider) Submit(ctx context.Context, launches []provider.Launch) ([]provider.Submission, error) {
+	adapted := append([]provider.Launch(nil), launches...)
 	changed := false
 	for i, launch := range launches {
-		for j := 0; j+1 < len(launch.Process.Args); j++ {
-			if launch.Process.Args[j] == "--jobdb" && launch.Process.Args[j+1] == p.source {
-				adapted[i].Process.Args = append([]string(nil), launch.Process.Args...)
-				adapted[i].Process.Args[j+1] = p.destination
-				changed = true
-				break
-			}
+		if launch.Job.JobDB == p.source {
+			adapted[i].Job.JobDB = p.destination
+			changed = true
 		}
 	}
 	if changed {

@@ -40,13 +40,15 @@ pulse run --once
 pulse version
 ```
 
-Pulse discovers eligible c2j jobs across every repository in the tenant. Docker is the default provider, and jobs without an image use `ghcr.io/colony-2/base2:latest`. Jobs without resource requirements have no CPU, memory, or scratch allocation, and Docker has no default container-count cap. Docker's native Linux platform is detected automatically. Pulse also probes arm64/amd64 execution and enables working emulation without configuration; jobs without a platform continue to default to native.
+Pulse discovers eligible c2j jobs across every repository in the tenant. Docker is the default provider, and jobs without an image/base request use the selector `ubuntu-26*arm64`, resolving to `ubuntu-26.04-arm64` backed by `ghcr.io/colony-2/base2:latest`. Jobs without resource requirements have no CPU, memory, or scratch allocation, and Docker has no default container-count cap. Docker detects native and emulated execution support, but the default remains ARM64 regardless of the controller or daemon architecture. Use `defaults.base: ubuntu-26.04-amd64` to select AMD64, or `ubuntu-26*` to allow either architecture.
 
 For Colony base images, Docker automatically retains uv, pnpm, and Nix dependencies
 in tenant-scoped volumes across jobs and restarts. No Nix daemon or manual cache
 setup is needed. See [cache settings and image prerequisites](docs/configuration.md#docker-dependency-caches).
 
 `check` validates settings and initializes providers; it does not verify remote connectivity or launch permissions. `run --once` performs one discovery/submission pass. Both `pulse` and `pulse run` keep polling until SIGINT or SIGTERM and write JSON logs to stderr. Launched containers continue under their own lifetime controls.
+
+For independently implemented Go providers, see [the Go provider guide](docs/implementing-a-go-provider.md). Pulse uses the zero-dependency [provider API](https://github.com/colony-2/pulse-provider-api); custom binaries can register implementations without plugins.
 
 For custom providers or multiple tenants, use an optional configuration: [remote runners](examples/remote.yaml), [local Docker overrides](examples/docker.yaml), or [cloud providers](examples/clouds.yaml). Executor images must include c2j with `run with-lease` support; cloud images also need `pulse-exec`. Use a JobDB server containing commit `39ae1b444460` or later with available-route discovery and supplied-lease renewal support; upgrade the server alongside Pulse.
 
@@ -64,7 +66,7 @@ docker run --rm --init \
 
 The file is read on the host. In a deployment console, set `PULSE_CONFIG` directly to the YAML contents. Keep credentials in separate secret/environment settings or use the hosting platform's identity. For repeatable deployments, select a release tag such as `:vX.Y.Z` or an image digest.
 
-The image is distroless, runs as UID/GID `65532:65532`, and contains Pulse, its execution supervisor, and CA certificates. It includes native cloud authentication and needs no shell, Node.js, Git, cloud CLI, or separate c2j executable. Configure `defaults.image` with your workload's executor image.
+The image is distroless, runs as UID/GID `65532:65532`, and contains Pulse, its execution supervisor, and CA certificates. It includes native cloud authentication and needs no shell, Node.js, Git, cloud CLI, or separate c2j executable. Configure `defaults.base` with an environment selector. Legacy `defaults.image` plus `defaults.platform` remain supported for explicit OCI images.
 
 For mounted YAML, pass the file path explicitly:
 

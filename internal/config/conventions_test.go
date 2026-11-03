@@ -32,7 +32,7 @@ func TestC2JConventionsWithoutPulseConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ExecutionTimeout != 0 || cfg.Defaults.Timeout != "" || cfg.Targets[0].Tenant != "project" || cfg.Targets[0].Instance == "" || cfg.Allocation.Image != "ghcr.io/colony-2/base2:latest" || cfg.Allocation.CPUMillis != 0 || cfg.Allocation.MemoryBytes != 0 || cfg.Allocation.ScratchBytes != 0 || !cfg.AutoPlatform || cfg.Providers["docker"].Type != "docker" || cfg.Targets[0].Services[0].Name != "docker" {
+	if cfg.ExecutionTimeout != 0 || cfg.Defaults.Timeout != "" || cfg.Targets[0].Tenant != "project" || cfg.Targets[0].Instance == "" || cfg.Allocation.Base != "ubuntu-26*arm64" || cfg.Allocation.CPUMillis != 0 || cfg.Allocation.MemoryBytes != 0 || cfg.Allocation.ScratchBytes != 0 || cfg.Providers["docker"].Type != "docker" || cfg.Targets[0].Services[0].Name != "docker" {
 		t.Fatalf("wrong defaults: %+v", cfg)
 	}
 	instance := cfg.Targets[0].Instance
@@ -80,7 +80,7 @@ func TestTenantTargetsAndDefaultOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.AutoPlatform || cfg.Allocation.Image != "docker.io/library/alpine:3" || cfg.Allocation.CPUMillis != 2000 || cfg.Allocation.MemoryBytes != 2<<30 || cfg.Allocation.ScratchBytes != 3<<30 {
+	if cfg.Allocation.Base != "oci:linux/amd64:docker.io/library/alpine:3" || cfg.Allocation.CPUMillis != 2000 || cfg.Allocation.MemoryBytes != 2<<30 || cfg.Allocation.ScratchBytes != 3<<30 {
 		t.Fatalf("ignored overrides: %+v", cfg.Allocation)
 	}
 }

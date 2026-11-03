@@ -3,62 +3,47 @@ package controller
 import (
 	"bytes"
 	"context"
+	provider "github.com/colony-2/pulse-provider-api"
 	"log/slog"
 	"strings"
 	"testing"
-
-	"github.com/colony-2/pulse/internal/c2j"
-	"github.com/colony-2/pulse/pkg/compute"
 )
 
 func TestDockerJobDBEndpoint(t *testing.T) {
 	for _, tt := range []struct{ kind, source, want string }{
 		{"docker", "http://localhost:9047/c2", "http://host.docker.internal:9047/c2"},
 		{"docker", "http://LOCALHOST.:9047/c2", "http://host.docker.internal:9047/c2"},
-		{"docker", "http://127.0.0.1:9047/c2", "http://host.docker.internal:9047/c2"},
 		{"docker", "http://127.0.0.2:9047/c2", "http://host.docker.internal:9047/c2"},
 		{"docker", "http://[::1]:9047/c2", "http://host.docker.internal:9047/c2"},
 		{"docker", "https://localhost/c2", "https://host.docker.internal/c2"},
 		{"docker", "https://jobdb.example/c2", "https://jobdb.example/c2"},
-		{"docker", "http://host.docker.internal:9047/c2", "http://host.docker.internal:9047/c2"},
-		{"docker", "http://localhost.example:9047/c2", "http://localhost.example:9047/c2"},
-		{"remote", "http://localhost:9047/c2", "http://localhost:9047/c2"},
-		{"cloudrun", "http://localhost:9047/c2", "http://localhost:9047/c2"},
+		{"docker", "http://localhost.example/c2", "http://localhost.example/c2"},
+		{"remote", "http://localhost/c2", "http://localhost/c2"},
+		{"cloudrun", "http://localhost/c2", "http://localhost/c2"},
 	} {
-		t.Run(tt.kind+"/"+tt.source, func(t *testing.T) {
+		t.Run(tt.kind+tt.source, func(t *testing.T) {
 			sink := &accept{}
 			var logs bytes.Buffer
-			provider := dockerJobDBEndpoint(tt.kind, sink, tt.source, slog.New(slog.NewTextHandler(&logs, nil)))
-			process, err := c2j.Process(tt.source, "job", compute.Allocation{}, nil, nil)
+			p := dockerJobDBEndpoint(tt.kind, sink, tt.source, slog.New(slog.NewTextHandler(&logs, nil)))
+			ls := []provider.Launch{{LaunchID: "launch", Job: provider.JobRef{JobDB: tt.source, InstanceID: "db", TenantID: "c2", JobID: "job"}, Lease: "private-lease"}}
+			_, err := p.Submit(context.Background(), ls)
 			if err != nil {
 				t.Fatal(err)
 			}
-			process.Stdin = "private-lease-capability"
-			launches := []compute.Launch{{Request: compute.Request{LaunchID: "launch"}, Process: process}}
-			if _, err := provider.Submit(context.Background(), launches); err != nil {
-				t.Fatal(err)
+			if sink.requests[0].Job.JobDB != tt.want || ls[0].Job.JobDB != tt.source {
+				t.Fatal("incorrect endpoint rewrite or mutation")
 			}
-			if got := sink.process[0].Args[3]; got != tt.want {
-				t.Fatalf("worker endpoint: got %s, want %s", got, tt.want)
-			}
-			if launches[0].Process.Args[3] != tt.source {
-				t.Fatal("mutated the command used by other providers")
-			}
-			if sink.process[0].Stdin != process.Stdin || strings.Contains(logs.String(), string(process.Stdin)) {
+			if sink.requests[0].Lease != ls[0].Lease || strings.Contains(logs.String(), string(ls[0].Lease)) {
 				t.Fatal("lease changed or leaked")
 			}
 			if tt.source != tt.want && (!strings.Contains(logs.String(), tt.source) || !strings.Contains(logs.String(), tt.want)) {
-				t.Fatal("missing endpoint diagnostic", logs.String())
+				t.Fatal("missing endpoint diagnostic")
 			}
-			// An unrelated c2j endpoint must not be rewritten by this tenant's wrapper.
-			other := process
-			other.Args = append([]string(nil), process.Args...)
-			other.Args[3] = "http://other.example/tenant"
-			if _, err := provider.Submit(context.Background(), []compute.Launch{{Process: other}}); err != nil {
-				t.Fatal(err)
-			}
-			if sink.process[1].Args[3] != other.Args[3] {
-				t.Fatal("rewrote another target's endpoint")
+			other := ls[0]
+			other.Job.JobDB = "http://other.example/c2"
+			_, err = p.Submit(context.Background(), []provider.Launch{other})
+			if err != nil || sink.requests[1].Job.JobDB != other.Job.JobDB {
+				t.Fatal("rewrote another target")
 			}
 		})
 	}

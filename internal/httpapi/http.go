@@ -12,9 +12,10 @@ import (
 	"sync"
 	"time"
 
+	provider "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/controller"
+	"github.com/colony-2/pulse/internal/providerutil"
 	"github.com/colony-2/pulse/internal/scheduler"
-	"github.com/colony-2/pulse/pkg/compute"
 	"github.com/colony-2/pulse/pkg/providerplugin"
 )
 
@@ -98,8 +99,8 @@ func (a *API) Handler() http.Handler {
 		mux.ServeHTTP(w, r)
 	})
 }
-func query(r *http.Request, all bool) (compute.ListRequest, error) {
-	q := compute.ListRequest{}
+func query(r *http.Request, all bool) (provider.ListRequest, error) {
+	q := provider.ListRequest{}
 	for key, values := range r.URL.Query() {
 		if len(values) != 1 {
 			return q, fmt.Errorf("duplicate query parameter")
@@ -125,7 +126,7 @@ func query(r *http.Request, all bool) (compute.ListRequest, error) {
 			return q, fmt.Errorf("unknown query parameter")
 		}
 	}
-	return q.Normalize()
+	return providerutil.Normalize(q)
 }
 func (a *API) enter(w http.ResponseWriter) bool {
 	select {
@@ -143,27 +144,26 @@ func (a *API) logError(provider string, err error) {
 	}
 	logger.Error("instance listing failed", "provider", provider, "error", err)
 }
-func (a *API) list(ctx context.Context, p compute.Provider, q compute.ListRequest) (compute.ListResponse, error) {
+func (a *API) list(ctx context.Context, p provider.Provider, q provider.ListRequest) (provider.ListResponse, error) {
 	page, err := p.List(ctx, q)
 	if err != nil {
-		return compute.ListResponse{}, err
+		return provider.ListResponse{}, err
 	}
 	if page.Items == nil || len(page.Items) > q.PageSize || len(page.NextPageToken) > 16384 || (page.NextPageToken != "" && page.NextPageToken == q.PageToken) {
-		return compute.ListResponse{}, fmt.Errorf("invalid provider list page")
+		return provider.ListResponse{}, fmt.Errorf("invalid provider list page")
 	}
 	seen := map[string]bool{}
-	for i, item := range page.Items {
+	for _, item := range page.Items {
 		if seen[item.ID] {
-			return compute.ListResponse{}, fmt.Errorf("duplicate instance ID")
+			return provider.ListResponse{}, fmt.Errorf("duplicate instance ID")
 		}
 		seen[item.ID] = true
-		if err = item.Validate(); err != nil {
-			return compute.ListResponse{}, err
+		if err = providerutil.Instance(item); err != nil {
+			return provider.ListResponse{}, err
 		}
 		if q.LaunchID != "" && item.LaunchID != q.LaunchID {
-			return compute.ListResponse{}, fmt.Errorf("provider returned an unexpected launch")
+			return provider.ListResponse{}, fmt.Errorf("provider returned an unexpected launch")
 		}
-		page.Items[i].Metadata = compute.Correlation(item.Metadata)
 	}
 	return page, nil
 }
@@ -196,7 +196,7 @@ func (a *API) provider(w http.ResponseWriter, r *http.Request) {
 
 type instance struct {
 	Provider string `json:"provider"`
-	compute.Instance
+	provider.Instance
 }
 type providerError struct {
 	Provider string `json:"provider"`

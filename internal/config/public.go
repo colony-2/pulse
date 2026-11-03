@@ -14,6 +14,9 @@ func (c *Config) Public() (map[string]any, error) {
 	copyConfig := *c
 	copyConfig.Providers = make(map[string]Provider, len(c.Providers))
 	for name, p := range c.Providers {
+		if p.Options != nil {
+			p.Options = map[string]any{"redacted": true}
+		}
 		if p.Plugin != nil {
 			safe := *p.Plugin
 			safe.Config = yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "[REDACTED]"}

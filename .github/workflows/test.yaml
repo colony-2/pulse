@@ -28,6 +28,10 @@ jobs:
         with:
           lima: v1.2.1
           colima: v0.9.1
+      - name: Enable ARM64 and AMD64 execution for base-selector tests
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64,amd64
       # Keep cold image download/unpacking out of the execution phase, and
       # show Docker's progress directly in CI instead of buffering it in Go.
       - name: Prepare c2j integration image

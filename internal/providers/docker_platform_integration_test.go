@@ -55,12 +55,12 @@ targets: [{jobdb: "http://localhost/platform-test", launch_services: [{name: doc
 		t.Fatal(err)
 	}
 	defer closeProviders()
-	p := instances["docker"].(*dockerprovider.Provider)
-	if instances["alias"] != p {
+	p := nativeProvider(t, instances["docker"]).(*dockerprovider.Provider)
+	if nativeProvider(t, instances["alias"]) != p {
 		t.Fatal("aliases did not reuse discovery and admission")
 	}
-	if cfg.Allocation.Platform != p.NativePlatform() {
-		t.Fatal("discovery changed native default", cfg.Allocation.Platform)
+	if cfg.Allocation.Base != "oci:linux/arm64:docker.io/library/alpine:3.21" {
+		t.Fatal("discovery changed default", cfg.Allocation.Base)
 	}
 	t.Logf("native=%s supported=%v", p.NativePlatform(), p.SupportedPlatforms())
 	// Independently confirm executable candidate platforms with the Docker CLI;
@@ -91,7 +91,7 @@ targets: [{jobdb: "http://localhost/platform-test", launch_services: [{name: doc
 				t.Errorf("cleanup: %v: %s", err, out)
 			}
 		})
-		allocation := cfg.Allocation
+		allocation := nativeAllocation(t, cfg.Allocation)
 		allocation.Platform = platform
 		job := compute.Launch{Request: compute.Request{LaunchID: id, Allocation: allocation, Metadata: map[string]string{"pulse_job_id": id}}, Process: compute.Process{Command: []string{"/bin/sleep"}, Args: []string{"300"}}}
 		jobs = append(jobs, job)
@@ -122,7 +122,7 @@ targets: [{jobdb: "http://localhost/platform-test", launch_services: [{name: doc
 	defer closeAgain()
 	third := jobs[0]
 	third.LaunchID += "-extra"
-	results, err := instances["alias"].Submit(ctx, []compute.Launch{third})
+	results, err := nativeProvider(t, instances["alias"]).Submit(ctx, []compute.Launch{third})
 	if err != nil || len(results) != 1 || results[0].Status != compute.NoCapacity {
 		t.Fatalf("shared budget after restart: %+v %v", results, err)
 	}

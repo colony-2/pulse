@@ -47,8 +47,7 @@ func TestDockerIntegration(t *testing.T) {
 	t.Logf("running real container jobs through Pulse defaults: %s (%s)", socket, platform)
 	dir := t.TempDir()
 	// Default discovery needs no helper binary or host mount.
-	data := `defaults:
-  image: alpine:3.21
+	data := "defaults:\n  platform: " + platform + "\n" + `  image: alpine:3.21
   cpu: "100m"
   memory: 256Mi
   scratch: 8Mi
@@ -82,7 +81,7 @@ targets:
 		unenforced = strings.Contains(string(out), "WARN Docker resource limits unavailable")
 	})
 	t.Run("unspecified resources allow concurrent containers", func(t *testing.T) {
-		cfg, err := config.Parse([]byte("defaults: {image: 'alpine:3.21'}\ntargets: [{jobdb: 'http://localhost/acme'}]\n"))
+		cfg, err := config.Parse([]byte("defaults: {image: 'alpine:3.21', platform: " + platform + "}\ntargets: [{jobdb: 'http://localhost/acme'}]\n"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -103,9 +102,9 @@ targets:
 					t.Errorf("cleanup: %v: %s", err, out)
 				}
 			})
-			ls = append(ls, compute.Launch{Request: compute.Request{LaunchID: id, Allocation: cfg.Allocation, Metadata: map[string]string{"pulse_job_id": id}}, Process: compute.Process{Command: []string{"/bin/sleep"}, Args: []string{"300"}}})
+			ls = append(ls, compute.Launch{Request: compute.Request{LaunchID: id, Allocation: nativeAllocation(t, cfg.Allocation), Metadata: map[string]string{"pulse_job_id": id}}, Process: compute.Process{Command: []string{"/bin/sleep"}, Args: []string{"300"}}})
 		}
-		out, err := instances["docker"].Submit(ctx, ls)
+		out, err := nativeProvider(t, instances["docker"]).Submit(ctx, ls)
 		if err != nil || len(out) != 2 || out[0].Status != compute.Accepted || out[1].Status != compute.Accepted {
 			t.Fatal(out, err)
 		}
@@ -116,7 +115,7 @@ targets:
 		}
 		t.Cleanup(closeAgain)
 		for _, l := range ls {
-			listed, err := instances["docker"].List(ctx, compute.ListRequest{LaunchID: l.LaunchID})
+			listed, err := nativeProvider(t, instances["docker"]).List(ctx, compute.ListRequest{LaunchID: l.LaunchID})
 			if err != nil || len(listed.Items) != 1 || listed.Items[0].State != "running" {
 				t.Fatalf("concurrent job missing after restart: %+v, %v", listed, err)
 			}
@@ -143,10 +142,10 @@ targets:
 		t.Fatal(err)
 	}
 	t.Cleanup(closeProviders)
-	if cfg.Allocation.Platform != platform {
-		t.Fatalf("default platform %s does not match daemon %s", cfg.Allocation.Platform, platform)
+	if cfg.Allocation.Base != "oci:"+platform+":docker.io/library/alpine:3.21" {
+		t.Fatal("unexpected default base", cfg.Allocation.Base)
 	}
-	provider := instances[cfg.Targets[0].Services[0].Name]
+	provider := nativeProvider(t, instances[cfg.Targets[0].Services[0].Name])
 	if provider == nil {
 		t.Fatal("default target did not resolve to a provider")
 	}
@@ -172,7 +171,7 @@ targets:
 			}
 		})
 		return compute.Launch{
-			Request: compute.Request{LaunchID: id, Allocation: cfg.Allocation, Metadata: map[string]string{"pulse_job_id": id}},
+			Request: compute.Request{LaunchID: id, Allocation: nativeAllocation(t, cfg.Allocation), Metadata: map[string]string{"pulse_job_id": id}},
 			Process: compute.Process{Command: []string{"/bin/sh"}, Args: []string{"-ec", "cat > /scratch/test-input\nmkfifo /scratch/test-release\nread -r signal < /scratch/test-release\n{\n" + script + "\n} < /scratch/test-input"}, Env: map[string]string{}},
 		}, name
 	}
@@ -292,7 +291,7 @@ echo completed`)
 			t.Fatal(err)
 		}
 		t.Cleanup(closeAgain)
-		provider = instances["docker"]
+		provider = nativeProvider(t, instances["docker"])
 		blocked, nextName := newLaunch(t, "echo next-job")
 		submit(t, blocked, compute.NoCapacity)
 		listed, err := provider.List(ctx, compute.ListRequest{LaunchID: l.LaunchID})

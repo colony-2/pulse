@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	provider "github.com/colony-2/pulse-provider-api"
+	"github.com/colony-2/pulse/internal/providers/adapter"
 	"github.com/colony-2/pulse/internal/scheduler"
 	"github.com/colony-2/pulse/pkg/compute"
 	"os"
@@ -210,14 +212,14 @@ func TestCrashNoFallbackNoReleaseNoReplay(t *testing.T) {
 	p := startFixture(t, c)
 	fallback := &countProvider{}
 	released := false
-	l := launch("original")
+	l := provider.Launch{LaunchID: "original", Allocation: provider.Allocation{Base: "ubuntu-26.04-arm64"}, Job: provider.JobRef{JobDB: "https://db/tenant", InstanceID: "db", TenantID: "tenant", JobID: "job"}, Lease: "test-lease"}
 	s := scheduler.New(time.Minute, time.Second)
-	job := scheduler.Job{Key: scheduler.Key{Instance: "db", Tenant: "tenant", Job: "job"}, Request: l.Request, Prepare: func(_ context.Context, r compute.Request) (compute.Launch, func(context.Context) error, error) {
+	job := scheduler.Job{Key: scheduler.Key{Instance: "db", Tenant: "tenant", Job: "job"}, Request: l, Prepare: func(_ context.Context, r provider.Launch) (provider.Launch, func(context.Context) error, error) {
 		l.LaunchID = r.LaunchID
 		return l, func(context.Context) error { released = true; return nil }, nil
 	}}
-	out, e := s.Run(context.Background(), "scope", []scheduler.Service{{Name: "plugin", Priority: 1, Provider: p}, {Name: "fallback", Priority: 2, Provider: fallback}}, []scheduler.Job{job})
-	if e != nil || len(out) != 1 || out[0].Submission.Status != compute.Unknown || fallback.calls != 0 || released {
+	out, e := s.Run(context.Background(), "scope", []scheduler.Service{{Name: "plugin", Priority: 1, Provider: &adapter.Provider{Native: p}}, {Name: "fallback", Priority: 2, Provider: &adapter.Provider{Native: fallback}}}, []scheduler.Job{job})
+	if e != nil || len(out) != 1 || out[0].Submission.Status != provider.Unknown || fallback.calls != 0 || released {
 		t.Fatal(out, e, fallback.calls, released)
 	}
 	waitFor(t, func() bool { return p.Health().Generation == 2 && p.Health().State == "ready" })

@@ -5,17 +5,19 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	provider "github.com/colony-2/pulse-provider-api"
+	"github.com/colony-2/pulse/internal/bases"
 	"github.com/colony-2/pulse/internal/c2j"
+	"github.com/colony-2/pulse/internal/providerutil"
 	"github.com/colony-2/pulse/internal/quantity"
 	"github.com/colony-2/pulse/pkg/compute"
-	"github.com/distribution/reference"
+	"github.com/colony-2/pulse/pkg/providerregistry"
 	"gopkg.in/yaml.v3"
 	"io"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -33,6 +35,7 @@ type Target struct {
 	Tenant        string    `yaml:"-"`
 }
 type Provider struct {
+	Options            map[string]any    `yaml:"config,omitempty"`
 	Plugin             *PluginConfig     `yaml:"plugin,omitempty"`
 	DependencyCache    *DependencyCache  `yaml:"dependency_cache"`
 	SupervisorPath     string            `yaml:"supervisor_path"`
@@ -90,20 +93,21 @@ type Config struct {
 	PerTenant        int    `yaml:"max_jobs_per_tenant"`
 	MaxPages         int    `yaml:"max_pages_per_tenant"`
 	Defaults         struct {
-		Image       string            `yaml:"image"`
-		Platform    string            `yaml:"platform"`
-		CPU         string            `yaml:"cpu"`
-		Memory      string            `yaml:"memory"`
-		Scratch     string            `yaml:"scratch"`
-		Timeout     string            `yaml:"timeout"`
-		StartWindow string            `yaml:"start_window"`
-		Env         map[string]string `yaml:"env"`
-		Routes      []c2j.Route       `yaml:"routes"`
+		Base         string            `yaml:"base"`
+		Capabilities []string          `yaml:"capabilities"`
+		Image        string            `yaml:"image,omitempty"`
+		Platform     string            `yaml:"platform"`
+		CPU          string            `yaml:"cpu"`
+		Memory       string            `yaml:"memory"`
+		Scratch      string            `yaml:"scratch"`
+		Timeout      string            `yaml:"timeout"`
+		StartWindow  string            `yaml:"start_window"`
+		Env          map[string]string `yaml:"env"`
+		Routes       []c2j.Route       `yaml:"routes"`
 	} `yaml:"defaults"`
 	Providers                                              map[string]Provider `yaml:"providers"`
 	Targets                                                []Target            `yaml:"targets"`
-	Allocation                                             compute.Allocation  `yaml:"-"`
-	AutoPlatform                                           bool                `yaml:"-"`
+	Allocation                                             provider.Allocation `yaml:"-"`
 	Poll, Cool, Call, Batch, ExecutionTimeout, StartWindow time.Duration       `yaml:"-"`
 	Claim                                                  time.Duration       `yaml:"-"`
 	Lease                                                  time.Duration       `yaml:"-"`
@@ -162,13 +166,38 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 			c.Targets[i].JobDB = uri
 		}
 	}
-	if c.Defaults.Image == "" {
-		c.Defaults.Image = "ghcr.io/colony-2/base2:latest"
+	if c.Defaults.Base != "" && c.Defaults.Image != "" {
+		return nil, fmt.Errorf("defaults.base and legacy defaults.image are mutually exclusive")
 	}
-	if c.Defaults.Platform == "" {
-		c.Defaults.Platform = "linux/" + runtime.GOARCH
-		c.AutoPlatform = true
+	if c.Defaults.Image != "" {
+		if c.Defaults.Platform == "" {
+			c.Defaults.Platform = "linux/arm64"
+		}
+		c.Defaults.Base, err = bases.OCI(c.Defaults.Image, strings.ToLower(c.Defaults.Platform))
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		if c.Defaults.Base == "" {
+			c.Defaults.Base = bases.Default
+		}
+		if c.Defaults.Platform != "" {
+			selector := c.Defaults.Base
+			if selector == bases.Default {
+				selector = "ubuntu-26*"
+			}
+			c.Defaults.Base, err = bases.Constrain(selector, strings.ToLower(c.Defaults.Platform))
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
+	for key := range c.Defaults.Env {
+		if strings.HasPrefix(key, "C2J_EXECUTION_") || key == "C2J_JOBDB" || strings.HasPrefix(key, "PULSE_") {
+			return nil, fmt.Errorf("reserved executor environment key")
+		}
+	}
+
 	if c.HTTP.Listen == "" {
 		port := os.Getenv("PORT")
 		if port == "" {
@@ -247,7 +276,7 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 	if c.BatchSize < 1 || c.BatchSize > 100 || c.PerTenant < 1 || c.MaxPages < 1 {
 		return nil, fmt.Errorf("invalid batch/page limits")
 	}
-	a := compute.Allocation{Image: c.Defaults.Image, Platform: strings.ToLower(c.Defaults.Platform)}
+	a := provider.Allocation{Base: c.Defaults.Base, Capabilities: append([]string(nil), c.Defaults.Capabilities...)}
 	for _, v := range []struct {
 		s   string
 		p   *int64
@@ -262,18 +291,11 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 		}
 		*v.p = n
 	}
-	ref, e := reference.ParseNormalizedNamed(a.Image)
-	if e != nil {
-		return nil, e
-	}
-	a.Image = reference.TagNameOnly(ref).String()
-	if e = a.Validate(); e != nil {
-		return nil, e
+	if err := providerutil.Allocation(a); err != nil {
+		return nil, err
 	}
 	c.Allocation = a
-	if _, e = c2j.Process("db", "job", a, c.Defaults.Env, nil); e != nil {
-		return nil, e
-	}
+
 	if len(c.Defaults.Routes) == 0 {
 		c.Defaults.Routes = []c2j.Route{{JobType: "recipe"}}
 	}
@@ -300,7 +322,14 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 		switch p.Type {
 		case "remote", "docker", "cloudrun", "ecs", "azurejobs", "plugin":
 		default:
-			return nil, fmt.Errorf("unknown provider type %q", p.Type)
+			if _, ok := providerregistry.Lookup(p.Type); !ok {
+				return nil, fmt.Errorf("unknown provider type %q", p.Type)
+			}
+		}
+		if len(p.Options) > 0 {
+			if _, ok := providerregistry.Lookup(p.Type); !ok {
+				return nil, fmt.Errorf("provider config requires a registered Go provider")
+			}
 		}
 		if err := validatePlugin(p); err != nil {
 			return nil, err
