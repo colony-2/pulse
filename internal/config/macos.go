@@ -25,7 +25,6 @@ type MacOSConfig struct {
 }
 type MacOSBase struct {
 	Name           string   `yaml:"name"`
-	Aliases        []string `yaml:"aliases"`
 	Image          string   `yaml:"image"`
 	OSVersion      string   `yaml:"os_version"`
 	SSHUsername    string   `yaml:"ssh_username"`
@@ -72,7 +71,7 @@ func MacOSOptions(p Provider) (MacOSConfig, error) {
 		return c, fmt.Errorf("provider requires matching tart/orchard connection settings")
 	}
 	if c.Bases == nil {
-		c.Bases = []MacOSBase{{Name: DefaultMacOSBase, Image: DefaultMacOSImage, OSVersion: "15.7.7", SSHUsername: "admin", Aliases: []string{"macos", "darwin", "macos-15"}, Capabilities: []string{"nix", "git", "node", "pnpm", "uv", "python"}}}
+		c.Bases = []MacOSBase{{Name: DefaultMacOSBase, Image: DefaultMacOSImage, OSVersion: "15.7.7", SSHUsername: "admin", Capabilities: []string{"nix", "git", "node", "pnpm", "uv", "python"}}}
 	}
 	if c.Slots == nil {
 		c.Slots = []MacOSSlot{{Name: "standard", Count: 4, Base: DefaultMacOSBase}}

@@ -19,9 +19,11 @@ scratch), a typed `JobRef`, an opaque exported `Lease`, and optional deadlines.
 The provider owns executor startup, supplies the exact lease to c2j, and reports
 verified execution allocation facts. It must not claim replacement work. Keep
 credentials out of diagnostics, argv, the child environment, and instance lists.
-The current c2j integration still reports concrete image/platform allocation
-facts; Pulse's native adapters also expose the resolved label as
-`PULSE_EXECUTION_BASE`. A selector is never an allocation fact.
+Use c2j v0.0.118 or later and report the concrete selected label with
+`C2J_EXECUTION_BASE` or `--execution-base`. Pulse's native adapters also retain
+`PULSE_EXECUTION_BASE` and concrete image/platform facts for legacy requests.
+A selector is never an allocation fact: c2j compares each current request with
+the actual allocation, including after a job yields or changes requirements.
 
 ## Link an implementation into a custom Pulse host
 
@@ -92,17 +94,17 @@ them to its native container catalog.
 
 ## Base selectors
 
-Match case-sensitively against concrete names and explicitly declared family
-aliases. Each `*`, anywhere, matches zero or more characters, including `/`.
+Match case-sensitively against concrete names. There are no aliases. Each `*`,
+anywhere, matches zero or more characters, including `/`.
 Repeated stars are allowed. All other characters are literal: there are no `?`
 wildcards, character classes, escapes, regexes, or version comparisons. Match
-the entire name or alias. Empty selectors are invalid.
+the entire name. Empty selectors are invalid.
 
-For example, `ubuntu-26.04-arm64` with aliases `ubuntu` and `linux` matches
-`ubuntu-26*arm64`, `ubuntu*`, `linux*`, and `*`. There is no implicit ordering or
-preference for the newest match. Select only candidates satisfying every resource,
-capability, and deadline requirement. Providers must agree on label meanings for
-portable fallback; an alias describes the executor environment, not its host.
+For example, `ubuntu-26.04-arm64` matches `ubuntu-26*arm64`, `ubuntu*`,
+and `*`. It does not match `linux*` or the exact label `ubuntu`. There is no
+implicit ordering or preference for the newest match. Select only candidates
+satisfying every resource, capability, and deadline requirement. Providers must agree on label meanings for
+portable fallback. Labels describe the executor environment.
 
 ## Existing engines and transports
 

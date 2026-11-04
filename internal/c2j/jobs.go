@@ -60,8 +60,8 @@ func (j Job) Allocation(defaults provider.Allocation) (provider.Allocation, erro
 		}
 		return defaults, providerutil.Allocation(defaults)
 	}
-	if v.Demand.SchemaVersion != execution.DemandSchemaVersion {
-		return defaults, fmt.Errorf("unsupported demand schema %d", v.Demand.SchemaVersion)
+	if err := v.Demand.Validate(); err != nil {
+		return defaults, fmt.Errorf("invalid execution demand: %w", err)
 	}
 	r := v.Demand.Effective
 	a := defaults
@@ -79,7 +79,9 @@ func (j Job) Allocation(defaults provider.Allocation) (provider.Allocation, erro
 		}
 	}
 	a.Capabilities = append(append([]string(nil), defaults.Capabilities...), r.Capabilities...)
-	if r.Image != nil {
+	if r.Base != nil {
+		a.Base = *r.Base
+	} else if r.Image != nil {
 		platform := "linux/arm64"
 		if r.Platform != nil {
 			platform = strings.ToLower(*r.Platform)

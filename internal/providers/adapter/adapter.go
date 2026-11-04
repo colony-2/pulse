@@ -53,6 +53,7 @@ func (p *Provider) Submit(ctx context.Context, launches []provider.Launch) ([]pr
 			continue
 		}
 		process.Env["PULSE_EXECUTION_BASE"] = b.Name
+		process.Env["C2J_EXECUTION_BASE"] = b.Name
 		process.Env["C2J_EXECUTION_CAPABILITIES"] = "[]"
 		process.Stdin = compute.SecretInput(l.Lease)
 		native = append(native, compute.Launch{Request: compute.Request{LaunchID: l.LaunchID, Allocation: a, TimeoutSeconds: l.TimeoutSeconds, StartBefore: l.StartBefore, Metadata: metadata}, Process: process})

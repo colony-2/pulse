@@ -3,10 +3,10 @@ package bases
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/colony-2/c2j/pkg/execution"
 	"github.com/colony-2/pulse/pkg/compute"
 	"github.com/distribution/reference"
 )
@@ -16,14 +16,13 @@ const Image = "ghcr.io/colony-2/base2:latest"
 
 type Base struct {
 	Name, Image, Platform string
-	Aliases               []string
 }
 
 // Catalog returns a fresh catalog; callers may filter by their backend's platforms.
 func Catalog() []Base {
 	return []Base{
-		{"ubuntu-26.04-arm64", Image, "linux/arm64", []string{"ubuntu", "linux"}},
-		{"ubuntu-26.04-amd64", Image, "linux/amd64", []string{"ubuntu", "linux"}},
+		{"ubuntu-26.04-arm64", Image, "linux/arm64"},
+		{"ubuntu-26.04-amd64", Image, "linux/amd64"},
 	}
 }
 
@@ -40,11 +39,7 @@ func Match(selector, name string) bool {
 	if Validate(selector) != nil {
 		return false
 	}
-	parts := strings.Split(selector, "*")
-	for i := range parts {
-		parts[i] = regexp.QuoteMeta(parts[i])
-	}
-	return regexp.MustCompile("(?s)^" + strings.Join(parts, ".*") + "$").MatchString(name)
+	return execution.MatchBase(selector, name)
 }
 
 // OCI preserves legacy image/platform requests as exact native base identifiers.
@@ -88,10 +83,8 @@ func Resolve(selector string, platforms []string) (Base, error) {
 		if !supported(b.Platform) {
 			continue
 		}
-		for _, name := range append([]string{b.Name}, b.Aliases...) {
-			if Match(selector, name) {
-				return b, nil
-			}
+		if Match(selector, b.Name) {
+			return b, nil
 		}
 	}
 	return Base{}, fmt.Errorf("no supported base matches selector")

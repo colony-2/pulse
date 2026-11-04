@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/colony-2/c2j/pkg/execution"
 	provider "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/bases"
 	"github.com/colony-2/pulse/pkg/compute"
@@ -41,10 +42,25 @@ func TestResolveAndDeliverLeaseWithoutMutatingAssignment(t *testing.T) {
 	if n.Image != bases.Image || n.Platform != "linux/arm64" || n.Process.Stdin != compute.SecretInput(l.Lease) || !reflect.DeepEqual(l, before) {
 		t.Fatal("base or lease mapping incorrect")
 	}
-	want := map[string]string{"C2J_EXECUTION_CPU": "1500m", "C2J_EXECUTION_MEMORY": "1.025k", "C2J_EXECUTION_EPHEMERAL_STORAGE": "2Ki", "C2J_EXECUTION_IMAGE": bases.Image, "C2J_EXECUTION_PLATFORM": "linux/arm64", "PULSE_EXECUTION_BASE": "ubuntu-26.04-arm64", "C2J_EXECUTION_CAPABILITIES": "[]", "PULSE_JOB_ID": "job", "LITERAL": "${no-expansion}"}
+	want := map[string]string{"C2J_EXECUTION_CPU": "1500m", "C2J_EXECUTION_MEMORY": "1.025k", "C2J_EXECUTION_EPHEMERAL_STORAGE": "2Ki", "C2J_EXECUTION_IMAGE": bases.Image, "C2J_EXECUTION_PLATFORM": "linux/arm64", "PULSE_EXECUTION_BASE": "ubuntu-26.04-arm64", "C2J_EXECUTION_BASE": "ubuntu-26.04-arm64", "C2J_EXECUTION_CAPABILITIES": "[]", "PULSE_JOB_ID": "job", "LITERAL": "${no-expansion}"}
 	for k, v := range want {
 		if n.Process.Env[k] != v {
 			t.Errorf("env %s=%q want %q", k, n.Process.Env[k], v)
+		}
+	}
+	// A later request is compared with the concrete allocation, independently
+	// of the selector that Pulse originally admitted.
+	actual := execution.Allocation{SchemaVersion: execution.SchemaVersion, Base: n.Process.Env["C2J_EXECUTION_BASE"]}
+	for _, tt := range []struct {
+		selector string
+		matches  bool
+	}{
+		{l.Base, true}, {"ubuntu*arm64", true}, {actual.Base, true},
+		{"ubuntu*amd64", false}, {"linux*", false},
+	} {
+		mismatches, err := execution.Compare(execution.Requirements{Base: &tt.selector}, actual)
+		if err != nil || (len(mismatches) == 0) != tt.matches {
+			t.Errorf("worker comparison for %q: %v, %v", tt.selector, mismatches, err)
 		}
 	}
 	for _, v := range append(n.Process.Command, n.Process.Args...) {
@@ -68,7 +84,7 @@ func TestMixedDeclinesAndUncertainty(t *testing.T) {
 	caps := assignment("caps")
 	caps.Capabilities = []string{"docker"}
 	ok := assignment("ok")
-	ok.Base = "linux*"
+	ok.Base = "ubuntu*"
 	out, err := p.Submit(t.Context(), []provider.Launch{noArch, caps, ok})
 	if err == nil || len(out) != 3 || len(b.launches) != 1 || b.launches[0].LaunchID != "ok" || b.launches[0].Platform != "linux/amd64" {
 		t.Fatal(out, err)

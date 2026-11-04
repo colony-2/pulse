@@ -10,6 +10,7 @@ import (
 
 	"github.com/colony-2/c2j/pkg/execution"
 	"github.com/colony-2/jobdb/pkg/jobdb"
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
 
@@ -17,10 +18,10 @@ import (
 )
 
 func TestClaimExportSnapshotAndRelease(t *testing.T) {
-	ctx := context.Background()
+	ctx := celltest.Context(context.Background())
 	backend := toy.New()
-	memory := "8Gi"
-	demand, err := execution.Initial(nil, true, execution.Requirements{Resources: execution.Resources{Memory: &memory}})
+	memory, base := "8Gi", "macos*arm64"
+	demand, err := execution.Initial(nil, true, execution.Requirements{Base: &base, Resources: execution.Resources{Memory: &memory}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,11 +29,11 @@ func TestClaimExportSnapshotAndRelease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	job, err := backend.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobType: "recipe", Data: jobdb.NewTaskDataOrPanic(1), ClientPayloadUpdate: &jobdb.ClientPayloadUpdate{Mode: "reset", Value: payload}}})
+	job, err := celltest.Submit(backend, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "recipe", Data: jobdb.NewTaskDataOrPanic(1), ClientPayloadUpdate: &jobdb.ClientPayloadUpdate{Mode: "reset", Value: payload}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(remote.NewServer(backend))
+	server := httptest.NewServer(celltest.Handler(remote.NewServer(backend)))
 	defer server.Close()
 	uri := server.URL + "/tenant"
 	client, err := NewEmbedded([]Connection{{URI: uri}})
@@ -45,7 +46,7 @@ func TestClaimExportSnapshotAndRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, err := claimed.Job.Allocation(provider.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Base: "oci:linux/amd64:docker.io/library/runner:1"})
-	if err != nil || a.MemoryBytes != 8<<30 {
+	if err != nil || a.MemoryBytes != 8<<30 || a.Base != base {
 		t.Fatal("did not use leased demand", a, err)
 	}
 	if another, err := client.Claim(ctx, uri, listed, "other-owner", time.Minute, []Route{{JobType: "recipe"}}); err != nil || another != nil {
@@ -81,13 +82,13 @@ func TestClaimExportSnapshotAndRelease(t *testing.T) {
 }
 
 func TestDiscoveredClaimCapabilityExpires(t *testing.T) {
-	ctx := t.Context()
+	ctx := celltest.Context(t.Context())
 	backend := toy.New()
-	_, err := backend.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobType: "recipe", Data: jobdb.NewTaskDataOrPanic(nil)}})
+	_, err := celltest.Submit(backend, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "recipe", Data: jobdb.NewTaskDataOrPanic(nil)}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(remote.NewServer(backend))
+	server := httptest.NewServer(celltest.Handler(remote.NewServer(backend)))
 	defer server.Close()
 	uri := server.URL + "/tenant"
 	client, err := NewEmbedded([]Connection{{URI: uri}})

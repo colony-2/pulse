@@ -8,6 +8,7 @@ import (
 	"github.com/colony-2/c2j/pkg/execution"
 	"github.com/colony-2/c2j/pkg/joblist"
 	"github.com/colony-2/jobdb/pkg/jobdb"
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
 	jobremote "github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
 	"github.com/colony-2/pulse/pkg/compute"
@@ -45,7 +46,8 @@ func TestCLIThroughListingAndProviderProtocols(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := page.Jobs[0]
-	initial, err := execution.Initial(&job.Execution.Demand.Effective, true, execution.Requirements{})
+	base := "ubuntu-26*arm64"
+	initial, err := execution.Initial(&job.Execution.Demand.Effective, true, execution.Requirements{Base: &base})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,19 +57,19 @@ func TestCLIThroughListingAndProviderProtocols(t *testing.T) {
 		t.Run(source, func(t *testing.T) {
 			isPlugin := strings.HasPrefix(source, "plugin-")
 			backend := toy.New()
-			_, err := backend.SubmitJob(context.Background(), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: job.TenantID, JobID: job.JobID, JobType: "recipe", Metadata: metadata, Data: jobdb.NewTaskDataOrPanic(1)}})
+			_, err := celltest.Submit(backend, celltest.Context(t.Context()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "first", CellRepo: "github.com/acme/first", TenantId: job.TenantID, JobID: job.JobID, JobType: "recipe", Metadata: metadata, Data: jobdb.NewTaskDataOrPanic(1)}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := backend.SubmitJob(context.Background(), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: job.TenantID, JobID: "second-job", JobType: "recipe", Metadata: metadata2, Data: jobdb.NewTaskDataOrPanic(1)}}); err != nil {
+			if _, err := celltest.Submit(backend, celltest.Context(t.Context()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "second", CellRepo: "github.com/acme/second", TenantId: job.TenantID, JobID: "second-job", JobType: "recipe", Metadata: metadata2, Data: jobdb.NewTaskDataOrPanic(1)}}); err != nil {
 				t.Fatal(err)
 			}
-			db := httptest.NewServer(jobremote.NewServer(leasedListRuntime{Runtime: backend, list: func(ctx context.Context, req jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
+			db := httptest.NewServer(celltest.Handler(jobremote.NewServer(leasedListRuntime{Runtime: backend, list: func(ctx context.Context, req jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
 				if req.MetadataFilter != nil || len(req.TenantIds) != 1 || req.TenantIds[0] != job.TenantID {
 					t.Errorf("incorrect tenant query: %+v", req)
 				}
 				return backend.ListJobs(ctx, req)
-			}}))
+			}})))
 			defer db.Close()
 			var mu sync.Mutex
 			submitted := 0
@@ -117,7 +119,7 @@ func TestCLIThroughListingAndProviderProtocols(t *testing.T) {
 					if !strings.Contains(args, "run with-lease") || !strings.Contains(args, "--lease-file -") || strings.Contains(args, "--worker-id") || strings.Contains(args, "--on-not-ready") {
 						t.Error("incorrect lease command", args)
 					}
-					if item.TimeoutSeconds != 0 || item.CPUMillis != 1000 || item.Image != "ghcr.io/colony-2/base2:latest" || item.Metadata["pulse_job_id"] == "" || item.Process.Env["C2J_EXECUTION_CPU"] != "1000m" || item.Process.Env["PULSE_JOB_ID"] == "" || item.Process.Env["PULSE_CONFIG"] != "" {
+					if item.TimeoutSeconds != 0 || item.CPUMillis != 1000 || item.Image != "ghcr.io/colony-2/base2:latest" || item.Metadata["pulse_job_id"] == "" || item.Process.Env["C2J_EXECUTION_CPU"] != "1000m" || item.Process.Env["C2J_EXECUTION_BASE"] != "ubuntu-26.04-arm64" || item.Process.Env["PULSE_JOB_ID"] == "" || item.Process.Env["PULSE_CONFIG"] != "" {
 						t.Error(item)
 					}
 					results = append(results, map[string]any{"launch_id": item.LaunchID, "status": "accepted"})

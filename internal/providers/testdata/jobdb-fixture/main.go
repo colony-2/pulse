@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/sqlite"
 )
@@ -78,7 +79,7 @@ func main() {
 		}
 	})
 	mux.HandleFunc("/forbidden", func(w http.ResponseWriter, _ *http.Request) { forbidden.Add(1) })
-	api := remote.NewServer(backend)
+	api := celltest.Handler(remote.NewServer(backend))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/lease") || r.URL.Path == "/v1/jobs/poll" {
 			claims.Add(1)

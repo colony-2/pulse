@@ -27,8 +27,9 @@ func TestCatalogAndArchitectureConstraints(t *testing.T) {
 	for _, tt := range []struct{ selector, platform, want string }{
 		{Default, "", "ubuntu-26.04-arm64"},
 		{"ubuntu-26.04-amd64", "", "ubuntu-26.04-amd64"},
-		{"linux*", "linux/amd64", "ubuntu-26.04-amd64"},
+		{"ubuntu*", "linux/amd64", "ubuntu-26.04-amd64"},
 		{"ubuntu*", "linux/arm64", "ubuntu-26.04-arm64"},
+		{"linux*", "", ""}, {"ubuntu", "", ""},
 		{Default, "linux/amd64", ""}, {"debian*", "", ""},
 	} {
 		var platforms []string

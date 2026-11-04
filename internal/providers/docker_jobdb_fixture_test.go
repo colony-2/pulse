@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	// Keep the separately compiled testdata fixture's dependencies in go mod tidy.
 	_ "github.com/colony-2/jobdb/pkg/jobdb/runtime/sqlite"
@@ -99,6 +100,9 @@ func newDockerJobDB(t *testing.T, ctx context.Context, docker func(*testing.T, .
 	f := &dockerJobDB{url: "http://" + net.JoinHostPort(network.IPAddress, "8080"), controllerURL: controllerURL, publishedPort: port, client: client, ctx: ctx}
 	f.backend, err = remote.New(controllerURL, client)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.backend.CreateCell(ctx, jobdb.CreateCellRequest{TenantID: "docker-test", Name: "test", Repo: "example.test/pulse-fixture"}); err != nil {
 		t.Fatal(err)
 	}
 	f.hash = string(f.request(t, "GET", "hash"))

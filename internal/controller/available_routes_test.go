@@ -13,6 +13,7 @@ import (
 
 	"github.com/colony-2/c2j/pkg/execution"
 	"github.com/colony-2/jobdb/pkg/jobdb"
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
 	compute "github.com/colony-2/pulse-provider-api"
@@ -44,17 +45,17 @@ func TestAvailableRouteDiscoveryAndAdmission(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			changed := mode == "changed route and demand" || mode == "task provisioning rejection"
 			rejected := mode == "provisioning rejection" || mode == "task provisioning rejection"
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(celltest.Context(t.Context()), 10*time.Second)
 			defer cancel()
 			backend := toy.New()
-			server := httptest.NewServer(remote.NewServer(backend))
+			server := httptest.NewServer(celltest.Handler(remote.NewServer(backend)))
 			defer server.Close()
 			uri := server.URL + "/tenant"
 			client, err := c2j.NewEmbedded([]c2j.Connection{{URI: uri}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			handle, err := backend.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobType: "recipe", Data: jobdb.NewTaskDataOrPanic(nil)}})
+			handle, err := celltest.Submit(backend, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "recipe", Data: jobdb.NewTaskDataOrPanic(nil)}})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -34,9 +34,9 @@ targets:
     launch_services: [{name: mac, priority: 1}]
 ```
 
-The default base is `macos-sequoia-15.7.7-arm64`, with explicit aliases `macos`,
-`darwin`, and `macos-15`. It uses the image/version pair validated by the pinned
-library release:
+The default base is `macos-sequoia-15.7.7-arm64`, selectable with `macos*` or
+`macos*arm64`. There are no aliases. It uses the image/version pair validated
+by the pinned library release:
 
 ```text
 ghcr.io/cirruslabs/macos-sequoia-base@sha256:eee659985b01e4df2a6c0754bd8d25e54969933c43fdcd4edef8bea337b3d354
@@ -62,7 +62,7 @@ Both provider types accept a strict `config` mapping:
 | `tart` | Local settings for `type: tart`. |
 | `orchard` | Required connection settings for `type: orchard`. |
 
-Each base accepts `name`, `aliases`, digest-pinned `image`, `os_version`,
+Each base accepts `name`, digest-pinned `image`, `os_version`,
 `ssh_username` (default `admin`), `ssh_password_env`, optional
 `ssh_host_key_file`, and `capabilities`. The library verifies the actual guest OS
 version and supports the six capability probes listed above. Define slots with
@@ -92,7 +92,7 @@ deadline so a cold image download can outlast `call_timeout`. Shutdown cancels
 reconciliation before closing the runtime. `run --once` does not wait for cold
 slots to become ready; continuous operation prepares and maintains the pool.
 
-Pulse resolves `*` anywhere against configured base names and aliases before
+Pulse resolves `*` anywhere against configured concrete base names before
 calling this library release, which itself supports only prefix matching. The
 original assignment remains unchanged for fallback to other providers. A second
 matching base is tried only after a definite capacity/constraint decline;
@@ -102,7 +102,12 @@ This release runs macOS ARM64 guests. Scratch reservations, positive
 infrastructure timeouts, start-before deadlines, and `defaults.env` are not
 supported and are declined. Use c2j recipe timeouts. Capabilities and resource
 requirements are passed to the library for admission and verification. The
-current c2j image/platform compatibility path remains container-oriented: use
+legacy c2j image/platform compatibility path remains container-oriented: use
 `defaults.base` for these macOS providers and omit legacy image/platform requests.
 Supply a JobDB URL reachable from the VM; Docker's loopback-host rewrite does not
 apply to Tart or Orchard.
+
+The pinned pulse-tart library does not yet report `C2J_EXECUTION_BASE` and
+embeds an older c2j worker. It needs an upstream update before workers can
+decode JobDB v0.0.70 lease capabilities and execute new c2j base demands.
+A Pulse dependency update alone does not upgrade those guest binaries.

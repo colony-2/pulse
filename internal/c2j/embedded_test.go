@@ -65,7 +65,7 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 			t.Errorf("changed opaque token %q", req.PageToken)
 		}
 		return jobdb.ListJobsResponse{Jobs: []jobdb.JobSummary{{
-			JobKey: jobdb.JobKey{TenantId: req.TenantIds[0], JobId: "job"}, GoalID: "goal", OtherGoalIDs: []string{}, JobType: "recipe", Status: jobdb.JobStatusCrashConcern,
+			JobKey: jobdb.JobKey{TenantId: req.TenantIds[0], JobId: "job"}, Cell: "app", CellID: "cell-app", CellRepo: "github.com/acme/app", GoalID: "goal", OtherGoalIDs: []string{}, JobType: "recipe", Status: jobdb.JobStatusCrashConcern,
 			NextRoute: &jobdb.Route{JobType: "recipe", TaskType: "input:opaque"}, AvailableAt: now, CancelRequested: true,
 			Metadata: metadata, ClientPayload: payload,
 		}, {JobKey: jobdb.JobKey{TenantId: req.TenantIds[0], JobId: "bad"}, GoalID: "bad-goal", OtherGoalIDs: []string{}, Status: jobdb.JobStatusReady, Metadata: json.RawMessage(`{"execution":{"schema_version":99}}`)}}}, nil
@@ -97,7 +97,7 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 				return
 			}
 			j := page.Jobs[0]
-			if j.Tenant != tenant || j.Repository != "https://github.com/acme/app.git" || j.Next.TaskType != "input:opaque" || !j.AvailableAt.Equal(now) || !j.CancelRequested || j.Execution.Status != "specified" || j.Execution.Source != "yield" || !reflect.DeepEqual(j.Execution.Demand, &current.Demand) || !reflect.DeepEqual(j.Execution.Initial, &demand) || !reflect.DeepEqual(execution.Inspect(j.Metadata, nil).Initial, &demand) {
+			if j.Tenant != tenant || j.Repository != "github.com/acme/app" || j.Next.TaskType != "input:opaque" || !j.AvailableAt.Equal(now) || !j.CancelRequested || j.Execution.Status != "specified" || j.Execution.Source != "yield" || !reflect.DeepEqual(j.Execution.Demand, &current.Demand) || !reflect.DeepEqual(j.Execution.Initial, &demand) || !reflect.DeepEqual(execution.Inspect(j.Metadata, nil).Initial, &demand) {
 				t.Errorf("lost typed data: %+v", j)
 			}
 			a, err := j.Allocation(provider.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Base: "oci:linux/amd64:docker.io/library/alpine:3"})

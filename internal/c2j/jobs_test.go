@@ -106,7 +106,7 @@ func TestRecordedLegacyC2JListRejected(t *testing.T) {
 		t.Fatal(page, e)
 	}
 	_, e = page.Jobs[0].Allocation(provider.Allocation{CPUMillis: 250, MemoryBytes: 1 << 20, ScratchBytes: 1 << 20, Base: "oci:linux/arm64:registry.example/runner:1"})
-	if e == nil || !strings.Contains(e.Error(), "unsupported demand schema 1") {
+	if e == nil || !strings.Contains(e.Error(), "unsupported execution schema version 1") {
 		t.Fatal("legacy demand accepted", e)
 	}
 }
@@ -149,10 +149,14 @@ func TestRequestedPinnedImagePassesC2JCompatibility(t *testing.T) {
 
 func TestCapabilitiesAndBaseDefaultFromClaimedDemand(t *testing.T) {
 	image, platform := "alpine:3", "linux/amd64"
+	ubuntu, macos, custom := "ubuntu-26*arm64", "macos*", "custom-runner"
 	for _, tt := range []struct {
 		req  execution.Requirements
 		want string
 	}{
+		{execution.Requirements{Base: &ubuntu}, ubuntu},
+		{execution.Requirements{Base: &macos, Capabilities: []string{"git", "nix"}}, macos},
+		{execution.Requirements{Base: &custom}, custom},
 		{execution.Requirements{Capabilities: []string{"docker"}}, "ubuntu-26*arm64"},
 		{execution.Requirements{Platform: &platform}, "ubuntu-26.04-amd64"},
 		{execution.Requirements{Image: &image, Platform: &platform}, "oci:linux/amd64:docker.io/library/alpine:3"},
@@ -171,5 +175,26 @@ func TestCapabilitiesAndBaseDefaultFromClaimedDemand(t *testing.T) {
 		if err != nil || got.Base != tt.want || !reflect.DeepEqual(got.Capabilities, tt.req.Capabilities) {
 			t.Fatal(got, err)
 		}
+	}
+}
+
+func TestInvalidBaseDemandRejected(t *testing.T) {
+	base, image, platform := "ubuntu*", "alpine:3", "linux/arm64"
+	for _, tt := range []struct {
+		name    string
+		version int
+		req     execution.Requirements
+	}{
+		{"base and image", execution.DemandSchemaVersion, execution.Requirements{Base: &base, Image: &image}},
+		{"base and platform", execution.DemandSchemaVersion, execution.Requirements{Base: &base, Platform: &platform}},
+		{"base in legacy schema", 3, execution.Requirements{Base: &base}},
+		{"unknown schema", 99, execution.Requirements{Base: &base}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			j := Job{Tenant: "tenant", ID: "job", Execution: &View{Status: "specified", Demand: &execution.Demand{SchemaVersion: tt.version, RecipeResolution: "resolved", Effective: tt.req}}}
+			if _, err := j.Allocation(provider.Allocation{Base: bases.Default}); err == nil {
+				t.Fatal("invalid demand fell back to defaults")
+			}
+		})
 	}
 }

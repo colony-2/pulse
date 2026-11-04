@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
 	jobremote "github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
 	"github.com/colony-2/pulse/pkg/compute"
@@ -32,7 +33,7 @@ func TestCLIPluginLifecycle(t *testing.T) {
 			t.Fatalf("build %s: %s %v", build.dir, b, e)
 		}
 	}
-	db := httptest.NewServer(jobremote.NewServer(toy.New()))
+	db := httptest.NewServer(celltest.Handler(jobremote.NewServer(toy.New())))
 	defer db.Close()
 	var submissions atomic.Int32
 	var initializations atomic.Int32

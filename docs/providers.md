@@ -61,7 +61,9 @@ All cloud executor images need the updated `pulse-exec` helper to deliver lease 
 
 ## Lease transport
 
-Executor images must support `c2j run with-lease --lease-file -`. Pulse pins the c2j and JobDB integration APIs in [go.mod](../go.mod). Deploy a matching or compatible c2j binary and a JobDB server supporting authoritative supplied-lease renewal. The Ubuntu 26.04 base image checked during this migration includes c2j 0.0.116; `latest` can change. Providers advertising capability facts need an executor version supporting those facts.
+Executor images must support `c2j run with-lease --lease-file -`. Pulse pins c2j v0.0.118 and JobDB v0.0.70 in [go.mod](../go.mod). Upgrade the JobDB server and executor c2j together: this JobDB release exports version 2 lease capabilities, which older workers cannot decode. New jobs also use demand schema v4. Providers must report the concrete allocation label through `C2J_EXECUTION_BASE` or `--execution-base`.
+
+As checked on November 4, 2026, `ghcr.io/colony-2/base2:latest` still contains c2j 0.0.116 and fails the supplied-lease integration test with this release. Rebuild/publish it with a compatible worker before deploying this update. The pinned Tart/Orchard guest bundle needs the same worker upgrade and concrete base reporting; see [macOS limitations](macos-providers.md#runtime-behavior-and-limits).
 
 Remote providers receive an optional sensitive `process.stdin` field and must pipe it to the child exactly, then EOF. Upgrade existing provider implementations before deploying this controller. Unsupported stdin must produce a definite decline before side effects; silently dropping it is invalid.
 

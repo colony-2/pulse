@@ -62,7 +62,7 @@ func TestMacSelectorsAndSafeFallback(t *testing.T) {
 	}{
 		{name: "middle wildcard", base: "macos-*arm64", want: api.Accepted, calls: 1},
 		{name: "repeated stars", base: "macos**arm64", want: api.Accepted, calls: 1},
-		{name: "alias", base: "darwin*", want: api.Accepted, calls: 1},
+		{name: "aliases do not match", base: "darwin*", want: api.Unsupported, calls: 0},
 		{name: "linux default", base: "ubuntu-26*arm64", want: api.Unsupported},
 		{name: "next matching base", base: "macos*", outcomes: []api.Status{api.NoCapacity, api.Accepted}, want: api.Accepted, calls: 2},
 		{name: "constraints", base: "macos*", outcomes: []api.Status{api.Unsupported, api.Accepted}, want: api.Accepted, calls: 2},

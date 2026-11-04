@@ -113,7 +113,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 				run = pythonHTTPGet(f.url+"/gate") + "; " + pythonHTTPGet(f.url+"/forbidden")
 			}
 			run = "set -eu; " + run
-			rec, err := recipe.LoadRecipeFromString([]byte("id: docker-executor\n" + extra + "op: command_execution\ninputs:\n  run: " + fmt.Sprintf("%q", run) + "\noutputs:\n  result: '${{ op.outputs.stdout }}'\n"))
+			rec, err := recipe.LoadRecipeFromString([]byte("id: docker-executor\nexecution:\n  base: 'ubuntu-26*arm64'\n" + extra + "op: command_execution\ninputs:\n  run: " + fmt.Sprintf("%q", run) + "\noutputs:\n  result: '${{ op.outputs.stdout }}'\n"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -122,7 +122,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 				t.Fatal(err)
 			}
 			jobRef, err := starter.StartRecipeJob(ctx, workflowctl.StartJob{
-				TenantId: "docker-test", RecipeName: rec.GetMetadata().ID, GitRef: f.hash,
+				Cell: "test", CellRepo: "example.test/pulse-fixture", TenantId: "docker-test", RecipeName: rec.GetMetadata().ID, GitRef: f.hash,
 				JobContext: contextual.JobContext{
 					Workflow: contextual.WorkflowContext{ProjectId: "docker-test", CellName: "."},
 					GitBase:  contextual.GitBaseContext{BaseRepo: f.url + "/git/repo.git", BaseRef: f.hash, ResolvedBaseHash: f.hash},
@@ -134,7 +134,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 
 			key := jobRef.Key()
 
-			// Exercise no-config Docker defaults without discovering an installed
+			// Exercise default Docker discovery without discovering an installed
 			// Tart and preparing real macOS VMs as a side effect of this Docker test.
 			// Pulse's Docker/JobDB clients do not require host command-line tools.
 			cmd := exec.CommandContext(ctx, binary, "run", "--once")
@@ -146,6 +146,17 @@ func TestDockerC2JIntegration(t *testing.T) {
 				}
 			}
 			cmd.Env = append(cmd.Env, "PATH="+t.TempDir())
+			// JobDB cells require a portable hosted repository identity. Route its
+			// Git transport to this private fixture while preserving default providers.
+			fixtureConfig, err := json.Marshal(map[string]any{"defaults": map[string]any{"env": map[string]string{
+				"GIT_CONFIG_COUNT":   "1",
+				"GIT_CONFIG_KEY_0":   "url." + f.url + "/git/repo.git.insteadOf",
+				"GIT_CONFIG_VALUE_0": "https://example.test/pulse-fixture.git",
+			}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd.Env = append(cmd.Env, "PULSE_CONFIG="+string(fixtureConfig))
 			jobDB := f.controllerURL + "/docker-test"
 			if scenario == "localhost JobDB" {
 				jobDB = f.localhostURL(t) + "/docker-test"

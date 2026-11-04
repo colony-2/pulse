@@ -52,6 +52,7 @@ func TestMacOSConfiguration(t *testing.T) {
 		{"tart", "{}", true},
 		{"tart", "{slots: [{name: standard, count: 0, base: macos-custom}]}", true},
 		{"orchard", "{orchard: {url: https://orchard.example, worker: mac, token_env: ORCHARD_TOKEN, username: pulse}}", true},
+		{"tart", "{bases: [{name: macos-custom, aliases: [darwin]}]}", false},
 		{"tart", "{slotz: 4}", false}, {"tart", "{tart: {unknown: true}}", false},
 		{"tart", "{orchard: {url: https://orchard.example}}", false},
 		{"orchard", "{}", false}, {"orchard", "{tart: {}}", false},

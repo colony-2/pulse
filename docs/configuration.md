@@ -58,12 +58,19 @@ defaults:
 
 The native catalog contains `ubuntu-26.04-arm64` and `ubuntu-26.04-amd64`, both
 backed by `ghcr.io/colony-2/base2:latest` with an explicit matching platform.
-Their family aliases are `ubuntu` and `linux`. Each `*` anywhere matches zero or
-more characters, so `ubuntu-26*arm64`, `ubuntu*`, and `linux*` work. Matching is
-case-sensitive against the entire name or alias; all characters other than `*`
-are literal. Any supported match satisfying the other requirements is acceptable.
+Each `*` anywhere matches zero or more characters, so `ubuntu-26*arm64`
+and `ubuntu*` work. Matching is case-sensitive against the entire concrete
+name; all characters other than `*` are literal. There are no aliases:
+`linux*` does not match an Ubuntu label. Any supported match satisfying the
+other requirements is acceptable.
 There is no newest-match ordering. Broad selectors can resolve differently across
 providers or attempts. Concrete labels select OS/release/architecture together.
+
+Jobs submitted by c2j v0.0.118 use demand schema v4 and require a compatible
+worker in the executor image, even when they omit `base`. Pulse still accepts
+legacy v3 demands. Native providers pass the concrete selected label as
+`C2J_EXECUTION_BASE`; c2j compares it with each execution request. Updating
+Pulse does not update c2j inside an image.
 
 The default is ARM64 even on an AMD64 daemon. Unsupported platforms decline
 before launching. Use `base: ubuntu-26.04-amd64` for AMD64-only backends such as
@@ -134,7 +141,7 @@ Leave room in `batch_timeout` for provider submission after the claim phase, and
 
 `cooldown` is provisioning-failure backoff. After definite non-start, Pulse releases the unused lease by rescheduling the same route with a wait deadline, preserving the client payload and task coordinates for task routes. A job-only alternate is rescheduled without the prior input task coordinates. JobDB persists that wait across controller restarts. Pulse also keeps local failure backoff, including claim/preparation failures. Accepted and uncertain submissions have no local cooldown: they retain their lease until c2j releases it or it expires. A successful executor yield can therefore be scheduled on the next poll without waiting for an old cooldown.
 
-The configured `jobdb_token_env` authorizes discovery and claiming on the controller. It is not copied into the job container. Use a JobDB server containing commit `39ae1b444460` or later with `ListJobsRequest.AvailableRoutes` support, a c2j image supporting `run with-lease`, and a provider supporting sensitive stdin. Upgrade the server as well as Pulse: older servers may silently ignore the availability filter. No activation API or lease transfer transaction is required. See [provider image and transport requirements](providers.md).
+The configured `jobdb_token_env` authorizes discovery and claiming on the controller. It is not copied into the job container. Use JobDB v0.0.70 and c2j v0.0.118 (or compatible versions), with a provider supporting sensitive stdin. Upgrade the server and worker as well as Pulse: workers must decode version 2 lease capabilities, and the server must enforce `ListJobsRequest.AvailableRoutes`. No activation API or lease transfer transaction is required. See [provider image and transport requirements](providers.md).
 
 Discovery sends `defaults.routes` to JobDB as `AvailableRoutes` on every page. JobDB applies current lease eligibility, including due alternate routes, before pagination. Pulse does not infer eligibility from the stored `NextRoute`, status, or timestamps. A job-only route (empty task type) is not a wildcard. Acquisition rechecks the same supported routes atomically; a lost race launches nothing, and the acquired route and client payload govern execution. Local cooldown, duplicate suppression, resource validation, and provider admission still apply.
 

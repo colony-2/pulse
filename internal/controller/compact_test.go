@@ -15,6 +15,7 @@ import (
 
 	"github.com/colony-2/c2j/pkg/execution"
 	"github.com/colony-2/jobdb/pkg/jobdb"
+	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
 	compute "github.com/colony-2/pulse-provider-api"
@@ -28,7 +29,7 @@ import (
 func TestDiscoveryUsesLeasedDemand(t *testing.T) {
 	for _, mode := range []string{"changed demand", "absent demand", "unresolved overrides", "no metadata", "malformed demand", "unsupported demand", "malformed metadata", "unsupported metadata", "cancelled after discovery"} {
 		t.Run(mode, func(t *testing.T) {
-			ctx := t.Context()
+			ctx := celltest.Context(t.Context())
 			cpu, memory, image := "2", "2Gi", "registry.example/submitted:1"
 			initial, err := execution.Initial(nil, mode != "unresolved overrides", execution.Requirements{Resources: execution.Resources{CPU: &cpu, Memory: &memory}, Image: &image})
 			if err != nil {
@@ -47,12 +48,12 @@ func TestDiscoveryUsesLeasedDemand(t *testing.T) {
 				metadata = []byte(`{"execution":{"schema_version":99}}`)
 			}
 			backend := toy.New()
-			handle, err := backend.SubmitJob(ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{TenantId: "tenant", JobType: "recipe", Metadata: metadata, Data: jobdb.NewTaskDataOrPanic(nil)}})
+			handle, err := celltest.Submit(backend, ctx, jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "test", CellRepo: "example.test/test", TenantId: "tenant", JobType: "recipe", Metadata: metadata, Data: jobdb.NewTaskDataOrPanic(nil)}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			var requests atomic.Int32
-			handler := remote.NewServer(backend)
+			handler := celltest.Handler(remote.NewServer(backend))
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
 				handler.ServeHTTP(w, r)

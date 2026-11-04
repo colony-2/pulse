@@ -86,7 +86,7 @@ func macSettings(name string, p config.Provider, baseDir string) (tart.Config, t
 		if e != nil {
 			return c, local, remote, fmt.Errorf("cannot read macOS SSH host key")
 		}
-		c.Bases = append(c.Bases, tart.Base{Name: b.Name, Aliases: b.Aliases, Image: b.Image, OSVersion: b.OSVersion, SSHUsername: b.SSHUsername, SSHPassword: tart.Secret(password), SSHHostKey: key, Capabilities: b.Capabilities})
+		c.Bases = append(c.Bases, tart.Base{Name: b.Name, Image: b.Image, OSVersion: b.OSVersion, SSHUsername: b.SSHUsername, SSHPassword: tart.Secret(password), SSHHostKey: key, Capabilities: b.Capabilities})
 	}
 	for _, s := range options.Slots {
 		c.Slots = append(c.Slots, tart.SlotGroup{Name: s.Name, Count: s.Count, Base: s.Base, CPU: s.CPU, MemoryMiB: s.MemoryMiB})
@@ -186,9 +186,6 @@ func (p *macProvider) Submit(ctx context.Context, launches []api.Launch) ([]api.
 		// Try another match only after an explicit capacity/constraint decline.
 		for _, b := range p.bases {
 			matches := bases.Match(launch.Base, b.Name)
-			for _, alias := range b.Aliases {
-				matches = matches || bases.Match(launch.Base, alias)
-			}
 			if !matches {
 				continue
 			}
