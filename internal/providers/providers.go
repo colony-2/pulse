@@ -38,6 +38,13 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]provider.Provide
 	locals := map[string]local{}
 	for name, p := range cfg.Providers {
 		switch p.Type {
+		case "tart", "orchard":
+			instance, cleanup, err := buildMac(ctx, name, p, cfg)
+			if err != nil {
+				return fail(err)
+			}
+			out[name] = instance
+			closers = append(closers, cleanup)
 		case "plugin":
 			c, e := pluginprovider.New(ctx, name, p.Plugin, cfg.BaseDir, cfg.Call)
 			if e != nil {

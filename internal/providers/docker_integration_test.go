@@ -51,9 +51,12 @@ func TestDockerIntegration(t *testing.T) {
   cpu: "100m"
   memory: 256Mi
   scratch: 8Mi
+providers:
+  docker: {type: docker}
 targets:
   - instance_id: docker-integration
     jobdb: http://localhost/acme
+    launch_services: [{name: docker, priority: 1}]
 `
 	cfg, err := config.Parse([]byte(data))
 	if err != nil {
@@ -81,7 +84,7 @@ targets:
 		unenforced = strings.Contains(string(out), "WARN Docker resource limits unavailable")
 	})
 	t.Run("unspecified resources allow concurrent containers", func(t *testing.T) {
-		cfg, err := config.Parse([]byte("defaults: {image: 'alpine:3.21', platform: " + platform + "}\ntargets: [{jobdb: 'http://localhost/acme'}]\n"))
+		cfg, err := config.Parse([]byte("defaults: {image: 'alpine:3.21', platform: " + platform + "}\nproviders: {docker: {type: docker}}\ntargets: [{jobdb: 'http://localhost/acme', launch_services: [{name: docker, priority: 1}]}]\n"))
 		if err != nil {
 			t.Fatal(err)
 		}

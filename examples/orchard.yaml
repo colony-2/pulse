@@ -1,0 +1,21 @@
+# The controller may run on Linux; the selected Orchard worker runs macOS ARM64.
+defaults:
+  base: 'macos*'
+providers:
+  mac_fleet:
+    type: orchard
+    config:
+      orchard:
+        url: https://orchard.example
+        worker: mac-worker
+        username: pulse
+        token_env: ORCHARD_TOKEN
+      slots:
+        - name: standard
+          count: 4
+          base: macos-sequoia-15.7.7-arm64
+          cpu: 4
+          memory_mib: 8192
+targets:
+  - jobdb: https://jobdb.example/acme
+    launch_services: [{name: mac_fleet, priority: 1}]

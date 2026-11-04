@@ -40,7 +40,7 @@ func Register(kind string, factory Factory) error {
 		return fmt.Errorf("invalid provider registration")
 	}
 	switch kind {
-	case "docker", "cloudrun", "ecs", "azurejobs", "remote", "plugin":
+	case "docker", "cloudrun", "ecs", "azurejobs", "remote", "plugin", "tart", "orchard":
 		return fmt.Errorf("provider type %q is built in", kind)
 	}
 	registry.Lock()

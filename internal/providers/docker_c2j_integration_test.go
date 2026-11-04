@@ -134,16 +134,18 @@ func TestDockerC2JIntegration(t *testing.T) {
 
 			key := jobRef.Key()
 
-			// This is exactly the no-config installed CLI invocation. No executor,
-			// provider, image, socket, platform, resource, or environment overrides.
+			// Exercise no-config Docker defaults without discovering an installed
+			// Tart and preparing real macOS VMs as a side effect of this Docker test.
+			// Pulse's Docker/JobDB clients do not require host command-line tools.
 			cmd := exec.CommandContext(ctx, binary, "run", "--once")
 			cmd.Dir = t.TempDir()
 			for _, entry := range os.Environ() {
 				name, _, _ := strings.Cut(entry, "=")
-				if name != "PULSE_CONFIG" && name != "C2J_JOBDB" && name != "NO_PROXY" && name != "no_proxy" {
+				if name != "PATH" && name != "PULSE_CONFIG" && name != "C2J_JOBDB" && name != "NO_PROXY" && name != "no_proxy" {
 					cmd.Env = append(cmd.Env, entry)
 				}
 			}
+			cmd.Env = append(cmd.Env, "PATH="+t.TempDir())
 			jobDB := f.controllerURL + "/docker-test"
 			if scenario == "localhost JobDB" {
 				jobDB = f.localhostURL(t) + "/docker-test"

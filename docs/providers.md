@@ -11,17 +11,19 @@ resolution, executor construction, and typed job identity.
 | --- | --- |
 | `remote` | Authenticated HTTPS implementing [protocol v1](../REMOTE_PROVIDER_PROTOCOL.md). Uses `endpoint` and `token_env`. `allow_http` is an explicit development option. |
 | `docker` | Local Docker Engine on Linux or Docker Desktop on macOS, accessed over a Unix socket. Runs c2j directly without host mounts or a helper. Applies CPU/memory/swap limits when available; otherwise warns at startup and runs without those limits. One admission owner per daemon. |
+| `tart` | Local macOS ARM64 VMs through the linked `pulse-tart` Go library. Four default slots; requires Apple Silicon macOS and Tart. See [macOS providers](macos-providers.md). |
+| `orchard` | macOS ARM64 VMs on an Orchard worker through the same library. Explicit controller/worker configuration; the Pulse host can run on Linux. See [macOS providers](macos-providers.md). |
 | `cloudrun` | Cloud Run Jobs REST v2. Requires `project`, `region`, and optionally `service_account`. Uses native Google Application Default Credentials (attached service account, credential file, or federation). Optional `token_env` overrides discovery. |
 | `ecs` | Standalone Fargate tasks via the AWS SDK for Go v2. Requires `region`, `cluster`, `subnets`, `execution_role`, and `supervisor_path`; optional `task_role`, `security_groups`, and `public_ip`. Uses the AWS credential chain, including environment credentials and task/instance roles. |
 | `azurejobs` | Manual Container Apps Jobs REST API `2025-07-01`. Requires `subscription`, `resource_group`, `environment_id`, and `region`. Uses native Azure environment, workload-identity, or managed-identity credentials. Optional `token_env` overrides discovery. |
 
-These are built-in adapters; only `remote` requires a separate provider service. A future external-runner registry/dispatcher can implement that protocol without adding runner registration or long polling to Pulse.
+These implementations are built in. `remote` connects to a separate provider service; `orchard` connects to an Orchard controller. A future external-runner registry/dispatcher can implement the remote protocol without adding runner registration or long polling to Pulse.
 
 All cloud adapters work in the default distroless image. See [cloud authentication](cloud-authentication.md) for environment variables, mounted credential files, identity permissions, and refresh behavior.
 
 ### Local Docker capacity
 
-Omitting `providers` (or setting it to an empty map) creates a provider named `docker`. In that case, targets without `launch_services` default to `[{name: docker, priority: 1}]`. See [the minimal Docker example](../examples/docker-default.yaml). Explicit provider maps and target service selections are preserved; invalid or unavailable configured providers do not silently fall back to Docker.
+Omitting `providers` (or setting it to an empty map) creates a provider named `docker`, plus `tart` on Apple Silicon macOS when Tart is on `PATH`. Targets without `launch_services` use those providers at priority 1. See [the minimal Docker example](../examples/docker-default.yaml) and [macOS defaults](macos-providers.md). Explicit provider maps and target service selections are preserved; invalid or unavailable configured providers do not silently fall back to Docker.
 
 Pulse discovers the Docker socket in its core provider code, without invoking the Docker CLI. An explicit provider `socket` wins; otherwise Pulse uses a named `DOCKER_CONTEXT`, `DOCKER_HOST`, or the saved current context from Docker's configuration (`DOCKER_CONFIG` or `~/.docker`). The `default` context uses `DOCKER_HOST` when set, otherwise `/var/run/docker.sock`. With no selected context or host, Pulse uses Docker Desktop's `~/.docker/run/docker.sock` on macOS when present, otherwise `/var/run/docker.sock`. Socket symlinks are resolved so aliases share admission ownership. Selected contexts must use a local Unix socket; invalid or remote configurations fail instead of falling back to another daemon. Docker Desktop normally selects its `desktop-linux` context; a system `/var/run/docker.sock` symlink is optional ([Docker Desktop socket setup](https://docs.docker.com/desktop/setup/install/mac-permission-requirements/)).
 

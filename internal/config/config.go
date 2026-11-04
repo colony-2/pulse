@@ -17,7 +17,9 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -307,11 +309,12 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 	if len(c.Targets) == 0 {
 		return nil, fmt.Errorf("targets are required")
 	}
+	var defaultServices []Service
 	if len(c.Providers) == 0 {
-		c.Providers = map[string]Provider{"docker": {Type: "docker"}}
+		c.Providers, defaultServices = automaticProviders(runtime.GOOS, runtime.GOARCH, exec.LookPath)
 		for i := range c.Targets {
 			if len(c.Targets[i].Services) == 0 {
-				c.Targets[i].Services = []Service{{Name: "docker", Priority: 1}}
+				c.Targets[i].Services = append([]Service(nil), defaultServices...)
 			}
 		}
 	}
@@ -320,13 +323,17 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 			return nil, fmt.Errorf("empty provider name")
 		}
 		switch p.Type {
-		case "remote", "docker", "cloudrun", "ecs", "azurejobs", "plugin":
+		case "remote", "docker", "cloudrun", "ecs", "azurejobs", "plugin", "tart", "orchard":
 		default:
 			if _, ok := providerregistry.Lookup(p.Type); !ok {
 				return nil, fmt.Errorf("unknown provider type %q", p.Type)
 			}
 		}
-		if len(p.Options) > 0 {
+		if p.Type == "tart" || p.Type == "orchard" {
+			if _, err := MacOSOptions(p); err != nil {
+				return nil, err
+			}
+		} else if len(p.Options) > 0 {
 			if _, ok := providerregistry.Lookup(p.Type); !ok {
 				return nil, fmt.Errorf("provider config requires a registered Go provider")
 			}

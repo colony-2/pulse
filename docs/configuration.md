@@ -35,7 +35,7 @@ Pulse needs an HTTP(S) JobDB service with a tenant path. A missing tenant produc
 
 | Setting | Default |
 | --- | --- |
-| Provider | Local Docker, discovered using the active Docker context/socket |
+| Providers | Local Docker; also four-slot Tart on Apple Silicon macOS when installed |
 | Base selector | `ubuntu-26*arm64` |
 | Native image | `ghcr.io/colony-2/base2:latest` for Ubuntu 26.04 bases |
 | CPU / memory / scratch | Unspecified; no implicit resource requirements |
@@ -75,6 +75,8 @@ Providers must supply all names exactly; capabilities are not glob selectors.
 Current native/v1 transport adapters decline nonempty capability requirements
 because they do not provision and verify those optional interfaces. Registered
 Go providers can implement them; see [Go providers](implementing-a-go-provider.md).
+The built-in Tart and Orchard providers verify their configured macOS capabilities
+through the linked library; see [macOS providers](macos-providers.md).
 
 Legacy `defaults.image` and `defaults.platform` are translated into an exact
 `oci:<platform>:<normalized-image>` base. `base` and `image` are mutually exclusive.
@@ -84,6 +86,12 @@ requirements in its execution schema. An explicit c2j platform overrides the
 architecture in the built-in default, or constrains a configured base without
 broadening it. `defaults.platform` remains a compatibility constraint for existing
 configuration. Unknown custom base names are passed to registered Go providers.
+
+On Apple Silicon macOS with `tart` on `PATH`, an omitted/empty provider map enables
+Tart alongside Docker, with four slots of 4 vCPU and 8 GiB RAM. Explicit provider
+maps and launch-service lists remain authoritative. The Ubuntu default selector
+is preserved; use `defaults.base: 'macos*'` for macOS work. See
+[Tart and Orchard settings and examples](macos-providers.md).
 
 ## Execution lifetime
 

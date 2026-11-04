@@ -1,6 +1,6 @@
 module github.com/colony-2/pulse
 
-go 1.26
+go 1.26.0
 
 require (
 	cloud.google.com/go/auth v0.23.3
@@ -12,6 +12,7 @@ require (
 	github.com/colony-2/c2j v0.0.117-0.20261103043421-f1a153b898c5
 	github.com/colony-2/jobdb v0.0.65-0.20261029235121-6d86c38fc234
 	github.com/colony-2/pulse-provider-api v0.0.0-20261103203509-9991fd574083
+	github.com/colony-2/pulse-tart v0.0.0-20261104180313-8969860e2950
 	github.com/distribution/reference v0.6.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
@@ -82,13 +83,13 @@ require (
 	github.com/swaggest/refl v1.4.0 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20240823005443-9b4947da3948 // indirect
-	golang.org/x/mod v0.38.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
+	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260630182238-925bb5da69e7 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260630182238-925bb5da69e7 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
