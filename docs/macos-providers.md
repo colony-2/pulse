@@ -108,7 +108,6 @@ Supply a JobDB URL reachable from the VM; Docker's loopback-host rewrite does no
 apply to Tart or Orchard.
 
 The pinned pulse-tart library exposes `GetCapabilities` with a complete configured
-catalog, but does not yet report `C2J_EXECUTION_BASE` and embeds an older c2j
-worker. It needs an upstream update before workers can decode JobDB v0.0.70
-lease capabilities and execute new c2j base demands.
-A Pulse dependency update alone does not upgrade those guest binaries.
+catalog and passes the selected concrete base to c2j through `--execution-base`.
+Its guest bundle pins a c2j worker that supports JobDB v2 leases and base demand
+verification. Custom guest bundles must provide the same compatibility.
