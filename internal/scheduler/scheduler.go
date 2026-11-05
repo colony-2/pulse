@@ -182,12 +182,30 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 			copy(ordered[index:end], rotated)
 		}
 		p := ordered[index]
+		call, cancel := context.WithTimeout(ctx, s.CallTimeout)
+		capabilities, discoveryErr := p.Provider.GetCapabilities(call)
+		cancel()
+		if ctx.Err() != nil {
+			break
+		}
+		if discoveryErr == nil {
+			discoveryErr = providerutil.Capabilities(capabilities)
+		}
+		if discoveryErr != nil {
+			// Failed/malformed discovery is unknown, never an empty catalog.
+			capabilities = provider.Capabilities{}
+		}
 
 		next := []Job{}
-		launches := make([]provider.Launch, len(pending))
+		launches := make([]provider.Launch, 0, len(pending))
 		launchJobs := map[string]Job{}
-		for i, j := range pending {
-			launches[i] = j.Request
+		for _, j := range pending {
+			if !providerutil.Compatible(capabilities, j.Request.Allocation) {
+				results[j.Key] = Result{j.Key, p.Name, provider.Submission{LaunchID: j.Request.LaunchID, Status: provider.Unsupported, Reason: "provider capabilities do not match requested base or capabilities"}}
+				next = append(next, j)
+				continue
+			}
+			launches = append(launches, j.Request)
 			launchJobs[j.Request.LaunchID] = j
 		}
 

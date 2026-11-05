@@ -153,3 +153,7 @@ func TestConfiguredBatchSizeBoundsClaimCount(t *testing.T) {
 		}
 	}
 }
+
+func (*accept) GetCapabilities(context.Context) (compute.Capabilities, error) {
+	return compute.Capabilities{}, nil
+}

@@ -10,15 +10,15 @@ plugin or copied implementation is involved.
 
 When `providers` is omitted or empty, Pulse enables Docker and, on Apple Silicon
 macOS with `tart` on `PATH`, also enables a provider named `tart`. Targets without
-`launch_services` use both at priority 1. Explicit provider maps and explicit
-service lists remain authoritative. Intel macOS and Linux do not automatically
+`launch_services` use Docker at priority 1 and Tart at priority 2. Explicit
+provider maps and service lists remain authoritative. Intel macOS and Linux do not automatically
 enable local Tart. Orchard requires explicit connection settings.
 
 The default Tart pool has four independent slots, each with **4 vCPU and 8 GiB
 RAM**. Zero CPU/memory in an explicit group selects these library defaults;
 `count: 0` drains a group. Configure counts and sizes to fit the worker.
 
-Automatic detection preserves the default `ubuntu-26*arm64` selector. Select a
+Automatic detection preserves the default `ubuntu-26*` selector. Select a
 macOS base with `defaults.base: 'macos*'`; Linux work continues to use Docker.
 To run only Tart, including on a Mac without Docker installed, configure it
 explicitly as in [tart.yaml](../examples/tart.yaml). A minimal configuration is:
@@ -93,7 +93,7 @@ reconciliation before closing the runtime. `run --once` does not wait for cold
 slots to become ready; continuous operation prepares and maintains the pool.
 
 Pulse resolves `*` anywhere against configured concrete base names before
-calling this library release, which itself supports only prefix matching. The
+calling the library, preserving configured preference order. The
 original assignment remains unchanged for fallback to other providers. A second
 matching base is tried only after a definite capacity/constraint decline;
 unknown or malformed responses never trigger another launch attempt.
@@ -107,7 +107,8 @@ legacy c2j image/platform compatibility path remains container-oriented: use
 Supply a JobDB URL reachable from the VM; Docker's loopback-host rewrite does not
 apply to Tart or Orchard.
 
-The pinned pulse-tart library does not yet report `C2J_EXECUTION_BASE` and
-embeds an older c2j worker. It needs an upstream update before workers can
-decode JobDB v0.0.70 lease capabilities and execute new c2j base demands.
+The pinned pulse-tart library exposes `GetCapabilities` with a complete configured
+catalog, but does not yet report `C2J_EXECUTION_BASE` and embeds an older c2j
+worker. It needs an upstream update before workers can decode JobDB v0.0.70
+lease capabilities and execute new c2j base demands.
 A Pulse dependency update alone does not upgrade those guest binaries.

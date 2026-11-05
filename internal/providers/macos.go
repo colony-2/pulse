@@ -139,6 +139,9 @@ func buildMac(ctx context.Context, name string, p config.Provider, cfg *config.C
 		return nil, nil, fmt.Errorf("%s provider %s connectivity check failed: %w", p.Type, name, err)
 	}
 	host := &macProvider{runtime: r, bases: c.Bases, bootstrapTimeout: c.BootstrapTimeout, envUnsupported: len(cfg.Defaults.Env) != 0}
+	for _, slot := range c.Slots {
+		host.slots += slot.Count
+	}
 	return host, host.close, nil
 }
 
@@ -147,6 +150,7 @@ func buildMac(ctx context.Context, name string, p config.Provider, cfg *config.C
 type macProvider struct {
 	runtime          macRuntime
 	bases            []tart.Base
+	slots            int
 	bootstrapTimeout time.Duration
 	envUnsupported   bool
 	activity         sync.RWMutex
@@ -159,6 +163,9 @@ type macProvider struct {
 
 func (p *macProvider) List(ctx context.Context, q api.ListRequest) (api.ListResponse, error) {
 	return p.runtime.List(ctx, q)
+}
+func (p *macProvider) GetCapabilities(ctx context.Context) (api.Capabilities, error) {
+	return p.runtime.GetCapabilities(ctx)
 }
 func (p *macProvider) Submit(ctx context.Context, launches []api.Launch) ([]api.Submission, error) {
 	if err := providerutil.Launches(launches); err != nil {
@@ -181,8 +188,8 @@ func (p *macProvider) Submit(ctx context.Context, launches []api.Launch) ([]api.
 			out = append(out, result)
 			continue
 		}
-		// The pinned library supports prefix selectors only. Resolve with Pulse's
-		// matcher and pass concrete labels without changing the caller's assignment.
+		// Resolve in the configured preference order and pass concrete labels
+		// without changing the caller's assignment.
 		// Try another match only after an explicit capacity/constraint decline.
 		for _, b := range p.bases {
 			matches := bases.Match(launch.Base, b.Name)

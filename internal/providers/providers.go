@@ -17,6 +17,7 @@ import (
 	"github.com/colony-2/pulse/pkg/providerplugin"
 	"github.com/colony-2/pulse/pkg/providerregistry"
 	"github.com/distribution/reference"
+	"log/slog"
 	"maps"
 	"os"
 	"time"
@@ -158,6 +159,7 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]provider.Provide
 			out[name] = wrap(c, p.Type, cfg)
 		}
 	}
+	logProviders(ctx, slog.Default(), cfg, out)
 	return out, closeAll, nil
 }
 
@@ -174,7 +176,12 @@ func wrap(native compute.Provider, kind string, cfg *config.Config) provider.Pro
 		p.Platforms = []string{"linux/arm64", "linux/amd64"}
 	case "docker":
 		d := native.(*docker.Provider)
-		p.Platforms = d.SupportedPlatforms()
+		p.Platforms = []string{d.NativePlatform()}
+		for _, platform := range d.SupportedPlatforms() {
+			if platform != d.NativePlatform() {
+				p.Platforms = append(p.Platforms, platform)
+			}
+		}
 	}
 	if h, ok := native.(interface{ Health() providerplugin.Health }); ok {
 		return &pluginAdapter{Provider: p, health: h}

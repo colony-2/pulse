@@ -80,8 +80,9 @@ type DependencyCache struct {
 	MaxAge     string `yaml:"max_age"`
 }
 type Config struct {
-	BaseDir string `yaml:"-"`
-	HTTP    struct {
+	BaseDir           string `yaml:"-"`
+	TartAutoDiscovery string `yaml:"-"`
+	HTTP              struct {
 		Listen string `yaml:"listen"`
 	} `yaml:"http"`
 	PollInterval     string `yaml:"poll_interval"`
@@ -310,8 +311,9 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 		return nil, fmt.Errorf("targets are required")
 	}
 	var defaultServices []Service
+	c.TartAutoDiscovery = "disabled: explicit providers configured"
 	if len(c.Providers) == 0 {
-		c.Providers, defaultServices = automaticProviders(runtime.GOOS, runtime.GOARCH, exec.LookPath)
+		c.Providers, defaultServices, c.TartAutoDiscovery = automaticProviders(runtime.GOOS, runtime.GOARCH, exec.LookPath)
 		for i := range c.Targets {
 			if len(c.Targets[i].Services) == 0 {
 				c.Targets[i].Services = append([]Service(nil), defaultServices...)

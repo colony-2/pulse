@@ -81,14 +81,16 @@ func MacOSOptions(p Provider) (MacOSConfig, error) {
 
 // Automatic providers only apply when the provider map is omitted or empty.
 // Detection is observational: never run Tart or prepare VMs while loading YAML.
-func automaticProviders(goos, goarch string, lookPath func(string) (string, error)) (map[string]Provider, []Service) {
+func automaticProviders(goos, goarch string, lookPath func(string) (string, error)) (map[string]Provider, []Service, string) {
 	providers := map[string]Provider{"docker": {Type: "docker"}}
 	services := []Service{{Name: "docker", Priority: 1}}
 	if goos == "darwin" && goarch == "arm64" {
 		if _, err := lookPath("tart"); err == nil {
 			providers["tart"] = Provider{Type: "tart"}
-			services = append(services, Service{Name: "tart", Priority: 1})
+			services = append(services, Service{Name: "tart", Priority: 2})
+			return providers, services, "enabled: tart found on PATH"
 		}
+		return providers, services, "disabled: tart not found on PATH"
 	}
-	return providers, services
+	return providers, services, fmt.Sprintf("disabled: requires darwin/arm64; Pulse is running as %s/%s", goos, goarch)
 }

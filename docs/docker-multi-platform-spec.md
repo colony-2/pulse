@@ -42,8 +42,8 @@ to select an execution environment; legacy
 provider's detected execution support.
 
 This intentionally expands admission on capable daemons. Jobs without an
-image/base request now default to `ubuntu-26*arm64`, independently of the native
-architecture.
+image/base request default to `ubuntu-26*`, preferring the daemon's native
+architecture before verified emulation.
 
 ## Execution capability validation
 
@@ -106,8 +106,8 @@ SupportedPlatforms() []string
 
 A job with an explicit platform must run on exactly that platform. Base selectors
 resolve only against environments whose platforms the provider can execute.
-The default selector `ubuntu-26*arm64` remains ARM64; discovery does not rewrite
-it to the daemon's architecture. `ubuntu-26*` permits either architecture.
+The default selector `ubuntu-26*` permits either architecture and prefers the
+daemon's native platform. Explicit `ubuntu-26*arm64` requests remain ARM64.
 If no supported environment matches, the provider declines through the existing
 fallback flow. Legacy `defaults.platform` remains an explicit constraint.
 

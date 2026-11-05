@@ -36,10 +36,10 @@ Pulse needs an HTTP(S) JobDB service with a tenant path. A missing tenant produc
 | Setting | Default |
 | --- | --- |
 | Providers | Local Docker; also four-slot Tart on Apple Silicon macOS when installed |
-| Base selector | `ubuntu-26*arm64` |
+| Base selector | `ubuntu-26*` |
 | Native image | `ghcr.io/colony-2/base2:latest` for Ubuntu 26.04 bases |
 | CPU / memory / scratch | Unspecified; no implicit resource requirements |
-| Architecture | ARM64 by default; selected by the base label, not the controller/daemon architecture |
+| Architecture | Docker daemon native architecture first; explicit base requests override |
 | Execution timeout | Managed by c2j; no Pulse cap |
 | Docker capacity | Daemon CPU/memory capacity; `256Mi` accounting overhead per container |
 | Docker `capacity.max_containers` | `0` (unlimited) |
@@ -52,7 +52,7 @@ Job execution requirements override explicitly configured allocation defaults. O
 
 ```yaml
 defaults:
-  base: 'ubuntu-26*arm64'
+  base: 'ubuntu-26*'
   capabilities: []
 ```
 
@@ -72,10 +72,11 @@ legacy v3 demands. Native providers pass the concrete selected label as
 `C2J_EXECUTION_BASE`; c2j compares it with each execution request. Updating
 Pulse does not update c2j inside an image.
 
-The default is ARM64 even on an AMD64 daemon. Unsupported platforms decline
-before launching. Use `base: ubuntu-26.04-amd64` for AMD64-only backends such as
-the current Cloud Run and Azure adapters, or `base: 'ubuntu-26*'` to permit either
-architecture. Docker's startup probes determine which candidates it can execute.
+The default allows either architecture. Docker advertises and selects the
+daemon's native Linux architecture first, then verified emulated alternatives,
+on both macOS and Linux. Explicit selectors such as `ubuntu-26.04-amd64` or
+`ubuntu-26*arm64` override that preference. Docker's startup probes determine
+which candidates it can execute. Cloud Run and Azure currently advertise AMD64.
 
 `defaults.capabilities` and c2j's claimed capability requirements are combined.
 Providers must supply all names exactly; capabilities are not glob selectors.
@@ -322,3 +323,24 @@ docker run --rm --init --read-only --tmpfs /tmp -p 8080:8080 \
 ```
 
 The file must be readable by UID/GID `65532:65532`. The image no longer supplies `--config /etc/pulse/pulse.yaml` as default arguments, so existing deployments using that mounted path must add the explicit arguments shown above. No source is baked into the image; environment-only deployments start it without arguments.
+
+## Provider discovery and placement
+
+Every provider implements `GetCapabilities`. Startup logs show its ordered base
+labels and whether the catalog is complete, plus Tart's configured slot count.
+A separate message explains whether Tart auto-discovery was enabled or skipped.
+These describe configured support, not idle capacity or warmed images.
+
+Before each provider submission, Pulse refreshes its capabilities once per batch
+and filters the current leased demand. A complete catalog can rule out a base
+selector or a missing capability. For a partial catalog, an unlisted base remains
+unknown; an exact listed base still has a complete capability-name set. Failed
+or malformed discovery also means unknown, and does not discard work.
+
+Native container adapters advertise their named bases as a partial catalog because
+they also accept dynamic legacy `oci:` image requests. Legacy remote/plugin
+transports expose unknown support because their protocol lacks discovery. Thus
+these providers may still receive a request they subsequently decline. Resource
+limits, deadlines, and current capacity are always checked at admission. When
+all providers are provably incompatible, Pulse releases the claimed lease with
+backoff. Accepted or uncertain submissions never trigger fallback.

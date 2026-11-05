@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -16,7 +17,7 @@ func TestAutomaticTartDetection(t *testing.T) {
 	} {
 		t.Run(tc.os+tc.arch+map[bool]string{true: "-installed", false: "-missing"}[tc.available], func(t *testing.T) {
 			called := false
-			providers, services := automaticProviders(tc.os, tc.arch, func(name string) (string, error) {
+			providers, services, reason := automaticProviders(tc.os, tc.arch, func(name string) (string, error) {
 				called = true
 				if name != "tart" {
 					t.Fatal(name)
@@ -27,12 +28,21 @@ func TestAutomaticTartDetection(t *testing.T) {
 				return "", errors.New("not installed")
 			})
 			_, got := providers["tart"]
+			wantReason := "requires darwin/arm64"
+			if tc.want {
+				wantReason = "enabled: tart found on PATH"
+			} else if tc.os == "darwin" && tc.arch == "arm64" {
+				wantReason = "tart not found on PATH"
+			}
+			if !strings.Contains(reason, wantReason) {
+				t.Fatal("incorrect discovery explanation", reason)
+			}
 			if got != tc.want || providers["docker"].Type != "docker" || called != (tc.os == "darwin" && tc.arch == "arm64") {
 				t.Fatal(providers, called)
 			}
 			want := []Service{{Name: "docker", Priority: 1}}
 			if tc.want {
-				want = append(want, Service{Name: "tart", Priority: 1})
+				want = append(want, Service{Name: "tart", Priority: 2})
 				c, err := MacOSOptions(providers["tart"])
 				if err != nil || len(c.Slots) != 1 || c.Slots[0].Count != 4 || c.Slots[0].Base != DefaultMacOSBase {
 					t.Fatal(c, err)
@@ -63,6 +73,9 @@ func TestMacOSConfiguration(t *testing.T) {
 		}
 		if err == nil && (len(cfg.Providers) != 1 || cfg.Providers["mac"].Type != tc.kind) {
 			t.Fatal("explicit providers altered")
+		}
+		if err == nil && cfg.TartAutoDiscovery != "disabled: explicit providers configured" {
+			t.Fatal("explicit provider selection not explained", cfg.TartAutoDiscovery)
 		}
 	}
 	c, err := MacOSOptions(Provider{Type: "tart", Options: map[string]any{"slots": []any{map[string]any{"name": "standard", "count": 0, "base": DefaultMacOSBase}}}})

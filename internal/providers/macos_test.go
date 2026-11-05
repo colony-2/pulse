@@ -52,7 +52,7 @@ func macLaunch(base string) api.Launch {
 	return api.Launch{LaunchID: "test", Allocation: api.Allocation{Base: base, Capabilities: []string{"git"}}, Job: api.JobRef{JobDB: "https://db/tenant", InstanceID: "db", TenantID: "tenant", JobID: "job"}, Lease: "exact-lease"}
 }
 func TestMacSelectorsAndSafeFallback(t *testing.T) {
-	catalog := []tart.Base{{Name: "macos-15-arm64", Aliases: []string{"darwin"}}, {Name: "macos-26-arm64"}}
+	catalog := []tart.Base{{Name: "macos-15-arm64"}, {Name: "macos-26-arm64"}}
 	for _, tc := range []struct {
 		name, base string
 		outcomes   []api.Status
@@ -174,6 +174,10 @@ targets: [{jobdb: https://db/tenant, launch_services: [{name: mac, priority: 1}]
 		t.Fatal("construction/check created VMs")
 	}
 	p := providers["mac"].(*macProvider)
+	caps, err := p.GetCapabilities(t.Context())
+	if err != nil || !caps.BasesComplete || len(caps.Bases) != 1 || caps.Bases[0].Name != config.DefaultMacOSBase || len(caps.Bases[0].Capabilities) != 6 || creates.Load() != 0 {
+		t.Fatal("library discovery lost support or provisioned VMs", caps, err)
+	}
 	page, err := p.List(t.Context(), api.ListRequest{})
 	if err != nil || len(page.Items) != 0 || creates.Load() != 0 {
 		t.Fatal("listing caused side effects", err)
@@ -222,4 +226,8 @@ func TestMacSettingsPathsSecretsAndDrain(t *testing.T) {
 	if _, _, _, err = macSettings("mac", p, root); err == nil {
 		t.Fatal("missing token accepted")
 	}
+}
+
+func (*macFake) GetCapabilities(context.Context) (api.Capabilities, error) {
+	return api.Capabilities{}, nil
 }

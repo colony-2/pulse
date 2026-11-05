@@ -68,6 +68,7 @@ func runPulse(parent context.Context, cfg *config.Config, once, check bool, out 
 		return e
 	}
 	providerCtx, providerCancel := context.WithTimeout(ctx, cfg.Call)
+	slog.Info("provider selection", "tart_auto_discovery", cfg.TartAutoDiscovery)
 	instances, closeProviders, e := providers.Build(providerCtx, cfg)
 	providerCancel()
 	if e != nil {

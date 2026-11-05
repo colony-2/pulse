@@ -157,7 +157,7 @@ func TestCapabilitiesAndBaseDefaultFromClaimedDemand(t *testing.T) {
 		{execution.Requirements{Base: &ubuntu}, ubuntu},
 		{execution.Requirements{Base: &macos, Capabilities: []string{"git", "nix"}}, macos},
 		{execution.Requirements{Base: &custom}, custom},
-		{execution.Requirements{Capabilities: []string{"docker"}}, "ubuntu-26*arm64"},
+		{execution.Requirements{Capabilities: []string{"docker"}}, bases.Default},
 		{execution.Requirements{Platform: &platform}, "ubuntu-26.04-amd64"},
 		{execution.Requirements{Image: &image, Platform: &platform}, "oci:linux/amd64:docker.io/library/alpine:3"},
 	} {

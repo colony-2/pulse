@@ -81,6 +81,7 @@ func TestMixedDeclinesAndUncertainty(t *testing.T) {
 	b := &backend{err: errors.New("lost reply"), result: []compute.Submission{{LaunchID: "ok", Status: compute.Accepted}}}
 	p := &Provider{Native: b, Platforms: []string{"linux/amd64"}}
 	noArch := assignment("arch")
+	noArch.Base = "ubuntu-26*arm64"
 	caps := assignment("caps")
 	caps.Capabilities = []string{"docker"}
 	ok := assignment("ok")
@@ -135,5 +136,38 @@ func TestMalformedNativeListingIsNotAnEmptySuccess(t *testing.T) {
 	b.page = compute.ListResponse{Items: []compute.Instance{{ID: "orphan", LaunchID: "a", State: "running", Metadata: map[string]string{"pulse_job_id": "job"}, Refs: []string{}}}}
 	if _, err := p.List(t.Context(), provider.ListRequest{}); err == nil {
 		t.Fatal("missing job identity accepted")
+	}
+}
+
+func TestCapabilitiesAndResolutionPreferNativePlatform(t *testing.T) {
+	for _, native := range []string{"linux/arm64", "linux/amd64"} {
+		t.Run(native, func(t *testing.T) {
+			alternate := "linux/amd64"
+			if native == alternate {
+				alternate = "linux/arm64"
+			}
+			b := &backend{result: []compute.Submission{{LaunchID: "native", Status: compute.Accepted}}}
+			p := &Provider{Native: b, Platforms: []string{native, alternate}}
+			caps, err := p.GetCapabilities(t.Context())
+			if err != nil || caps.BasesComplete || len(caps.Bases) != 2 {
+				t.Fatal(caps, err)
+			}
+			l := assignment("native")
+			l.Base = bases.Default
+			if _, err = p.Submit(t.Context(), []provider.Launch{l}); err != nil {
+				t.Fatal(err)
+			}
+			if len(b.launches) != 1 || b.launches[0].Platform != native || b.launches[0].Process.Env["C2J_EXECUTION_BASE"] != caps.Bases[0].Name {
+				t.Fatal("native preference not shared by discovery and submission", caps, b.launches)
+			}
+			// An explicit request must still override the preference.
+			l.Base = caps.Bases[1].Name
+			if _, err = p.Submit(t.Context(), []provider.Launch{l}); err != nil {
+				t.Fatal(err)
+			}
+			if b.launches[1].Platform != alternate {
+				t.Fatal("explicit architecture broadened")
+			}
+		})
 	}
 }

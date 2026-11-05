@@ -32,7 +32,7 @@ func TestC2JConventionsWithoutPulseConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ExecutionTimeout != 0 || cfg.Defaults.Timeout != "" || cfg.Targets[0].Tenant != "project" || cfg.Targets[0].Instance == "" || cfg.Allocation.Base != "ubuntu-26*arm64" || cfg.Allocation.CPUMillis != 0 || cfg.Allocation.MemoryBytes != 0 || cfg.Allocation.ScratchBytes != 0 || cfg.Providers["docker"].Type != "docker" || cfg.Targets[0].Services[0].Name != "docker" {
+	if cfg.ExecutionTimeout != 0 || cfg.Defaults.Timeout != "" || cfg.Targets[0].Tenant != "project" || cfg.Targets[0].Instance == "" || cfg.Allocation.Base != "ubuntu-26*" || cfg.Allocation.CPUMillis != 0 || cfg.Allocation.MemoryBytes != 0 || cfg.Allocation.ScratchBytes != 0 || cfg.Providers["docker"].Type != "docker" || cfg.Targets[0].Services[0].Name != "docker" {
 		t.Fatalf("wrong defaults: %+v", cfg)
 	}
 	instance := cfg.Targets[0].Instance

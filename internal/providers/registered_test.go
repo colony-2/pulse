@@ -104,3 +104,7 @@ func TestFailedGoProviderConstructionCleansUp(t *testing.T) {
 		t.Fatal("unsafe failed initialization", err)
 	}
 }
+
+func (*externalProvider) GetCapabilities(context.Context) (provider.Capabilities, error) {
+	return provider.Capabilities{}, nil
+}

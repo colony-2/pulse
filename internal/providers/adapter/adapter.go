@@ -24,6 +24,22 @@ type Provider struct {
 
 var _ provider.Provider = (*Provider)(nil)
 
+func (p *Provider) GetCapabilities(ctx context.Context) (provider.Capabilities, error) {
+	if err := ctx.Err(); err != nil {
+		return provider.Capabilities{}, err
+	}
+	// Legacy remote/plugin transports cannot discover backend support.
+	if len(p.Platforms) == 0 {
+		return provider.Capabilities{}, nil
+	}
+	out := provider.Capabilities{Bases: []provider.BaseCapabilities{}}
+	for _, b := range bases.Catalog(p.Platforms...) {
+		out.Bases = append(out.Bases, provider.BaseCapabilities{Name: b.Name, Capabilities: []string{}})
+	}
+	// The catalog is partial because legacy oci: image requests are dynamic.
+	return out, nil
+}
+
 func Metadata(l provider.Launch) map[string]string {
 	return map[string]string{"pulse_metadata_version": "1", "pulse_managed_by": "pulse", "pulse_jobdb_instance_id": l.Job.InstanceID, "pulse_tenant_id": l.Job.TenantID, "pulse_job_id": l.Job.JobID, "pulse_launch_id": l.LaunchID, "pulse_jobdb": l.Job.JobDB}
 }

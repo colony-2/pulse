@@ -40,7 +40,7 @@ pulse run --once
 pulse version
 ```
 
-Pulse discovers eligible c2j jobs across every repository in the tenant. Docker is the default provider, and jobs without an image/base request use the selector `ubuntu-26*arm64`, resolving to `ubuntu-26.04-arm64` backed by `ghcr.io/colony-2/base2:latest`. Jobs without resource requirements have no CPU, memory, or scratch allocation, and Docker has no default container-count cap. Docker detects native and emulated execution support, but the default remains ARM64 regardless of the controller or daemon architecture. Use `defaults.base: ubuntu-26.04-amd64` to select AMD64, or `ubuntu-26*` to allow either architecture.
+Pulse discovers eligible c2j jobs across every repository in the tenant. Docker is the default provider, and jobs without an image/base request use the selector `ubuntu-26*`, resolving to a supported Ubuntu 26.04 base backed by `ghcr.io/colony-2/base2:latest`. Jobs without resource requirements have no CPU, memory, or scratch allocation, and Docker has no default container-count cap. Docker detects native and emulated execution support and prefers its daemon's native architecture on macOS and Linux. Explicit base selectors still constrain the architecture.
 
 For Colony base images, Docker automatically retains uv, pnpm, and Nix dependencies
 in tenant-scoped volumes across jobs and restarts. No Nix daemon or manual cache
@@ -107,7 +107,7 @@ targets:
 
 Define these service names under `providers` and supply `JOBDB_TOKEN` for authenticated JobDB discovery and lease acquisition. Pulse never passes this broad credential to the executor. Omit `jobdb_token_env` for an unauthenticated deployment. Provider authentication is configured separately.
 
-When `providers` is omitted or empty, Pulse enables a local provider named `docker`. On Apple Silicon macOS with `tart` on `PATH`, it also enables `tart` with four slots (4 vCPU and 8 GiB each). Targets without `launch_services` use the detected providers at priority 1. Explicit provider maps remain authoritative. The default base remains `ubuntu-26*arm64`; select `defaults.base: 'macos*'` for macOS work. See [Tart and Orchard configuration](docs/macos-providers.md).
+When `providers` is omitted or empty, Pulse enables a local provider named `docker`. On Apple Silicon macOS with `tart` on `PATH`, it also enables `tart` with four slots (4 vCPU and 8 GiB each). Targets without `launch_services` prefer Docker at priority 1, then Tart at priority 2. Explicit provider maps remain authoritative. The default base is `ubuntu-26*`; select `defaults.base: 'macos*'` for macOS work. See [Tart and Orchard configuration](docs/macos-providers.md).
 
 The default Docker pool uses the daemon’s CPU and memory capacity, with no container-count cap and 256 MiB accounting overhead per container. Start Docker Engine or Docker Desktop. Docker launches c2j directly and supplies its lease over native stdin, with no host mounts or helper installation. See [Docker defaults and overrides](docs/providers.md#local-docker-capacity).
 

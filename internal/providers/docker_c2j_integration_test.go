@@ -146,17 +146,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 				}
 			}
 			cmd.Env = append(cmd.Env, "PATH="+t.TempDir())
-			// JobDB cells require a portable hosted repository identity. Route its
-			// Git transport to this private fixture while preserving default providers.
-			fixtureConfig, err := json.Marshal(map[string]any{"defaults": map[string]any{"env": map[string]string{
-				"GIT_CONFIG_COUNT":   "1",
-				"GIT_CONFIG_KEY_0":   "url." + f.url + "/git/repo.git.insteadOf",
-				"GIT_CONFIG_VALUE_0": "https://example.test/pulse-fixture.git",
-			}}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			cmd.Env = append(cmd.Env, "PULSE_CONFIG="+string(fixtureConfig))
+
 			jobDB := f.controllerURL + "/docker-test"
 			if scenario == "localhost JobDB" {
 				jobDB = f.localhostURL(t) + "/docker-test"

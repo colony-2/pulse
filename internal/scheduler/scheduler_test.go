@@ -520,3 +520,11 @@ func TestMalformedDeclineDoesNotFallBackOrRelease(t *testing.T) {
 		t.Fatal("unsafe malformed decline", out, err)
 	}
 }
+
+func (*fake) GetCapabilities(context.Context) (compute.Capabilities, error) {
+	return compute.Capabilities{}, nil
+}
+
+func (*blocking) GetCapabilities(context.Context) (compute.Capabilities, error) {
+	return compute.Capabilities{}, nil
+}

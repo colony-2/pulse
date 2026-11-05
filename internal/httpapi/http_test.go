@@ -156,3 +156,7 @@ func TestAggregateDeadlineAndPaginationCycle(t *testing.T) {
 		t.Fatal(w.Code)
 	}
 }
+
+func (fakeProvider) GetCapabilities(context.Context) (compute.Capabilities, error) {
+	return compute.Capabilities{}, nil
+}

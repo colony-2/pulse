@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/colony-2/c2j/pkg/gitprofile"
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	// Keep the separately compiled testdata fixture's dependencies in go mod tidy.
@@ -104,6 +105,17 @@ func newDockerJobDB(t *testing.T, ctx context.Context, docker func(*testing.T, .
 	}
 	if _, err := f.backend.CreateCell(ctx, jobdb.CreateCellRequest{TenantID: "docker-test", Name: "test", Repo: "example.test/pulse-fixture"}); err != nil {
 		t.Fatal(err)
+	}
+	// Cell identity is portable; c2j's tenant Git profiles route transport to the
+	// private fixture. c2j deliberately ignores ambient GIT_CONFIG_* overrides.
+	profile, err := json.Marshal(gitprofile.Profile{Version: 1, Entries: []gitprofile.Entry{{URL: f.url + "/git/repo.git", RewriteFrom: []string{"https://example.test/pulse-fixture.git"}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"read", "write"} {
+		if _, err := f.backend.SetTenantConfigurationValue(ctx, jobdb.SetTenantConfigurationValueRequest{TenantID: "docker-test", Name: gitprofile.ProfilePrefix + name, Value: profile}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.hash = string(f.request(t, "GET", "hash"))
 	t.Logf("JobDB fixture: controller=%s worker peer=%s published port=%s", f.controllerURL, f.url, port)

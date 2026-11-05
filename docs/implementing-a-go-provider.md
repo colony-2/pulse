@@ -10,6 +10,7 @@ import provider "github.com/colony-2/pulse-provider-api"
 var _ provider.Provider = (*Provider)(nil)
 
 // Implement:
+// GetCapabilities(context.Context) (provider.Capabilities, error)
 // Submit(context.Context, []provider.Launch) ([]provider.Submission, error)
 // List(context.Context, provider.ListRequest) (provider.ListResponse, error)
 ```
@@ -126,3 +127,17 @@ Native resources retain the six previous correlation labels plus `pulse_jobdb`
 that label, configured instance/tenant targets supply the endpoint. Legacy
 resources outside those targets cannot produce a complete `JobRef` and listing
 reports an error instead of inventing an endpoint. Instances never include leases.
+
+## Capability discovery
+
+Implement the required `GetCapabilities` method with an ordered list of concrete
+base labels and each base's complete set of optional capability names. Set
+`BasesComplete` only when the catalog is exhaustive. Dynamic image providers
+should return a partial catalog. Providers without discovery may return the zero
+value (unknown support); an empty complete catalog instead means no support.
+
+Pulse uses this API for startup diagnostics and for excluding proven base or
+capability mismatches after acquiring the job's current demand. Read-only
+discovery must not provision resources and must keep busy/warming bases listed.
+`Submit` must still validate every constraint and report concrete allocation
+facts. See the [shared API contract](https://github.com/colony-2/pulse-provider-api).

@@ -30,7 +30,7 @@ func TestCatalogAndArchitectureConstraints(t *testing.T) {
 		{"ubuntu*", "linux/amd64", "ubuntu-26.04-amd64"},
 		{"ubuntu*", "linux/arm64", "ubuntu-26.04-arm64"},
 		{"linux*", "", ""}, {"ubuntu", "", ""},
-		{Default, "linux/amd64", ""}, {"debian*", "", ""},
+		{"ubuntu-26*arm64", "linux/amd64", ""}, {"debian*", "", ""},
 	} {
 		var platforms []string
 		if tt.platform != "" {

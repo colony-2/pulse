@@ -11,19 +11,34 @@ import (
 	"github.com/distribution/reference"
 )
 
-const Default = "ubuntu-26*arm64"
+const Default = "ubuntu-26*"
 const Image = "ghcr.io/colony-2/base2:latest"
 
 type Base struct {
 	Name, Image, Platform string
 }
 
-// Catalog returns a fresh catalog; callers may filter by their backend's platforms.
-func Catalog() []Base {
-	return []Base{
+// Catalog returns a fresh catalog in platform preference order. With no
+// platforms it returns the whole catalog in its default order.
+func Catalog(platforms ...string) []Base {
+	all := []Base{
 		{"ubuntu-26.04-arm64", Image, "linux/arm64"},
 		{"ubuntu-26.04-amd64", Image, "linux/amd64"},
 	}
+	if len(platforms) == 0 {
+		return all
+	}
+	out := []Base{}
+	seen := map[string]bool{}
+	for _, platform := range platforms {
+		for _, b := range all {
+			if b.Platform == platform && !seen[b.Name] {
+				out = append(out, b)
+				seen[b.Name] = true
+			}
+		}
+	}
+	return out
 }
 
 func Validate(selector string) error {
@@ -79,7 +94,7 @@ func Resolve(selector string, platforms []string) (Base, error) {
 		}
 		return Base{Name: selector, Image: image, Platform: platform}, nil
 	}
-	for _, b := range Catalog() {
+	for _, b := range Catalog(platforms...) {
 		if !supported(b.Platform) {
 			continue
 		}
