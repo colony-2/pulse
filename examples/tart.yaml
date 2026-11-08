@@ -4,15 +4,9 @@ defaults:
 providers:
   mac:
     type: tart
-    config:
-      slots:
-        - name: standard
-          count: 4
-          base: macos-sequoia-15.7.7-arm64
-          cpu: 4
-          memory_mib: 8192
-      # tart: {binary: /opt/homebrew/bin/tart, home: /Users/me/.tart}
-      # state_dir: /Users/me/Library/Application Support/pulse/my-tart-state
+    # No config is required: pulse-tart supplies its VM and Linux Docker defaults.
+    # config:
+    #   vm_counts: {macos: 1, linux: 2, total: 2}
 targets:
   - jobdb: https://jobdb.example/acme
     launch_services: [{name: mac, priority: 1}]

@@ -107,7 +107,7 @@ targets:
 
 Define these service names under `providers` and supply `JOBDB_TOKEN` for authenticated JobDB discovery and lease acquisition. Pulse never passes this broad credential to the executor. Omit `jobdb_token_env` for an unauthenticated deployment. Provider authentication is configured separately.
 
-When `providers` is omitted or empty, Pulse enables a local provider named `docker`. On Apple Silicon macOS with `tart` on `PATH`, it also enables `tart` with four slots (4 vCPU and 8 GiB each). Targets without `launch_services` prefer Docker at priority 1, then Tart at priority 2. Explicit provider maps remain authoritative. The default base is `ubuntu-26*`; select `defaults.base: 'macos*'` for macOS work. See [Tart and Orchard configuration](docs/macos-providers.md).
+When `providers` is omitted or empty, Pulse enables a local provider named `docker`. On Apple Silicon macOS with `tart` on `PATH`, it also enables `tart` using pulse-tart’s default two macOS and four Linux job VMs (4 vCPU / 8 GiB each; Linux includes Docker). Targets without `launch_services` prefer Docker at priority 1, then Tart at priority 2. Explicit provider maps remain authoritative. The default base is `ubuntu-26*`; select `defaults.base: 'macos*'` for macOS work. See [Tart and Orchard configuration](docs/macos-providers.md).
 
 The default Docker pool uses the daemon’s CPU and memory capacity, with no container-count cap and 256 MiB accounting overhead per container. Start Docker Engine or Docker Desktop. Docker launches c2j directly and supplies its lease over native stdin, with no host mounts or helper installation. See [Docker defaults and overrides](docs/providers.md#local-docker-capacity).
 
@@ -118,8 +118,8 @@ c2j owns recipe and operation timeouts; Pulse imposes no execution timeout by de
 | Provider | Type | Notes |
 | --- | --- | --- |
 | Local Docker | `docker` | CPU, memory, and container-count budgets; no disk quotas. |
-| Local Tart | `tart` | macOS ARM64 VMs; automatically enabled on Apple Silicon Macs with Tart installed. |
-| Orchard | `orchard` | macOS ARM64 VMs on a configured Orchard worker. |
+| Local Tart | `tart` | macOS and Linux ARM64 VMs, with Docker included on Linux guests and opt-in Docker on macOS; automatically enabled on Apple Silicon Macs with Tart installed. |
+| Orchard | `orchard` | macOS and Linux ARM64 VMs; Linux includes Docker, macOS Docker is opt-in on a configured Orchard worker. |
 | Remote runner service | `remote` | Batch submission with partial acceptance and capacity fallback. |
 | Google Cloud Run Jobs | `cloudrun` | Native job execution and supported resource sizes. |
 | AWS ECS Fargate | `ecs` | Standalone tasks with the execution supervisor. |

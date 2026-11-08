@@ -44,7 +44,7 @@ func TestAutomaticTartDetection(t *testing.T) {
 			if tc.want {
 				want = append(want, Service{Name: "tart", Priority: 2})
 				c, err := MacOSOptions(providers["tart"])
-				if err != nil || len(c.Slots) != 1 || c.Slots[0].Count != 4 || c.Slots[0].Base != DefaultMacOSBase {
+				if err != nil || c.Slots != nil || c.Bases != nil {
 					t.Fatal(c, err)
 				}
 			}
@@ -78,7 +78,7 @@ func TestMacOSConfiguration(t *testing.T) {
 			t.Fatal("explicit provider selection not explained", cfg.TartAutoDiscovery)
 		}
 	}
-	c, err := MacOSOptions(Provider{Type: "tart", Options: map[string]any{"slots": []any{map[string]any{"name": "standard", "count": 0, "base": DefaultMacOSBase}}}})
+	c, err := MacOSOptions(Provider{Type: "tart", Options: map[string]any{"slots": []any{map[string]any{"name": "standard", "count": 0, "base": "macos-custom"}}}})
 	if err != nil || c.Slots[0].Count != 0 {
 		t.Fatal("draining group replaced by default", err)
 	}

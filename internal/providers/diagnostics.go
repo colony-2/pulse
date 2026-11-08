@@ -32,6 +32,9 @@ func logProviders(ctx context.Context, log *slog.Logger, cfg *config.Config, ins
 		}
 		if p, ok := instances[name].(*macProvider); ok {
 			attrs = append(attrs, "configured_slots", p.slots)
+			if p.vmCounts.Total != nil {
+				attrs = append(attrs, "max_job_vms", *p.vmCounts.Total, "max_macos_job_vms", *p.vmCounts.MacOS, "max_linux_job_vms", *p.vmCounts.Linux)
+			}
 		}
 		log.Info("provider enabled", attrs...)
 	}

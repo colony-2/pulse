@@ -7,11 +7,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const DefaultMacOSBase = "macos-sequoia-15.7.7-arm64"
-
-// This image/version pair is validated by the pinned pulse-tart release.
-const DefaultMacOSImage = "ghcr.io/cirruslabs/macos-sequoia-base@sha256:eee659985b01e4df2a6c0754bd8d25e54969933c43fdcd4edef8bea337b3d354"
-
 // MacOSConfig is host-owned configuration for the shared Tart/Orchard library.
 // Credentials are resolved from environment variables only during construction.
 type MacOSConfig struct {
@@ -19,12 +14,22 @@ type MacOSConfig struct {
 	StateDir         string          `yaml:"state_dir"`
 	Bases            []MacOSBase     `yaml:"bases"`
 	Slots            []MacOSSlot     `yaml:"slots"`
+	VMCounts         MacOSVMCounts   `yaml:"vm_counts"`
 	BootstrapTimeout string          `yaml:"bootstrap_timeout"`
+	Docker           *MacOSDocker    `yaml:"docker"`
 	Tart             *TartOptions    `yaml:"tart"`
 	Orchard          *OrchardOptions `yaml:"orchard"`
 }
+
+// Nil uses the library convention; zero explicitly disables or drains capacity.
+type MacOSVMCounts struct {
+	MacOS *int `yaml:"macos"`
+	Linux *int `yaml:"linux"`
+	Total *int `yaml:"total"`
+}
 type MacOSBase struct {
 	Name           string   `yaml:"name"`
+	OS             string   `yaml:"os"`
 	Image          string   `yaml:"image"`
 	OSVersion      string   `yaml:"os_version"`
 	SSHUsername    string   `yaml:"ssh_username"`
@@ -33,27 +38,51 @@ type MacOSBase struct {
 	Capabilities   []string `yaml:"capabilities"`
 }
 type MacOSSlot struct {
-	Name      string `yaml:"name"`
-	Count     int    `yaml:"count"`
-	Base      string `yaml:"base"`
-	CPU       int64  `yaml:"cpu"`
-	MemoryMiB int64  `yaml:"memory_mib"`
+	Name          string `yaml:"name"`
+	Count         int    `yaml:"count"`
+	Base          string `yaml:"base"`
+	CPU           int64  `yaml:"cpu"`
+	MemoryMiB     int64  `yaml:"memory_mib"`
+	DockerProfile string `yaml:"docker_profile"`
+}
+type MacOSDocker struct {
+	Profiles     []MacOSDockerProfile `yaml:"profiles"`
+	ReadyTimeout string               `yaml:"ready_timeout"`
+}
+type MacOSDockerProfile struct {
+	Name           string `yaml:"name"`
+	Image          string `yaml:"image"`
+	SSHUsername    string `yaml:"ssh_username"`
+	SSHPasswordEnv string `yaml:"ssh_password_env"`
+	SSHHostKeyFile string `yaml:"ssh_host_key_file"`
+	CPU            int64  `yaml:"cpu"`
+	MemoryMiB      int64  `yaml:"memory_mib"`
+	DiskGiB        int64  `yaml:"disk_gib"`
+	EngineVersion  string `yaml:"engine_version"`
+}
+type MacOSDockerEndpoint struct {
+	Address string `yaml:"address"`
+	PortMin int    `yaml:"port_min"`
+	PortMax int    `yaml:"port_max"`
 }
 type TartOptions struct {
-	Binary         string `yaml:"binary"`
-	Home           string `yaml:"home"`
-	CommandTimeout string `yaml:"command_timeout"`
-	SSHTimeout     string `yaml:"ssh_timeout"`
+	Binary         string              `yaml:"binary"`
+	Home           string              `yaml:"home"`
+	CommandTimeout string              `yaml:"command_timeout"`
+	SSHTimeout     string              `yaml:"ssh_timeout"`
+	DockerEndpoint MacOSDockerEndpoint `yaml:"docker_endpoint"`
+	PythonBinary   string              `yaml:"python_binary"`
 }
 type OrchardOptions struct {
-	URL            string            `yaml:"url"`
-	Worker         string            `yaml:"worker"`
-	WorkerLabels   map[string]string `yaml:"worker_labels"`
-	Username       string            `yaml:"username"`
-	TokenEnv       string            `yaml:"token_env"`
-	CACertFile     string            `yaml:"ca_cert_file"`
-	AllowHTTP      bool              `yaml:"allow_http"`
-	RequestTimeout string            `yaml:"request_timeout"`
+	URL            string              `yaml:"url"`
+	Worker         string              `yaml:"worker"`
+	WorkerLabels   map[string]string   `yaml:"worker_labels"`
+	Username       string              `yaml:"username"`
+	TokenEnv       string              `yaml:"token_env"`
+	CACertFile     string              `yaml:"ca_cert_file"`
+	AllowHTTP      bool                `yaml:"allow_http"`
+	RequestTimeout string              `yaml:"request_timeout"`
+	DockerEndpoint MacOSDockerEndpoint `yaml:"docker_endpoint"`
 }
 
 func MacOSOptions(p Provider) (MacOSConfig, error) {
@@ -70,12 +99,8 @@ func MacOSOptions(p Provider) (MacOSConfig, error) {
 	if p.Type == "tart" && c.Orchard != nil || p.Type == "orchard" && (c.Tart != nil || c.Orchard == nil) {
 		return c, fmt.Errorf("provider requires matching tart/orchard connection settings")
 	}
-	if c.Bases == nil {
-		c.Bases = []MacOSBase{{Name: DefaultMacOSBase, Image: DefaultMacOSImage, OSVersion: "15.7.7", SSHUsername: "admin", Capabilities: []string{"nix", "git", "node", "pnpm", "uv", "python"}}}
-	}
-	if c.Slots == nil {
-		c.Slots = []MacOSSlot{{Name: "standard", Count: 4, Base: DefaultMacOSBase}}
-	}
+	// Resolve library defaults in the provider constructor. Parsing configuration
+	// must not maintain its own catalog of images or supported capabilities.
 	return c, nil
 }
 

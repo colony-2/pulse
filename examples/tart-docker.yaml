@@ -1,0 +1,18 @@
+# Apple Silicon host. Set the endpoint to this worker's guest-reachable IPv4
+# address and reserve this port range for this provider owner.
+defaults:
+  base: 'macos*'
+providers:
+  mac:
+    type: tart
+    config:
+      docker: {} # Also enable Docker on macOS; Linux already includes it.
+      vm_counts: {macos: 1, linux: 1}
+      tart:
+        docker_endpoint:
+          address: 192.168.64.1
+          port_min: 45100
+          port_max: 45120
+targets:
+  - jobdb: https://jobdb.example/acme
+    launch_services: [{name: mac, priority: 1}]

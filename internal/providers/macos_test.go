@@ -2,7 +2,6 @@ package providers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,6 +17,7 @@ import (
 	api "github.com/colony-2/pulse-provider-api"
 	tart "github.com/colony-2/pulse-tart"
 	"github.com/colony-2/pulse/internal/config"
+	"github.com/colony-2/pulse/internal/providerutil"
 )
 
 type macFake struct {
@@ -51,46 +52,37 @@ func (f *macFake) Close() error                      { f.closed.Store(true); ret
 func macLaunch(base string) api.Launch {
 	return api.Launch{LaunchID: "test", Allocation: api.Allocation{Base: base, Capabilities: []string{"git"}}, Job: api.JobRef{JobDB: "https://db/tenant", InstanceID: "db", TenantID: "tenant", JobID: "job"}, Lease: "exact-lease"}
 }
-func TestMacSelectorsAndSafeFallback(t *testing.T) {
-	catalog := []tart.Base{{Name: "macos-15-arm64"}, {Name: "macos-26-arm64"}}
+func TestMacForwardsSelectorsAndAssignments(t *testing.T) {
 	for _, tc := range []struct {
 		name, base string
-		outcomes   []api.Status
+		status     api.Status
 		invalid    bool
-		want       api.Status
-		calls      int
 	}{
-		{name: "middle wildcard", base: "macos-*arm64", want: api.Accepted, calls: 1},
-		{name: "repeated stars", base: "macos**arm64", want: api.Accepted, calls: 1},
-		{name: "aliases do not match", base: "darwin*", want: api.Unsupported, calls: 0},
-		{name: "linux default", base: "ubuntu-26*arm64", want: api.Unsupported},
-		{name: "next matching base", base: "macos*", outcomes: []api.Status{api.NoCapacity, api.Accepted}, want: api.Accepted, calls: 2},
-		{name: "constraints", base: "macos*", outcomes: []api.Status{api.Unsupported, api.Accepted}, want: api.Accepted, calls: 2},
-		{name: "unknown stops", base: "macos*", outcomes: []api.Status{api.Unknown, api.Accepted}, want: api.Unknown, calls: 1},
-		{name: "malformed stops", base: "macos*", invalid: true, want: api.Unknown, calls: 1},
-		{name: "unavailable stops", base: "macos*", outcomes: []api.Status{api.Unavailable}, want: api.Unavailable, calls: 1},
+		{"middle wildcard", "macos-*arm64", api.Accepted, false},
+		{"new provider base", "future-os*", api.Accepted, false},
+		{"linux docker", "ubuntu-*", api.Accepted, false},
+		{"unsupported", "darwin*", api.Unsupported, false},
+		{"capacity", "macos*", api.NoCapacity, false},
+		{"unknown", "macos*", api.Unknown, false},
+		{"unavailable", "macos*", api.Unavailable, false},
+		{"malformed", "macos*", api.Unknown, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := &macFake{outcomes: tc.outcomes, invalid: tc.invalid}
-			p := &macProvider{runtime: f, bases: catalog}
+			f := &macFake{outcomes: []api.Status{tc.status}, invalid: tc.invalid}
+			p := &macProvider{runtime: f}
 			launch := macLaunch(tc.base)
+			launch.Capabilities = []string{"docker", "git"}
 			out, _ := p.Submit(t.Context(), []api.Launch{launch})
-			if len(out) != 1 || out[0].Status != tc.want || len(f.calls) != tc.calls {
+			if len(out) != 1 || out[0].Status != tc.status || len(f.calls) != 1 {
 				t.Fatal(out, f.calls)
 			}
-			if launch.Base != tc.base {
-				t.Fatal("selector changed")
-			}
-			for _, got := range f.calls {
-				got.Base = tc.base
-				if !reflect.DeepEqual(got, launch) {
-					t.Fatal("assignment changed")
-				}
+			if !reflect.DeepEqual(f.calls[0], launch) {
+				t.Fatal("assignment changed")
 			}
 		})
 	}
 	f := &macFake{}
-	p := &macProvider{runtime: f, bases: catalog, envUnsupported: true}
+	p := &macProvider{runtime: f, envUnsupported: true}
 	out, err := p.Submit(t.Context(), []api.Launch{macLaunch("macos*")})
 	if err != nil || out[0].Status != api.Unsupported || len(f.calls) != 0 {
 		t.Fatal("environment ignored", out, err)
@@ -129,19 +121,11 @@ func TestMacMaintenanceOutlivesCallAndStopsOnClose(t *testing.T) {
 		t.Fatal("closed runtime restarted")
 	}
 }
-func TestOrchardLibraryConstructionAndFourSlots(t *testing.T) {
-	var creates atomic.Int32
-	specs := make(chan map[string]any, 4)
+func TestOrchardLibraryConstructionUsesConventions(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "POST" && r.URL.Path == "/v1/vms" {
-			var spec map[string]any
-			if json.NewDecoder(r.Body).Decode(&spec) != nil {
-				t.Error("invalid VM request")
-			}
-			creates.Add(1)
-			spec["uid"] = "uid-" + spec["name"].(string)
-			specs <- spec
-			_ = json.NewEncoder(w).Encode(spec)
+		if r.Method != "GET" {
+			t.Errorf("construction/discovery mutated backend: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected mutation", http.StatusBadRequest)
 			return
 		}
 		switch r.URL.Path {
@@ -170,30 +154,17 @@ targets: [{jobdb: https://db/tenant, launch_services: [{name: mac, priority: 1}]
 		t.Fatal(err)
 	}
 	defer closeAll()
-	if creates.Load() != 0 {
-		t.Fatal("construction/check created VMs")
-	}
 	p := providers["mac"].(*macProvider)
+	if p.slots != tart.DefaultMacOSVMCount+tart.DefaultLinuxVMCount {
+		t.Fatalf("incorrect conventional slot count: %d", p.slots)
+	}
 	caps, err := p.GetCapabilities(t.Context())
-	if err != nil || !caps.BasesComplete || len(caps.Bases) != 1 || caps.Bases[0].Name != config.DefaultMacOSBase || len(caps.Bases[0].Capabilities) != 6 || creates.Load() != 0 {
+	if err != nil || !caps.BasesComplete || len(caps.Bases) != 2 || caps.Bases[0].Name != tart.DefaultBases()[0].Name || caps.Bases[1].Name != tart.DefaultLinuxBase().Name {
 		t.Fatal("library discovery lost support or provisioned VMs", caps, err)
 	}
 	page, err := p.List(t.Context(), api.ListRequest{})
-	if err != nil || len(page.Items) != 0 || creates.Load() != 0 {
+	if err != nil || len(page.Items) != 0 {
 		t.Fatal("listing caused side effects", err)
-	}
-	if err = p.Maintain(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	for range 4 {
-		select {
-		case spec := <-specs:
-			if spec["cpu"] != float64(4) || spec["memory"] != float64(8192) || spec["image"] != config.DefaultMacOSImage || spec["suspendable"] != true {
-				t.Fatal("wrong slot", spec["cpu"], spec["memory"])
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("four slots not prepared")
-		}
 	}
 	closeAll()
 	// Closing releases the durable lock; reopening does not duplicate templates.
@@ -202,9 +173,6 @@ targets: [{jobdb: https://db/tenant, launch_services: [{name: mac, priority: 1}]
 		t.Fatal("journal not released", err)
 	}
 	again()
-	if creates.Load() != 4 {
-		t.Fatal("reopen created extra slots")
-	}
 }
 func TestMacSettingsPathsSecretsAndDrain(t *testing.T) {
 	root := t.TempDir()
@@ -214,7 +182,7 @@ func TestMacSettingsPathsSecretsAndDrain(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := config.Provider{Type: "orchard", Options: map[string]any{
-		"state_dir": "state", "slots": []any{map[string]any{"name": "standard", "count": 0, "base": config.DefaultMacOSBase}},
+		"state_dir": "state", "slots": []any{map[string]any{"name": "standard", "count": 0, "base": tart.DefaultBases()[0].Name}},
 		"orchard": map[string]any{"url": "https://orchard.example", "worker": "mac", "username": "pulse", "token_env": "ORCHARD_TEST_TOKEN", "ca_cert_file": "ca.pem"},
 	}}
 	c, _, remote, err := macSettings("mac", p, root)
@@ -230,4 +198,205 @@ func TestMacSettingsPathsSecretsAndDrain(t *testing.T) {
 
 func (*macFake) GetCapabilities(context.Context) (api.Capabilities, error) {
 	return api.Capabilities{}, nil
+}
+
+func TestMacDefaultsComeFromLibrary(t *testing.T) {
+	c, _, _, err := macSettings("mac", config.Provider{Type: "tart"}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := tart.ResolveConfig(tart.Config{OwnerID: c.OwnerID, StateDir: c.StateDir})
+	if err != nil || !reflect.DeepEqual(c, want) {
+		t.Fatal("Pulse replaced library conventions", err)
+	}
+	if c.NeedsDockerEndpoint() || c.BootstrapTimeout == 0 {
+		t.Fatal("ordinary defaults need a worker endpoint or lost preparation timeout")
+	}
+}
+
+func TestMacVMCountOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		name, options string
+		want          [3]int
+		invalid       bool
+	}{
+		{"omitted", "{}", [3]int{2, 4, 6}, false},
+		{"partial", "{vm_counts: {linux: 1}}", [3]int{2, 1, 3}, false},
+		{"shared limit", "{vm_counts: {total: 3}}", [3]int{2, 4, 3}, false},
+		{"disable Linux", "{vm_counts: {linux: 0}}", [3]int{2, 0, 2}, false},
+		{"drain", "{vm_counts: {total: 0}}", [3]int{2, 4, 0}, false},
+		{"too many macOS", "{vm_counts: {macos: 3}}", [3]int{}, true},
+		{"negative count", "{vm_counts: {linux: -1}}", [3]int{}, true},
+		{"empty catalog", "{bases: []}", [3]int{}, true},
+		{"empty slots", "{slots: []}", [3]int{}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := config.Parse([]byte("providers: {mac: {type: tart, config: " + tc.options + "}}\ntargets: [{jobdb: https://db/tenant, launch_services: [{name: mac, priority: 1}]}]"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, _, _, err := macSettings("mac", cfg.Providers["mac"], t.TempDir())
+			if tc.invalid {
+				if err == nil {
+					t.Fatal("invalid override accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := [3]int{*c.VMCounts.MacOS, *c.VMCounts.Linux, *c.VMCounts.Total}
+			if got != tc.want {
+				t.Fatalf("counts = %v, want %v", got, tc.want)
+			}
+			for _, slot := range c.Slots {
+				if slot.CPU != tart.DefaultCPU || slot.MemoryMiB != tart.DefaultMemoryMiB || (tc.want[2] == 0 && slot.Count != 0) {
+					t.Fatal("conventional size or drain lost", slot)
+				}
+			}
+		})
+	}
+}
+
+func TestOrchardDockerCapabilityDiscovery(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method == "GET" && r.URL.Path == "/v1/controller/info" {
+			fmt.Fprint(w, `{"version":"test"}`)
+			return
+		}
+		if r.Method == "GET" && r.URL.Path == "/v1/vms" {
+			fmt.Fprint(w, `[]`)
+			return
+		}
+		t.Errorf("discovery caused backend operation: %s %s", r.Method, r.URL.Path)
+		http.Error(w, "unexpected backend operation", http.StatusBadRequest)
+	}))
+	defer server.Close()
+	mac := tart.DefaultBases()[0].Name
+	linux := tart.DefaultLinuxBase().Name
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("docker=%v", enabled), func(t *testing.T) {
+			docker, endpoint := "", ""
+			if enabled {
+				docker = "docker: {}"
+				endpoint = "docker_endpoint: {address: 192.168.64.1, port_min: 45100, port_max: 45120}"
+			}
+			cfg, err := config.Parse([]byte(fmt.Sprintf(`providers:
+  mac:
+    type: orchard
+    config:
+      state_dir: %q
+      %s
+      orchard:
+        url: %q
+        worker: mac
+        allow_http: true
+        %s
+targets: [{jobdb: https://db/tenant, launch_services: [{name: mac, priority: 1}]}]
+`, filepath.Join(t.TempDir(), "state"), docker, server.URL, endpoint)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			ps, closeAll, err := Build(t.Context(), cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer closeAll()
+			before := requests.Load()
+			caps, err := ps["mac"].GetCapabilities(t.Context())
+			if err != nil || !caps.BasesComplete {
+				t.Fatal(caps, err)
+			}
+			want := []tart.Base{tart.DefaultBases()[0], tart.DefaultLinuxBase()}
+			if len(caps.Bases) != len(want) {
+				t.Fatal("provider catalog lost entries", caps)
+			}
+			for i, b := range caps.Bases {
+				wantDocker := b.Name == linux || enabled
+				if b.Name != want[i].Name || slices.Contains(b.Capabilities, "docker") != wantDocker {
+					t.Fatal("provider capability discovery disagrees with slot configuration", caps)
+				}
+				for _, capability := range want[i].Capabilities {
+					if !slices.Contains(b.Capabilities, capability) {
+						t.Fatal("library capability omitted", b.Name, capability)
+					}
+				}
+			}
+			for _, base := range []string{mac, linux} {
+				if providerutil.Compatible(caps, api.Allocation{Base: base, Capabilities: []string{"docker"}}) != (base == linux || enabled) {
+					t.Fatal("scheduler compatibility does not follow discovery", base, caps)
+				}
+			}
+			if requests.Load() != before {
+				t.Fatal("discovery contacted backend after connectivity check")
+			}
+		})
+	}
+}
+
+func TestMacDockerSettingsAndCredentials(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("ENGINE_PASSWORD", "engine-secret")
+	if err := os.WriteFile(filepath.Join(root, "host.pub"), []byte("engine-host-key"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	base := tart.DefaultLinuxBase()
+	p := config.Provider{Type: "tart", Options: map[string]any{
+		"bases":  []any{map[string]any{"name": "custom-linux", "os": "linux", "os_version": "24.04", "image": base.Image, "ssh_username": base.SSHUsername, "ssh_password_env": "ENGINE_PASSWORD", "capabilities": []string{"git"}}},
+		"slots":  []any{map[string]any{"name": "linux", "count": 0, "base": "custom-linux", "docker_profile": "large"}},
+		"docker": map[string]any{"ready_timeout": "20m", "profiles": []any{map[string]any{"name": "large", "ssh_password_env": "ENGINE_PASSWORD", "ssh_host_key_file": "host.pub", "cpu": 4, "memory_mib": 8192, "disk_gib": 64, "engine_version": "29.1.3"}}},
+		"tart":   map[string]any{"python_binary": "tools/python3", "docker_endpoint": map[string]any{"address": "192.168.64.1", "port_min": 45200, "port_max": 45210}},
+	}}
+	c, local, _, err := macSettings("mac", p, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := c.Docker.Profiles[0]
+	if len(c.Bases) != 1 || c.Bases[0].Name != "custom-linux" || c.Bases[0].OS != "linux" || c.Bases[0].SSHPassword != "engine-secret" || c.Slots[0].Count != 0 || c.Slots[0].DockerProfile != "large" {
+		t.Fatal("custom base or drained Docker slot not preserved")
+	}
+	if c.Docker.ReadyTimeout != 20*time.Minute || engine.Name != "large" || engine.Image != tart.DefaultDockerEngine().Image || engine.SSHPassword != "engine-secret" || string(engine.SSHHostKey) != "engine-host-key" || engine.CPU != 4 || engine.MemoryMiB != 8192 || engine.DiskGiB != 64 || engine.EngineVersion != "29.1.3" {
+		t.Fatal("Docker profile settings not preserved")
+	}
+	if local.PythonBinary != filepath.Join(root, "tools/python3") || local.DockerEndpoint != (tart.DockerEndpoint{Address: "192.168.64.1", PortMin: 45200, PortMax: 45210}) {
+		t.Fatal("local engine transport settings not preserved")
+	}
+	t.Setenv("ENGINE_PASSWORD", "")
+	if _, _, _, err = macSettings("mac", p, root); err == nil {
+		t.Fatal("empty explicitly configured credential used default login")
+	}
+}
+
+func TestOrchardRejectsIncompleteDockerConfiguration(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		docker   any
+		profile  string
+		endpoint map[string]any
+	}{
+		{name: "profile without engine", profile: "standard"},
+		{name: "missing worker endpoint", docker: map[string]any{}, profile: "standard"},
+		{name: "unknown profile", docker: map[string]any{}, profile: "missing", endpoint: map[string]any{"address": "192.168.64.1", "port_min": 45100, "port_max": 45120}},
+		{name: "empty profile list", docker: map[string]any{"profiles": []any{}}, profile: "standard", endpoint: map[string]any{"address": "192.168.64.1", "port_min": 45100, "port_max": 45120}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := config.Provider{Type: "orchard", Options: map[string]any{
+				"state_dir": filepath.Join(t.TempDir(), "state"),
+				"docker":    tc.docker,
+				"slots":     []any{map[string]any{"name": "mac", "count": 1, "base": tart.DefaultBases()[0].Name, "docker_profile": tc.profile}},
+				"orchard":   map[string]any{"url": "https://orchard.example", "worker": "mac", "docker_endpoint": tc.endpoint},
+			}}
+			c, _, remote, err := macSettings("mac", p, t.TempDir())
+			if err != nil {
+				return // Library validation runs while resolving the effective settings.
+			}
+			r, err := tart.NewOrchard(c, remote)
+			if err == nil {
+				r.Close()
+				t.Fatal("invalid Docker configuration reached a usable provider")
+			}
+		})
+	}
 }

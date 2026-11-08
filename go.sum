@@ -70,8 +70,8 @@ github.com/colony-2/jobdb v0.0.70 h1:wm3uxJzsQWz1cxBhEEFBzLWVaHzrKtMXKteNkZKZpB4
 github.com/colony-2/jobdb v0.0.70/go.mod h1:45c4NbbKzZt8uRHgWUktOoGhsTkO8ogELlfxdqXJ4Ek=
 github.com/colony-2/pulse-provider-api v0.0.0-20261105011626-401f11e595a8 h1:pxBcBhAe/+SuTorfX6L8ia4k/lYx6bqF+n5jYRcyo2U=
 github.com/colony-2/pulse-provider-api v0.0.0-20261105011626-401f11e595a8/go.mod h1:k+Xog7z+dE1wxvl9fN4rfsptevZ5ANIH37j0xKZ8YJo=
-github.com/colony-2/pulse-tart v0.0.0-20261105033015-7b32253342af h1:cvCxKV64H2PsbYXbOIjlQpYMLIubKWH63aFltTYyMrM=
-github.com/colony-2/pulse-tart v0.0.0-20261105033015-7b32253342af/go.mod h1:ut+Dcogk9tg+zbnB9oQKcXl5wM31eBhoWuSzz5Q1QyU=
+github.com/colony-2/pulse-tart v0.0.0-20261108035826-64a6307340af h1:QdvgHzElHD+31fTmROb8vOZ7TR4hMX3b1ffarpWc3W0=
+github.com/colony-2/pulse-tart v0.0.0-20261108035826-64a6307340af/go.mod h1:ut+Dcogk9tg+zbnB9oQKcXl5wM31eBhoWuSzz5Q1QyU=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

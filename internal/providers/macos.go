@@ -11,7 +11,6 @@ import (
 
 	api "github.com/colony-2/pulse-provider-api"
 	tart "github.com/colony-2/pulse-tart"
-	"github.com/colony-2/pulse/internal/bases"
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/providerutil"
 )
@@ -70,29 +69,75 @@ func macSettings(name string, p config.Provider, baseDir string) (tart.Config, t
 	if err != nil {
 		return c, local, remote, err
 	}
-	if c.BootstrapTimeout == 0 {
-		c.BootstrapTimeout = 45 * time.Minute
+	c.VMCounts = tart.VMCounts{MacOS: options.VMCounts.MacOS, Linux: options.VMCounts.Linux, Total: options.VMCounts.Total}
+	knownBases := append(tart.DefaultBases(), tart.DefaultLinuxBase())
+	password := func(image, username, env string) (tart.Secret, error) {
+		if env != "" {
+			if value := os.Getenv(env); value != "" {
+				return tart.Secret(value), nil
+			}
+		} else {
+			// Only library-published images may use their published login.
+			for _, b := range knownBases {
+				if image == b.Image && (username == "" || username == b.SSHUsername) {
+					return b.SSHPassword, nil
+				}
+			}
+		}
+		return "", fmt.Errorf("Tart/Orchard image requires a populated ssh_password_env")
+	}
+	if options.Bases != nil {
+		c.Bases = make([]tart.Base, 0, len(options.Bases))
 	}
 	for _, b := range options.Bases {
-		password := os.Getenv(b.SSHPasswordEnv)
-		// Only the pinned public default image uses its published bootstrap login.
-		if b.SSHPasswordEnv == "" && b.Image == config.DefaultMacOSImage {
-			password = "admin"
-		}
-		if password == "" {
-			return c, local, remote, fmt.Errorf("macOS base requires a populated ssh_password_env")
+		secret, e := password(b.Image, b.SSHUsername, b.SSHPasswordEnv)
+		if e != nil {
+			return c, local, remote, e
 		}
 		key, e := read(b.SSHHostKeyFile)
 		if e != nil {
 			return c, local, remote, fmt.Errorf("cannot read macOS SSH host key")
 		}
-		c.Bases = append(c.Bases, tart.Base{Name: b.Name, Image: b.Image, OSVersion: b.OSVersion, SSHUsername: b.SSHUsername, SSHPassword: tart.Secret(password), SSHHostKey: key, Capabilities: b.Capabilities})
+		c.Bases = append(c.Bases, tart.Base{Name: b.Name, OS: b.OS, Image: b.Image, OSVersion: b.OSVersion, SSHUsername: b.SSHUsername, SSHPassword: secret, SSHHostKey: key, Capabilities: b.Capabilities})
+	}
+	if options.Slots != nil {
+		c.Slots = make([]tart.SlotGroup, 0, len(options.Slots))
 	}
 	for _, s := range options.Slots {
-		c.Slots = append(c.Slots, tart.SlotGroup{Name: s.Name, Count: s.Count, Base: s.Base, CPU: s.CPU, MemoryMiB: s.MemoryMiB})
+		c.Slots = append(c.Slots, tart.SlotGroup{Name: s.Name, Count: s.Count, Base: s.Base, CPU: s.CPU, MemoryMiB: s.MemoryMiB, DockerProfile: s.DockerProfile})
+	}
+	if d := options.Docker; d != nil {
+		c.Docker = &tart.DockerConfig{}
+		c.Docker.ReadyTimeout, err = duration(d.ReadyTimeout)
+		if err != nil {
+			return c, local, remote, err
+		}
+		if d.Profiles == nil && options.Slots != nil {
+			c.Docker.Profiles = []tart.DockerEngineProfile{tart.DefaultDockerEngine()}
+		}
+		for _, profile := range d.Profiles {
+			engine := tart.DockerEngineProfile{Name: profile.Name, Image: profile.Image, SSHUsername: profile.SSHUsername, CPU: profile.CPU, MemoryMiB: profile.MemoryMiB, DiskGiB: profile.DiskGiB, EngineVersion: profile.EngineVersion}
+			if engine.Image == "" {
+				engine.Image = tart.DefaultDockerEngine().Image
+			}
+			engine.SSHPassword, err = password(engine.Image, engine.SSHUsername, profile.SSHPasswordEnv)
+			if err != nil {
+				return c, local, remote, err
+			}
+			engine.SSHHostKey, err = read(profile.SSHHostKeyFile)
+			if err != nil {
+				return c, local, remote, fmt.Errorf("cannot read Docker engine SSH host key")
+			}
+			c.Docker.Profiles = append(c.Docker.Profiles, engine)
+		}
 	}
 	if t := options.Tart; t != nil {
 		local.Binary, local.Home = t.Binary, path(t.Home)
+		local.DockerEndpoint = tart.DockerEndpoint(t.DockerEndpoint)
+		local.PythonBinary = t.PythonBinary
+		if local.PythonBinary != "" && filepath.Base(local.PythonBinary) != local.PythonBinary {
+			local.PythonBinary = path(local.PythonBinary)
+		}
 		if local.Binary != "" && filepath.Base(local.Binary) != local.Binary {
 			local.Binary = path(local.Binary)
 		}
@@ -111,12 +156,19 @@ func macSettings(name string, p config.Provider, baseDir string) (tart.Config, t
 			return c, local, remote, fmt.Errorf("Orchard token_env is empty")
 		}
 		remote = tart.OrchardConfig{URL: o.URL, Worker: o.Worker, WorkerLabels: o.WorkerLabels, Username: o.Username, Token: tart.Secret(token), AllowInsecureHTTP: o.AllowHTTP}
+		remote.DockerEndpoint = tart.DockerEndpoint(o.DockerEndpoint)
 		remote.CACert, err = read(o.CACertFile)
 		if err != nil {
 			return c, local, remote, fmt.Errorf("cannot read Orchard CA certificate")
 		}
 		remote.RequestTimeout, err = duration(o.RequestTimeout)
 	}
+	if err != nil {
+		return c, local, remote, err
+	}
+	// Leave omitted catalogs, pools, counts and resource sizes to the library.
+	// Resolve here so startup reporting and maintenance use its effective values.
+	c, err = tart.ResolveConfig(c)
 	return c, local, remote, err
 }
 
@@ -138,7 +190,7 @@ func buildMac(ctx context.Context, name string, p config.Provider, cfg *config.C
 		_ = r.Close()
 		return nil, nil, fmt.Errorf("%s provider %s connectivity check failed: %w", p.Type, name, err)
 	}
-	host := &macProvider{runtime: r, bases: c.Bases, bootstrapTimeout: c.BootstrapTimeout, envUnsupported: len(cfg.Defaults.Env) != 0}
+	host := &macProvider{runtime: r, vmCounts: c.VMCounts, bootstrapTimeout: c.BootstrapTimeout, envUnsupported: len(cfg.Defaults.Env) != 0}
 	for _, slot := range c.Slots {
 		host.slots += slot.Count
 	}
@@ -146,11 +198,12 @@ func buildMac(ctx context.Context, name string, p config.Provider, cfg *config.C
 }
 
 // The library owns VM lifecycle, leases, slots and durable state. This host shim
-// adapts Pulse selectors and schedules reconciliation independently of claims.
+// schedules reconciliation independently of claims. Catalog discovery and base
+// selection belong to the provider library.
 type macProvider struct {
 	runtime          macRuntime
-	bases            []tart.Base
 	slots            int
+	vmCounts         tart.VMCounts
 	bootstrapTimeout time.Duration
 	envUnsupported   bool
 	activity         sync.RWMutex
@@ -182,42 +235,19 @@ func (p *macProvider) Submit(ctx context.Context, launches []api.Launch) ([]api.
 	}
 	defer p.activity.RUnlock()
 	for _, launch := range launches {
-		result := api.Submission{LaunchID: launch.LaunchID, Status: api.Unsupported, Reason: "no supported macOS base matches selector"}
+		result := api.Submission{LaunchID: launch.LaunchID, Status: api.Unsupported}
 		if p.envUnsupported {
 			result.Reason = "macOS provider does not support defaults.env"
 			out = append(out, result)
 			continue
 		}
-		// Resolve in the configured preference order and pass concrete labels
-		// without changing the caller's assignment.
-		// Try another match only after an explicit capacity/constraint decline.
-		for _, b := range p.bases {
-			matches := bases.Match(launch.Base, b.Name)
-			if !matches {
-				continue
-			}
-			exact := launch
-			exact.Base = b.Name
-			responses, err := p.runtime.Submit(ctx, []api.Launch{exact})
-			if len(responses) != 1 || responses[0].LaunchID != launch.LaunchID || !providerutil.ValidSubmission(responses[0]) {
-				result = api.Submission{LaunchID: launch.LaunchID, Status: api.Unknown, Reason: "missing or invalid macOS submission result"}
-				out = append(out, result)
-				return out, err
-			}
-			// Explicit outcomes remain authoritative even with a transport error.
-			next := responses[0]
-			if next.Status == api.Unsupported {
-				if result.Status != api.NoCapacity {
-					result = next
-				}
-				continue
-			}
-			result = next
-			if result.Status != api.NoCapacity {
-				break
-			}
+		responses, err := p.runtime.Submit(ctx, []api.Launch{launch})
+		if len(responses) != 1 || responses[0].LaunchID != launch.LaunchID || !providerutil.ValidSubmission(responses[0]) {
+			result = api.Submission{LaunchID: launch.LaunchID, Status: api.Unknown, Reason: "missing or invalid Tart/Orchard submission result"}
+			out = append(out, result)
+			return out, err
 		}
-		out = append(out, result)
+		out = append(out, responses[0])
 	}
 	return out, nil
 }
