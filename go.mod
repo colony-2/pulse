@@ -12,7 +12,7 @@ require (
 	github.com/colony-2/c2j v0.0.118
 	github.com/colony-2/jobdb v0.0.70
 	github.com/colony-2/pulse-provider-api v0.0.0-20261105011626-401f11e595a8
-	github.com/colony-2/pulse-tart v0.0.0-20261108035826-64a6307340af
+	github.com/colony-2/pulse-tart v0.0.0-20261108183936-ac235e01e7ca
 	github.com/distribution/reference v0.6.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0

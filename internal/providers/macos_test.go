@@ -155,12 +155,21 @@ targets: [{jobdb: https://db/tenant, launch_services: [{name: mac, priority: 1}]
 	}
 	defer closeAll()
 	p := providers["mac"].(*macProvider)
-	if p.slots != tart.DefaultMacOSVMCount+tart.DefaultLinuxVMCount {
+	want, err := tart.ResolveConfig(tart.Config{OwnerID: "test", StateDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.slots != want.Capacity() || !reflect.DeepEqual(p.vmCounts, want.VMCounts) {
 		t.Fatalf("incorrect conventional slot count: %d", p.slots)
 	}
 	caps, err := p.GetCapabilities(t.Context())
-	if err != nil || !caps.BasesComplete || len(caps.Bases) != 2 || caps.Bases[0].Name != tart.DefaultBases()[0].Name || caps.Bases[1].Name != tart.DefaultLinuxBase().Name {
+	if err != nil || !caps.BasesComplete || len(caps.Bases) != len(want.Bases) {
 		t.Fatal("library discovery lost support or provisioned VMs", caps, err)
+	}
+	for i, base := range want.Bases {
+		if caps.Bases[i].Name != base.Name {
+			t.Fatal("library catalog order changed", caps)
+		}
 	}
 	page, err := p.List(t.Context(), api.ListRequest{})
 	if err != nil || len(page.Items) != 0 {
@@ -274,7 +283,6 @@ func TestOrchardDockerCapabilityDiscovery(t *testing.T) {
 		http.Error(w, "unexpected backend operation", http.StatusBadRequest)
 	}))
 	defer server.Close()
-	mac := tart.DefaultBases()[0].Name
 	linux := tart.DefaultLinuxBase().Name
 	for _, enabled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("docker=%v", enabled), func(t *testing.T) {
@@ -309,7 +317,7 @@ targets: [{jobdb: https://db/tenant, launch_services: [{name: mac, priority: 1}]
 			if err != nil || !caps.BasesComplete {
 				t.Fatal(caps, err)
 			}
-			want := []tart.Base{tart.DefaultBases()[0], tart.DefaultLinuxBase()}
+			want := append(tart.DefaultBases(), tart.DefaultLinuxBase())
 			if len(caps.Bases) != len(want) {
 				t.Fatal("provider catalog lost entries", caps)
 			}
@@ -324,9 +332,9 @@ targets: [{jobdb: https://db/tenant, launch_services: [{name: mac, priority: 1}]
 					}
 				}
 			}
-			for _, base := range []string{mac, linux} {
-				if providerutil.Compatible(caps, api.Allocation{Base: base, Capabilities: []string{"docker"}}) != (base == linux || enabled) {
-					t.Fatal("scheduler compatibility does not follow discovery", base, caps)
+			for _, base := range want {
+				if providerutil.Compatible(caps, api.Allocation{Base: base.Name, Capabilities: []string{"docker"}}) != (base.Name == linux || enabled) {
+					t.Fatal("scheduler compatibility does not follow discovery", base.Name, caps)
 				}
 			}
 			if requests.Load() != before {
