@@ -1,0 +1,255 @@
+# c2j owns const workspaces, tools, process lifecycle and failure propagation.
+id: pulse-native-verify
+inputs:
+  candidate: ${{ inputs.candidate }}
+  base: ${{ inputs.base }}
+sequence:
+- id: native_race
+  op: command_execution
+  const: true
+  execution_needs:
+    packages:
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#git
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#go_1_26
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#gcc
+  inputs:
+    timeout: 60m
+    capture_diagnostics: always
+    env:
+      VERIFY_CANDIDATE: ${{ inputs.candidate }}
+      VERIFY_BASE: ${{ inputs.base }}
+      GOFLAGS: -buildvcs=false -p=2
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOMAXPROCS: '2'
+      CGO_ENABLED: '1'
+    run: |
+      set -euo pipefail
+      set -x
+      test "$(uname -s)" = Linux
+      case "$(uname -m)" in aarch64|arm64) ;; *) exit 1 ;; esac
+      printf 'candidate=%s\nbase=%s\n' "$VERIFY_CANDIDATE" "$VERIFY_BASE"
+      uname -sm
+      go version
+      gcc --version
+      git --version
+      go test -mod=readonly -race -count=1 -timeout=45m -v -skip '^(TestDockerIntegration|TestDockerC2JIntegration|TestDockerMultiPlatformIntegration|TestDockerDependencyCacheIntegration|TestDockerNixFetchCacheIntegration)$' ./...
+- id: plugin_race
+  op: command_execution
+  const: true
+  execution_needs:
+    packages:
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#git
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#go_1_26
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#gcc
+  inputs:
+    timeout: 60m
+    capture_diagnostics: always
+    env:
+      VERIFY_CANDIDATE: ${{ inputs.candidate }}
+      VERIFY_BASE: ${{ inputs.base }}
+      GOFLAGS: -buildvcs=false -p=2
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOMAXPROCS: '2'
+      CGO_ENABLED: '1'
+    run: |
+      set -euo pipefail
+      set -x
+      test "$(uname -s)" = Linux
+      case "$(uname -m)" in aarch64|arm64) ;; *) exit 1 ;; esac
+      printf 'candidate=%s\nbase=%s\n' "$VERIFY_CANDIDATE" "$VERIFY_BASE"
+      uname -sm
+      go version
+      gcc --version
+      git --version
+      cd examples/provider-plugin
+      go test -mod=readonly -race -count=1 -timeout=45m -v ./...
+- id: vet
+  op: command_execution
+  const: true
+  execution_needs:
+    packages:
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#git
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#go_1_26
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#gcc
+  inputs:
+    timeout: 60m
+    capture_diagnostics: always
+    env:
+      VERIFY_CANDIDATE: ${{ inputs.candidate }}
+      VERIFY_BASE: ${{ inputs.base }}
+      GOFLAGS: -buildvcs=false -p=2
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOMAXPROCS: '2'
+    run: |
+      set -euo pipefail
+      set -x
+      test "$(uname -s)" = Linux
+      case "$(uname -m)" in aarch64|arm64) ;; *) exit 1 ;; esac
+      printf 'candidate=%s\nbase=%s\n' "$VERIFY_CANDIDATE" "$VERIFY_BASE"
+      uname -sm
+      go version
+      gcc --version
+      git --version
+      go vet -mod=readonly ./...
+- id: native_build
+  op: command_execution
+  const: true
+  execution_needs:
+    packages:
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#git
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#go_1_26
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#gcc
+  inputs:
+    timeout: 60m
+    capture_diagnostics: always
+    env:
+      VERIFY_CANDIDATE: ${{ inputs.candidate }}
+      VERIFY_BASE: ${{ inputs.base }}
+      GOFLAGS: -buildvcs=false -p=2
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOMAXPROCS: '2'
+      BUILD_DIR: ${{ context.environment.op.workdir }}/build
+    run: |
+      set -euo pipefail
+      set -x
+      test "$(uname -s)" = Linux
+      case "$(uname -m)" in aarch64|arm64) ;; *) exit 1 ;; esac
+      printf 'candidate=%s\nbase=%s\n' "$VERIFY_CANDIDATE" "$VERIFY_BASE"
+      uname -sm
+      go version
+      gcc --version
+      git --version
+      mkdir -p "$BUILD_DIR"
+      go build -mod=readonly -o "$BUILD_DIR/pulse" ./cmd/pulse
+      CGO_ENABLED=0 GOOS=linux go build -mod=readonly -o "$BUILD_DIR/pulse-exec" ./cmd/pulse-exec
+- id: node_packaging
+  op: command_execution
+  const: true
+  execution_needs:
+    packages:
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#git
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#nodejs_24
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#gnutar
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#gzip
+  inputs:
+    timeout: 60m
+    capture_diagnostics: always
+    env:
+      VERIFY_CANDIDATE: ${{ inputs.candidate }}
+      VERIFY_BASE: ${{ inputs.base }}
+    run: |
+      set -euo pipefail
+      set -x
+      test "$(uname -s)" = Linux
+      case "$(uname -m)" in aarch64|arm64) ;; *) exit 1 ;; esac
+      printf 'candidate=%s\nbase=%s\n' "$VERIFY_CANDIDATE" "$VERIFY_BASE"
+      uname -sm
+      node --version
+      node --test scripts/npm.test.js
+- id: protocol
+  op: command_execution
+  const: true
+  execution_needs:
+    packages:
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#python3
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#git
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#uv
+  inputs:
+    timeout: 60m
+    capture_diagnostics: always
+    env:
+      VERIFY_CANDIDATE: ${{ inputs.candidate }}
+      VERIFY_BASE: ${{ inputs.base }}
+      UV_PYTHON_DOWNLOADS: never
+    run: |
+      set -euo pipefail
+      set -x
+      test "$(uname -s)" = Linux
+      case "$(uname -m)" in aarch64|arm64) ;; *) exit 1 ;; esac
+      printf 'candidate=%s\nbase=%s\n' "$VERIFY_CANDIDATE" "$VERIFY_BASE"
+      uname -sm
+      python3 --version
+      uv --version
+      uv run --no-project --python python3 --with openapi-spec-validator==0.9.0 --with PyYAML==6.0.3 python scripts/validate_protocol.py
+- id: module_tidiness
+  op: command_execution
+  const: true
+  execution_needs:
+    packages:
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#git
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#go_1_26
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#gcc
+  inputs:
+    timeout: 60m
+    capture_diagnostics: always
+    env:
+      VERIFY_CANDIDATE: ${{ inputs.candidate }}
+      VERIFY_BASE: ${{ inputs.base }}
+      GOFLAGS: -buildvcs=false -p=2
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOMAXPROCS: '2'
+    run: |
+      set -euo pipefail
+      set -x
+      test "$(uname -s)" = Linux
+      case "$(uname -m)" in aarch64|arm64) ;; *) exit 1 ;; esac
+      printf 'candidate=%s\nbase=%s\n' "$VERIFY_CANDIDATE" "$VERIFY_BASE"
+      uname -sm
+      go version
+      gcc --version
+      git --version
+      go mod tidy -diff
+- id: report
+  op: command_execution
+  const: true
+  execution_needs:
+    packages:
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
+  inputs:
+    env:
+      OUTBOX: ${{ context.environment.op.outbox }}
+    run: |
+      set -eu
+      cat > "$OUTBOX/verification.md" <<'EOF'
+      # Pulse native verification
+
+      All seven mandatory commands completed successfully: native_race, plugin_race,
+      vet, native_build, node_packaging, protocol, module_tidiness.
+      See each task's native c2j execution log for commands, platform, tools and exits.
+
+      Held: five exact Docker daemon tests; real image/cache integration; QEMU,
+      other platforms, live cloud/macOS providers, release packaging/smoke, signing,
+      publication and deployment. Existing CI coverage is unchanged.
+      EOF
+outputs:
+  api_version: c2.build-hook/v1
+  status: passed
+  summary: Seven mandatory native checks passed. See verification.md and native c2j execution logs. Docker and release
+    infrastructure coverage is held.
+  artifact_refs: '${{ {''native_race.log'': sequence.native_race.outputs.diagnostics[''_c2j/execution/native_race.log''],
+    ''plugin_race.log'': sequence.plugin_race.outputs.diagnostics[''_c2j/execution/plugin_race.log''], ''vet.log'':
+    sequence.vet.outputs.diagnostics[''_c2j/execution/vet.log''], ''native_build.log'': sequence.native_build.outputs.diagnostics[''_c2j/execution/native_build.log''],
+    ''node_packaging.log'': sequence.node_packaging.outputs.diagnostics[''_c2j/execution/node_packaging.log''],
+    ''protocol.log'': sequence.protocol.outputs.diagnostics[''_c2j/execution/protocol.log''], ''module_tidiness.log'':
+    sequence.module_tidiness.outputs.diagnostics[''_c2j/execution/module_tidiness.log''], ''verification.md'': sequence.report.artifacts[''verification.md'']}
+    }}'

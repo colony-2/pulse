@@ -1,0 +1,108 @@
+id: pulse-bounded-caller
+inputs:
+  request: ${{ inputs.request }}
+  target_directory: ${{ inputs.target_directory }}
+sequence:
+- id: invoke_hook
+  include:
+    recipe: cell://.c2/recipes/hooks/build/verify.yaml
+    if_missing:
+      outputs:
+        api_version: c2.build-hook/v1
+        status: skipped
+        summary: No repository verify hook is configured.
+        artifact_refs: {}
+  inputs:
+    api_version: c2.build-hook/v1
+    request: ${{ inputs.request }}
+    target_directory: ${{ inputs.target_directory }}
+    candidate: ${{ context.git.hash }}
+    base: ${{ context.git.execution.base_hash }}
+    documents: {}
+    settings: null
+  expect_outputs:
+    type: object
+    additionalProperties: false
+    required:
+    - api_version
+    - status
+    - summary
+    - artifact_refs
+    properties:
+      api_version:
+        type: string
+        enum:
+        - c2.build-hook/v1
+      status:
+        type: string
+        enum:
+        - passed
+        - failed
+        - skipped
+      summary:
+        type: string
+        minLength: 1
+        maxLength: 8192
+      artifact_refs:
+        type: object
+        maxProperties: 64
+        propertyNames:
+          not:
+            enum:
+            - __git_state_thin_pack__
+            - diff_from_parent.diff
+            - diff_from_base.diff
+        additionalProperties:
+          type: object
+      failure:
+        type: object
+  catch:
+  - when: failure.kind != 'cancellation'
+    continue:
+      outputs:
+        api_version: c2.build-hook/v1
+        status: failed
+        summary: ${{ failure.message }}
+        artifact_refs: ${{ {} }}
+        failure: ${{ json_parse(json_stringify(failure)) }}
+- id: collect_evidence
+  op: command_execution
+  const: true
+  execution_needs:
+    packages:
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
+  artifacts:
+    native_race.log: '${{ sequence.invoke_hook.outputs.status == ''passed'' ? sequence.invoke_hook.outputs.artifact_refs[''native_race.log'']
+      : {''kind'':''value'',''format'':''json'',''value'':null} }}'
+    plugin_race.log: '${{ sequence.invoke_hook.outputs.status == ''passed'' ? sequence.invoke_hook.outputs.artifact_refs[''plugin_race.log'']
+      : {''kind'':''value'',''format'':''json'',''value'':null} }}'
+    vet.log: '${{ sequence.invoke_hook.outputs.status == ''passed'' ? sequence.invoke_hook.outputs.artifact_refs[''vet.log'']
+      : {''kind'':''value'',''format'':''json'',''value'':null} }}'
+    native_build.log: '${{ sequence.invoke_hook.outputs.status == ''passed'' ? sequence.invoke_hook.outputs.artifact_refs[''native_build.log'']
+      : {''kind'':''value'',''format'':''json'',''value'':null} }}'
+    node_packaging.log: '${{ sequence.invoke_hook.outputs.status == ''passed'' ? sequence.invoke_hook.outputs.artifact_refs[''node_packaging.log'']
+      : {''kind'':''value'',''format'':''json'',''value'':null} }}'
+    protocol.log: '${{ sequence.invoke_hook.outputs.status == ''passed'' ? sequence.invoke_hook.outputs.artifact_refs[''protocol.log'']
+      : {''kind'':''value'',''format'':''json'',''value'':null} }}'
+    module_tidiness.log: '${{ sequence.invoke_hook.outputs.status == ''passed'' ?
+      sequence.invoke_hook.outputs.artifact_refs[''module_tidiness.log''] : {''kind'':''value'',''format'':''json'',''value'':null}
+      }}'
+    verification.md: '${{ sequence.invoke_hook.outputs.status == ''passed'' ? sequence.invoke_hook.outputs.artifact_refs[''verification.md'']
+      : {''kind'':''value'',''format'':''json'',''value'':null} }}'
+    failure.log: '${{ size(sequence.invoke_hook.outputs.?failure.orValue({}).?attrs.orValue({}).?command.orValue({}).?diagnostics.orValue({}))
+      > 0 ? jq(sequence.invoke_hook.outputs.failure.attrs.command.diagnostics, ''to_entries[0].value'')
+      : {''kind'':''value'',''format'':''json'',''value'':null} }}'
+  inputs:
+    env:
+      INBOX: ${{ context.environment.op.inbox }}
+      OUTBOX: ${{ context.environment.op.outbox }}
+    run: cp -R "$INBOX/." "$OUTBOX/"
+outputs:
+  result: ${{ sequence.invoke_hook.outputs }}
+  artifact_refs: ${{ sequence.invoke_hook.outputs.artifact_refs }}
+input_schema:
+  request:
+    type: string
+  target_directory:
+    type: string

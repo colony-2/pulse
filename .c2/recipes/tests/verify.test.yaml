@@ -1,0 +1,311 @@
+recipe: verify-caller.yaml
+cases:
+- id: bounded-native
+  type: integration_case
+  runtime: &id011
+    cells:
+      root:
+        files:
+          go.mod: |
+            module fixture
+
+            go 1.26.0
+          fixture.go: |
+            package fixture
+          fixture_test.go: |
+            package fixture
+            import "testing"
+            func TestOrdinaryProvider(t *testing.T) { t.Log("ordinary provider retained") }
+            func TestReachableFixtureRunnerTopologies(t *testing.T) { t.Log("loopback fixture retained") }
+            func TestDockerIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerC2JIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerMultiPlatformIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerDependencyCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerNixFetchCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+          examples/provider-plugin/go.mod: |
+            module pluginfixture
+
+            go 1.26.0
+          examples/provider-plugin/main_test.go: |
+            package main
+            import "testing"
+            func TestPlugin(t *testing.T) {}
+          cmd/pulse/main.go: |
+            package main
+            func main() {}
+          cmd/pulse-exec/main.go: |
+            package main
+            func main() {}
+          tracked-sentinel.txt: |
+            preserve tracked candidate
+        file_sources: &id001
+          .c2/recipes/hooks/build/verify.yaml: ../hooks/build/verify.yaml
+          scripts/npm.test.js: ../../../scripts/npm.test.js
+          npm/pulse/scripts/postinstall.js: ../../../npm/pulse/scripts/postinstall.js
+          npm/pulse/bin/cli.js: ../../../npm/pulse/bin/cli.js
+          api/provider.openapi.yaml: ../../../api/provider.openapi.yaml
+          REMOTE_PROVIDER_PROTOCOL.md: ../../../REMOTE_PROVIDER_PROTOCOL.md
+          scripts/validate_protocol.py: ../../../scripts/validate_protocol.py
+    observe_files: &id002
+    - tracked-sentinel.txt
+    - BAD
+    - BAD2
+    - BAD3
+  inputs: &id003
+    request: $(touch BAD) `touch BAD2`; exit 7
+    target_directory: $(touch BAD3); ../ignored
+  mocks: &id004
+    ops:
+    - &id012
+      match:
+        op: command_execution
+      repeat: true
+      behavior:
+        mode: passthrough
+  assertions:
+  - &id005
+    type: output_equals
+    path: result.api_version
+    value: c2.build-hook/v1
+  - type: output_equals
+    path: result.status
+    value: passed
+  - type: cel_true
+    expr: size(outputs.result.artifact_refs) == 8
+  - type: cel_true
+    expr: size(calls) == 9
+  - &id006
+    type: cel_true
+    expr: repositories.root.clean && repositories.root.new_commits == 0
+  - type: cel_true
+    expr: '!(''BAD'' in repositories.root.files) && !(''BAD2'' in repositories.root.files) && !(''BAD3'' in repositories.root.files)'
+  - type: cel_true
+    expr: calls[0].outputs.stdout.contains('ordinary provider retained') && calls[0].outputs.stdout.contains('loopback fixture
+      retained')
+- id: native-race-failure
+  type: integration_case
+  runtime:
+    cells:
+      root:
+        files:
+          go.mod: |
+            module fixture
+
+            go 1.26.0
+          fixture.go: |
+            package fixture
+          fixture_test.go: |
+            package fixture
+            import "testing"
+            func TestOrdinaryProvider(t *testing.T) { t.Log("ordinary provider retained") }
+            func TestReachableFixtureRunnerTopologies(t *testing.T) { t.Log("loopback fixture retained") }
+            func TestDockerIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerC2JIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerMultiPlatformIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerDependencyCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerNixFetchCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestMandatoryFailure(t *testing.T) { t.Fatal("forced verification failure") }
+          examples/provider-plugin/go.mod: |
+            module pluginfixture
+
+            go 1.26.0
+          examples/provider-plugin/main_test.go: |
+            package main
+            import "testing"
+            func TestPlugin(t *testing.T) {}
+          cmd/pulse/main.go: |
+            package main
+            func main() {}
+          cmd/pulse-exec/main.go: |
+            package main
+            func main() {}
+          tracked-sentinel.txt: |
+            preserve tracked candidate
+        file_sources: *id001
+    observe_files: *id002
+  inputs: *id003
+  mocks: *id004
+  assertions:
+  - *id005
+  - &id007
+    type: output_equals
+    path: result.status
+    value: failed
+  - type: output_equals
+    path: result.failure.node.id
+    value: native_race
+  - &id008
+    type: output_equals
+    path: result.failure.attrs.command.exit_code
+    value: 1
+  - *id006
+  - &id009
+    type: cel_true
+    expr: '!calls.exists(c, c.node_path.endsWith(''/report''))'
+  - &id010
+    type: cel_true
+    expr: size(outputs.result.failure.attrs.command.diagnostics) > 0
+- id: untidy-module
+  type: integration_case
+  runtime:
+    cells:
+      root:
+        files:
+          go.mod: |
+            module fixture
+
+            go 1.26.0
+
+            require example.com/unused v0.0.0
+            replace example.com/unused => ./unused
+          fixture.go: |
+            package fixture
+          fixture_test.go: |
+            package fixture
+            import "testing"
+            func TestOrdinaryProvider(t *testing.T) { t.Log("ordinary provider retained") }
+            func TestReachableFixtureRunnerTopologies(t *testing.T) { t.Log("loopback fixture retained") }
+            func TestDockerIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerC2JIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerMultiPlatformIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerDependencyCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerNixFetchCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+          examples/provider-plugin/go.mod: |
+            module pluginfixture
+
+            go 1.26.0
+          examples/provider-plugin/main_test.go: |
+            package main
+            import "testing"
+            func TestPlugin(t *testing.T) {}
+          cmd/pulse/main.go: |
+            package main
+            func main() {}
+          cmd/pulse-exec/main.go: |
+            package main
+            func main() {}
+          tracked-sentinel.txt: |
+            preserve tracked candidate
+          unused/go.mod: |
+            module example.com/unused
+
+            go 1.26.0
+        file_sources: *id001
+    observe_files: *id002
+  inputs: *id003
+  mocks: *id004
+  assertions:
+  - *id005
+  - *id007
+  - type: output_equals
+    path: result.failure.node.id
+    value: module_tidiness
+  - *id008
+  - *id006
+  - *id009
+  - *id010
+- id: build-failure
+  type: integration_case
+  runtime:
+    cells:
+      root:
+        files:
+          go.mod: |
+            module fixture
+
+            go 1.26.0
+          fixture.go: |
+            package fixture
+          fixture_test.go: |
+            package fixture
+            import "testing"
+            func TestOrdinaryProvider(t *testing.T) { t.Log("ordinary provider retained") }
+            func TestReachableFixtureRunnerTopologies(t *testing.T) { t.Log("loopback fixture retained") }
+            func TestDockerIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerC2JIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerMultiPlatformIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerDependencyCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerNixFetchCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+          examples/provider-plugin/go.mod: |
+            module pluginfixture
+
+            go 1.26.0
+          examples/provider-plugin/main_test.go: |
+            package main
+            import "testing"
+            func TestPlugin(t *testing.T) {}
+          cmd/pulse/main.go: |
+            package main
+            func helper() {}
+          cmd/pulse-exec/main.go: |
+            package main
+            func main() {}
+          tracked-sentinel.txt: |
+            preserve tracked candidate
+        file_sources: *id001
+    observe_files: *id002
+  inputs: *id003
+  mocks: *id004
+  assertions:
+  - *id005
+  - *id007
+  - type: output_equals
+    path: result.failure.node.id
+    value: native_build
+  - *id008
+  - *id006
+  - *id009
+  - *id010
+- id: missing-log
+  type: integration_case
+  runtime: *id011
+  inputs: *id003
+  mocks:
+    ops:
+    - match: &id013
+        op: command_execution
+        node_path: pulse-bounded-caller/invoke_hook/pulse-native-verify/native_race
+      behavior:
+        mode: return
+        outputs:
+          stdout: passed
+          success: true
+          exit_code: 0
+          diagnostics: {}
+    - *id012
+  assertions: &id014
+  - *id007
+  - *id006
+- id: malformed-diagnostics
+  type: integration_case
+  runtime: *id011
+  inputs: *id003
+  mocks:
+    ops:
+    - match: *id013
+      behavior:
+        mode: return
+        outputs:
+          stdout: passed
+          success: true
+          exit_code: 0
+          diagnostics: malformed
+    - *id012
+  assertions: *id014
+- id: missing-report
+  type: integration_case
+  runtime: *id011
+  inputs: *id003
+  mocks:
+    ops:
+    - match:
+        op: command_execution
+        node_path: pulse-bounded-caller/invoke_hook/pulse-native-verify/report
+      behavior:
+        mode: return
+        outputs:
+          stdout: passed
+          success: true
+          exit_code: 0
+    - *id012
+  assertions: *id014
