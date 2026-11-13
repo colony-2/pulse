@@ -9,8 +9,8 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.47.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.5
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.99.0
-	github.com/colony-2/c2j v0.0.118
-	github.com/colony-2/jobdb v0.0.70
+	github.com/colony-2/c2j v0.0.127-0.20261113193326-d031eb49c677
+	github.com/colony-2/jobdb v0.0.83
 	github.com/colony-2/pulse-provider-api v0.0.0-20261105011626-401f11e595a8
 	github.com/colony-2/pulse-tart v0.0.0-20261108183936-ac235e01e7ca
 	github.com/distribution/reference v0.6.0
