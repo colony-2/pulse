@@ -9,6 +9,7 @@ import (
 	"time"
 
 	provider "github.com/colony-2/pulse-provider-api"
+	"github.com/colony-2/pulse/internal/placement"
 	"github.com/colony-2/pulse/internal/providerutil"
 	"github.com/colony-2/pulse/pkg/compute"
 )
@@ -24,6 +25,16 @@ type Job struct {
 	// job identity, while Allocation and Lease need not be populated yet.
 	// Without Prepare, Request must already be a complete launch.
 	Prepare func(context.Context, provider.Launch) (provider.Launch, func(context.Context) error, error)
+	// PrepareDetailed is the controller variant: it retains partial diagnostic
+	// knowledge and an exact release receipt independently of submission authority.
+	PrepareDetailed func(context.Context, provider.Launch) (Prepared, error)
+}
+
+type Prepared struct {
+	Launch    provider.Launch
+	Release   func(context.Context) (placement.Release, error)
+	Requested placement.Requested
+	Stage     string
 }
 
 var ErrNotEligible = errors.New("job is no longer eligible for a lease")
@@ -34,9 +45,14 @@ type Service struct {
 	Provider provider.Provider
 }
 type Result struct {
-	Key        Key
-	Service    string
-	Submission provider.Submission
+	Key                Key
+	Service            string
+	Submission         provider.Submission
+	Requested          placement.Requested
+	Preparation        placement.Preparation
+	Attempts           placement.Attempts
+	ExecutionAdmission string
+	Retry              placement.Retry
 }
 type entry struct {
 	at     time.Time
@@ -120,25 +136,12 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 	results := map[Key]Result{}
 	notEligible := map[Key]bool{}
 	deferred := map[Key]bool{}
-	defer func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		for _, j := range reserved {
-			status := results[j.Key].Submission.Status
-			if status == provider.Accepted || status == provider.Unknown || notEligible[j.Key] || deferred[j.Key] {
-				delete(s.entries, j.Key)
-				continue
-			}
-			e := s.entries[j.Key]
-			e.flight = false
-			e.at = s.Now()
-			s.entries[j.Key] = e
-		}
-	}()
-	cleanup := map[Key]func(context.Context) error{}
+	diagnostics := map[Key]Result{}
+	cleanup := map[Key]func(context.Context) (placement.Release, error){}
 	validPending := []Job{}
 	for _, prepared := range s.prepare(ctx, pending) {
 		j, err := prepared.job, prepared.err
+		diagnostics[j.Key] = Result{Requested: prepared.requested, Preparation: placement.Preparation{Stage: prepared.stage, Error: placement.Error(err)}, Attempts: placement.Attempts{}, Retry: placement.NoRetry()}
 		if !prepared.started {
 			deferred[j.Key] = true
 			continue
@@ -185,13 +188,11 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 		call, cancel := context.WithTimeout(ctx, s.CallTimeout)
 		capabilities, discoveryErr := p.Provider.GetCapabilities(call)
 		cancel()
-		if ctx.Err() != nil {
-			break
-		}
+		var validationErr error
 		if discoveryErr == nil {
-			discoveryErr = providerutil.Capabilities(capabilities)
+			validationErr = providerutil.Capabilities(capabilities)
 		}
-		if discoveryErr != nil {
+		if discoveryErr != nil || validationErr != nil {
 			// Failed/malformed discovery is unknown, never an empty catalog.
 			capabilities = provider.Capabilities{}
 		}
@@ -200,18 +201,47 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 		launches := make([]provider.Launch, 0, len(pending))
 		launchJobs := map[string]Job{}
 		for _, j := range pending {
+			d := diagnostics[j.Key]
+			discovery := "known"
+			if discoveryErr != nil || validationErr != nil {
+				discovery = "unknown"
+			}
+			d.Attempts = append(d.Attempts, placement.Attempt{Service: p.Name, ProviderType: "unknown", ProviderPreparation: placement.UnknownProviderPreparation(), Discovery: discovery, DiscoveryError: placement.Error(discoveryErr), CapabilityValidationError: placement.Error(validationErr), DiscoveryScope: "batch", Compatibility: "not_evaluated", OriginalResults: []provider.Submission{}, Capacity: placement.UnknownCapacity()})
+			diagnostics[j.Key] = d
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		for _, j := range pending {
+			d := diagnostics[j.Key]
+			a := &d.Attempts[len(d.Attempts)-1]
+			a.Compatibility = "not_excluded"
 			if !providerutil.Compatible(capabilities, j.Request.Allocation) {
-				results[j.Key] = Result{j.Key, p.Name, provider.Submission{LaunchID: j.Request.LaunchID, Status: provider.Unsupported, Reason: "provider capabilities do not match requested base or capabilities"}}
+				results[j.Key] = Result{Key: j.Key, Service: p.Name, Submission: provider.Submission{LaunchID: j.Request.LaunchID, Status: provider.Unsupported, Reason: "provider capabilities do not match requested base or capabilities"}}
+				a.Compatibility = "excluded_by_controller"
+				a.Result = results[j.Key].Submission
+				diagnostics[j.Key] = d
 				next = append(next, j)
 				continue
 			}
+			a.SubmitCalled = true
+			diagnostics[j.Key] = d
 			launches = append(launches, j.Request)
 			launchJobs[j.Request.LaunchID] = j
 		}
 
 		if len(launches) > 0 {
 			c, cancel := context.WithTimeout(ctx, s.CallTimeout)
-			submitted, _ := p.Provider.Submit(c, launches)
+			var submitted []provider.Submission
+			var submitErr error
+			var details map[string]placement.SubmissionDetail
+			if detailed, ok := p.Provider.(interface {
+				SubmitWithDiagnostics(context.Context, []provider.Launch) ([]provider.Submission, map[string]placement.SubmissionDetail, error)
+			}); ok {
+				submitted, details, submitErr = detailed.SubmitWithDiagnostics(c, launches)
+			} else {
+				submitted, submitErr = p.Provider.Submit(c, launches)
+			}
 			cancel()
 			subs := map[string]provider.Submission{}
 			dups := map[string]bool{}
@@ -223,11 +253,34 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 			}
 			for _, launch := range launches {
 				j := launchJobs[launch.LaunchID]
+				d := diagnostics[j.Key]
+				a := &d.Attempts[len(d.Attempts)-1]
+				a.SubmissionError = placement.Error(submitErr)
+				a.SubmissionErrorScope = "batch"
+				for _, raw := range submitted {
+					if raw.LaunchID == launch.LaunchID {
+						a.OriginalResults = append(a.OriginalResults, raw)
+					}
+				}
+				if detail, ok := details[launch.LaunchID]; ok {
+					a.OriginalResults = detail.OriginalResults
+					a.SubmissionError = detail.Error
+					a.SubmissionErrorScope = detail.ErrorScope
+					if a.SubmissionErrorScope == "" {
+						a.SubmissionErrorScope = "launch"
+					}
+					a.OriginalResultsError = detail.OriginalResultsError
+					a.NormalizationError = detail.NormalizationError
+				}
 				r, ok := subs[launch.LaunchID]
 				if !ok || dups[launch.LaunchID] || !providerutil.ValidSubmission(r) {
-					r = provider.Submission{LaunchID: launch.LaunchID, Status: provider.Unknown, Reason: "missing or invalid submission result"}
+					message := "missing or invalid submission result"
+					a.NormalizationError = &message
+					r = provider.Submission{LaunchID: launch.LaunchID, Status: provider.Unknown, Reason: message}
 				}
-				results[j.Key] = Result{j.Key, p.Name, r}
+				a.Result = r
+				diagnostics[j.Key] = d
+				results[j.Key] = Result{Key: j.Key, Service: p.Name, Submission: r}
 				if providerutil.Fallback(r.Status) {
 					next = append(next, j)
 				}
@@ -245,24 +298,58 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 		if !ok {
 			r = Result{Key: j.Key, Submission: provider.Submission{LaunchID: j.Request.LaunchID, Status: provider.Rejected, Reason: "attempt cancelled before submission"}}
 		}
-		results[j.Key] = r
+		d := diagnostics[j.Key]
+		r.Requested, r.Preparation, r.Attempts, r.Retry = d.Requested, d.Preparation, d.Attempts, d.Retry
+		r.ExecutionAdmission = "not_accepted"
+		if r.Submission.Status == provider.Accepted {
+			r.ExecutionAdmission = "accepted"
+		}
+		if r.Submission.Status == provider.Unknown {
+			r.ExecutionAdmission = "uncertain"
+		}
 		if release := cleanup[j.Key]; release != nil && r.Submission.Status != provider.Accepted && r.Submission.Status != provider.Unknown {
 			call, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.CallTimeout)
-			if err := release(call); err != nil {
+			receipt, err := release(call)
+			r.Retry.Release = receipt
+			if err != nil {
+				r.Retry.Release.Error = placement.Error(err)
 				cleanupErrs = append(cleanupErrs, errors.New("failed to release unused job lease"))
 			}
 			cancel()
 		}
+		results[j.Key] = r
 		out = append(out, r)
 	}
+	// Finalize at the original end-of-attempt point, under the same lock, and
+	// copy the exact stored local deadline into the outgoing diagnostics.
+	s.mu.Lock()
+	for i := range out {
+		r := &out[i]
+		status := r.Submission.Status
+		if status == provider.Accepted || status == provider.Unknown || notEligible[r.Key] {
+			delete(s.entries, r.Key)
+			continue
+		}
+		e := s.entries[r.Key]
+		e.flight = false
+		e.at = s.Now()
+		s.entries[r.Key] = e
+		r.Retry.ApplyLocal(e.at, s.Cooldown)
+	}
+	for k := range deferred {
+		delete(s.entries, k)
+	}
+	s.mu.Unlock()
 	return out, errors.Join(append(cleanupErrs, ctx.Err())...)
 }
 
 type preparedJob struct {
-	job     Job
-	started bool
-	release func(context.Context) error
-	err     error
+	job       Job
+	started   bool
+	release   func(context.Context) (placement.Release, error)
+	requested placement.Requested
+	stage     string
+	err       error
 }
 
 // prepare bounds concurrency and how long we keep starting claims. In-flight
@@ -288,9 +375,12 @@ func (s *Scheduler) prepare(ctx context.Context, jobs []Job) []preparedJob {
 				next++
 				mu.Unlock()
 				j := jobs[i]
-				result := preparedJob{job: j, started: true}
+				result := preparedJob{job: j, started: true, requested: placement.UnknownRequest("preparation has not supplied a leased allocation"), stage: "validation"}
+				if j.Prepare == nil && j.PrepareDetailed == nil {
+					result.requested = placement.Allocation(j.Request.Allocation)
+				}
 				var err error
-				if j.Prepare != nil {
+				if j.Prepare != nil || j.PrepareDetailed != nil {
 					if j.Key.Instance == "" || j.Key.Tenant == "" || j.Key.Job == "" {
 						err = errors.New("missing job identity")
 					} else {
@@ -299,18 +389,44 @@ func (s *Scheduler) prepare(ctx context.Context, jobs []Job) []preparedJob {
 				} else {
 					err = providerutil.Launch(j.Request)
 				}
-				if err == nil && j.Prepare != nil {
+				if err == nil && (j.Prepare != nil || j.PrepareDetailed != nil) {
 					call, done := context.WithTimeout(ctx, s.CallTimeout)
-					launch, release, prepareErr := j.Prepare(call, j.Request)
+					var launch provider.Launch
+					if j.PrepareDetailed != nil {
+						prepared, prepareErr := j.PrepareDetailed(call, j.Request)
+						launch, result.release, result.requested, result.stage, err = prepared.Launch, prepared.Release, prepared.Requested, prepared.Stage, prepareErr
+					} else {
+						prepared, release, prepareErr := j.Prepare(call, j.Request)
+						launch, err = prepared, prepareErr
+						result.stage = "preparation"
+						if prepareErr == nil {
+							result.requested = placement.Allocation(launch.Allocation)
+						}
+						if release != nil {
+							result.release = func(ctx context.Context) (placement.Release, error) {
+								receipt := placement.NoRelease()
+								receipt.Outcome = "attempted_without_receipt"
+								receipt.RequestedUntil = placement.Unknown("cleanup supplies no deadline receipt")
+								receipt.AcknowledgedUntil = receipt.RequestedUntil
+								err := release(ctx)
+								if err != nil {
+									receipt.Outcome = "failed"
+								}
+								return receipt, err
+							}
+						}
+					}
 					done()
-					result.release = release
-					err = prepareErr
 					if err == nil {
 						if launch.LaunchID != j.Request.LaunchID || launch.Job != j.Request.Job {
 							err = errors.New("preparation changed launch or job identity")
+							result.stage = "validation"
 						} else {
 							result.job.Request = launch
 							err = providerutil.Launch(launch)
+							if err != nil {
+								result.stage = "validation"
+							}
 						}
 					}
 				}

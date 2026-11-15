@@ -114,7 +114,19 @@ func (c *Claimed) GoString() string { return c.String() }
 // Release is only used after confirmed non-submission. Preserve coordinates for
 // task routes and let JobDB persist backoff across controller instances.
 func (c *Claimed) Release(ctx context.Context, backoff time.Duration) error {
-	until := time.Now().Add(backoff)
+	_, err := c.ReleaseWithReceipt(ctx, backoff)
+	return err
+}
+
+type ReleaseReceipt struct {
+	RequestedUntil time.Time
+	Acknowledged   bool
+}
+
+// ReleaseWithReceipt returns the exact deadline passed to Reschedule.
+func (c *Claimed) ReleaseWithReceipt(ctx context.Context, backoff time.Duration) (ReleaseReceipt, error) {
+	until := time.Now().Add(backoff).UTC()
+	receipt := ReleaseReceipt{RequestedUntil: until}
 	route := c.Lease.Route()
 	var taskWait *jobdb.TaskWait
 	if route.TaskType != "" {
@@ -124,9 +136,10 @@ func (c *Claimed) Release(ctx context.Context, backoff time.Duration) error {
 	// the acquired snapshot. Job-only rescheduling must omit task coordinates.
 	err := c.Lease.Reschedule(ctx, jobdb.RescheduleExecutionRequest{NextRoute: route, TaskWait: taskWait, WaitUntil: &until})
 	if err != nil {
-		return errors.New("JobDB lease release failed; lease will expire")
+		return receipt, errors.New("JobDB lease release failed; lease will expire")
 	}
-	return nil
+	receipt.Acknowledged = true
+	return receipt, nil
 }
 
 // List discovers runnable c2j jobs across the entire tenant, without a repository filter.

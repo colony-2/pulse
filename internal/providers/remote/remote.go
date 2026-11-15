@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -77,14 +78,23 @@ func (c *Client) call(ctx context.Context, method, path string, body any, out an
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
+	if resp.StatusCode != http.StatusOK {
+		// Keep the provider's returned error body, including partial reads. This
+		// uses the existing response limit and never includes the request payload.
+		message := fmt.Sprintf("provider returned HTTP %d", resp.StatusCode)
+		if len(b) > 0 {
+			message += ": " + string(b[:min(len(b), maxResponse)])
+		}
+		if len(b) > maxResponse {
+			message += fmt.Sprintf("\n[truncated after %d bytes]", maxResponse)
+		}
+		return resp.StatusCode, errors.Join(errors.New(message), err)
+	}
 	if err != nil {
 		return resp.StatusCode, err
 	}
 	if len(b) > maxResponse {
 		return resp.StatusCode, fmt.Errorf("provider response exceeds limit")
-	}
-	if resp.StatusCode != http.StatusOK {
-		return resp.StatusCode, fmt.Errorf("provider returned HTTP %d", resp.StatusCode)
 	}
 	if err = json.Unmarshal(b, out); err != nil {
 		return resp.StatusCode, fmt.Errorf("invalid provider JSON: %w", err)
@@ -102,7 +112,16 @@ func requestWire(r compute.Request) map[string]any {
 	return m
 }
 func (c *Client) Submit(ctx context.Context, ls []compute.Launch) ([]compute.Submission, error) {
+	return c.submit(ctx, ls, nil)
+}
 
+func (c *Client) SubmitWithDiagnostics(ctx context.Context, ls []compute.Launch) ([]compute.Submission, compute.SubmissionDiagnostics, error) {
+	var d compute.SubmissionDiagnostics
+	out, err := c.submit(ctx, ls, &d)
+	return out, d, err
+}
+
+func (c *Client) submit(ctx context.Context, ls []compute.Launch, d *compute.SubmissionDiagnostics) ([]compute.Submission, error) {
 	if err := compute.ValidateLaunches(ls); err != nil {
 		return nil, err
 	}
@@ -137,6 +156,17 @@ func (c *Client) Submit(ctx context.Context, ls []compute.Launch) ([]compute.Sub
 			out = append(out, compute.Submission{LaunchID: l.LaunchID, Status: status, Reason: err.Error()})
 		}
 		return out, err
+	}
+	if d != nil {
+		d.OriginalResults = []compute.Submission{}
+		for _, raw := range response.Results {
+			var r compute.Submission
+			// Unmarshal may return a field error while still decoding identity/Reason.
+			_ = json.Unmarshal(raw, &r)
+			if ids[r.LaunchID] {
+				d.OriginalResults = append(d.OriginalResults, r)
+			}
+		}
 	}
 	out := []compute.Submission{}
 	for _, raw := range response.Results {

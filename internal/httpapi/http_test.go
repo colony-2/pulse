@@ -17,6 +17,8 @@ import (
 	compute "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/controller"
+	"github.com/colony-2/pulse/internal/providers/adapter"
+	"github.com/colony-2/pulse/internal/providers/remote"
 	"github.com/colony-2/pulse/internal/scheduler"
 )
 
@@ -78,6 +80,26 @@ func TestPublicReadOnlyEndpointsAndConfigRedaction(t *testing.T) {
 	}
 	if w := get(h, "/config"); !strings.Contains(w.Body.String(), "[REDACTED]") {
 		t.Fatal(w.Body.String())
+	}
+}
+
+func TestRemoteErrorBodyStaysOutOfPublicResponses(t *testing.T) {
+	const raw = "operator-only-native-quota-error"
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(raw))
+	}))
+	defer s.Close()
+	native, err := remote.New(s.URL, s.Client(), nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := newAPI(t, map[string]compute.Provider{"remote": &adapter.Provider{Native: native}})
+	for _, path := range []string{"/instances", "/providers/remote/instances"} {
+		w := get(a.Handler(), path)
+		if w.Code != http.StatusBadGateway || strings.Contains(w.Body.String(), raw) || !json.Valid(w.Body.Bytes()) {
+			t.Fatal("raw error entered public response", path, w.Code, w.Body.String())
+		}
 	}
 }
 func TestAggregatePagesPartialFailureAndProviderSelection(t *testing.T) {
@@ -159,4 +181,43 @@ func TestAggregateDeadlineAndPaginationCycle(t *testing.T) {
 
 func (fakeProvider) GetCapabilities(context.Context) (compute.Capabilities, error) {
 	return compute.Capabilities{}, nil
+}
+
+type placementProvider struct {
+	fakeProvider
+	submissions int
+}
+
+func (p *placementProvider) Submit(_ context.Context, ls []compute.Launch) ([]compute.Submission, error) {
+	p.submissions++
+	return []compute.Submission{{LaunchID: ls[0].LaunchID, Status: compute.NoCapacity, Reason: "operator-only-reason-sentinel"}}, errors.New("operator-only-error-sentinel")
+}
+func TestPlacementErrorsStayInOperatorDiagnostics(t *testing.T) {
+	lists := 0
+	p := &placementProvider{fakeProvider: fakeProvider{list: func(context.Context, compute.ListRequest) (compute.ListResponse, error) {
+		lists++
+		return compute.ListResponse{Items: []compute.Instance{}}, nil
+	}}}
+	a := newAPI(t, map[string]compute.Provider{"p": p})
+	out, err := a.Controller.Scheduler.Run(t.Context(), "scope", []scheduler.Service{{Name: "p", Priority: 1, Provider: p}}, []scheduler.Job{{
+		Key:     scheduler.Key{Instance: "db", Tenant: "tenant", Job: "job"},
+		Request: compute.Launch{LaunchID: "launch", Allocation: compute.Allocation{Base: "ubuntu-26*"}, Job: compute.JobRef{JobDB: "https://db/tenant", InstanceID: "db", TenantID: "tenant", JobID: "job"}, Lease: "lease-sentinel"},
+	}})
+	if err != nil || len(out) != 1 || p.submissions != 1 || lists != 0 || out[0].Attempts[0].SubmissionError == nil || *out[0].Attempts[0].SubmissionError != "operator-only-error-sentinel" {
+		t.Fatal(out, err, lists)
+	}
+	for _, path := range []string{"/", "/status", "/config", "/instances", "/providers/p/instances", "/scheduler/cooldowns", "/scheduler/round-robin"} {
+		response := get(a.Handler(), path)
+		if response.Code != 200 || !json.Valid(response.Body.Bytes()) {
+			t.Fatal(path, response.Code, response.Body.String())
+		}
+		for _, sentinel := range []string{"operator-only-reason-sentinel", "operator-only-error-sentinel", "lease-sentinel", "requested_jobdb_until", "execution_admission"} {
+			if strings.Contains(response.Body.String(), sentinel) {
+				t.Fatal("operator diagnostics leaked to public response", path, response.Body.String())
+			}
+		}
+	}
+	if lists != 2 || p.submissions != 1 {
+		t.Fatal("unexpected provider calls", lists, p.submissions)
+	}
 }

@@ -61,9 +61,11 @@ never automatically added to worker environment. Do not forward Pulse's JobDB
 claim/discovery credential. The worker's supplied lease is secret stdin data.
 
 Pulse redacts the entire configuration block and argument values in `/config`.
-Subprocess output is discarded. Initialization and native errors are replaced by
-fixed safe categories. Authors must still keep secrets out of their own logs,
-submission reasons, implementation identity, and instance metadata/references.
+Subprocess output is discarded. Initialization, listing and lifecycle failures
+use fixed categories. Submission method errors are retained verbatim in
+operator placement logs, alongside per-item Reasons. Authors must keep secrets
+out of their own logs, submission reasons, implementation identity, and instance
+metadata/references.
 Plugin protobuf debug formatting is **not** secret-aware.
 
 For a distroless deployment, copy a static executable into a derived Pulse image
@@ -133,7 +135,22 @@ Local validation failures produce `rejected`; unavailable processes and concurre
 overload produce `unavailable` before dispatch.
 
 Providers can return results together with a Go error. The SDK preserves valid
-results, supplies a safe diagnostic code and marks missing items `unknown`.
+results, supplies a diagnostic code and marks missing items `unknown`. An additive
+optional `provider_error` bytes field retains the original method error separately
+from the results. The host returns that exact error text while preserving
+`errors.Is(err, providerplugin.ErrProtocol)` compatibility. An empty returned error
+is distinct from no error. JSON/text log escaping preserves multiline and quoted
+errors; raw method errors do not enter public provider health. Existing negotiated
+message limits apply: the SDK prioritizes the existing results and captures error
+text in the remaining response space. An oversized error has an explicit
+`[truncated after N bytes; provider error exceeds negotiated response limit]`
+marker. This prevents extra diagnostics from turning an acceptance into transport
+failure. The host retains all text returned by the SDK, including that marker.
+The additive Configure request's `max_message_bytes` advertises the host bound;
+zero retains the legacy server bound. Older plugins that only send
+`diagnostic_code` must be rebuilt with this SDK to supply the original error;
+a host cannot recover text
+an older server discarded. Older hosts ignore the additive field.
 Duplicates, invalid statuses and malformed reasons poison only the affected
 requested ID. Unsolicited IDs produce a diagnostic without erasing independent
 acceptances. Reasons must be safe UTF-8, at most 4 KiB, and contain no NUL/newlines;
@@ -217,3 +234,14 @@ protoc -I proto --go_out=. --go_opt=module=github.com/colony-2/pulse \
   --go-grpc_out=. --go-grpc_opt=module=github.com/colony-2/pulse \
   proto/providerplugin/v1/provider.proto
 ```
+
+
+Submission responses optionally carry operator observations taken before server
+normalization. The SDK preserves matching original statuses/Reasons, including
+duplicates and text rejected by admission validation, in byte fields separate
+from authoritative results. The host forwards them only to placement diagnostics.
+Results and returned method errors take priority in the negotiated response
+budget; partial original-result capture is explicitly reported. Old SDKs omit
+this additive v1 field, and new hosts report that pre-normalization observations
+are unavailable. Old hosts ignore it. Rebuild plugins to expose previously
+discarded Reasons; validation and accepted/uncertain ownership rules are unchanged.

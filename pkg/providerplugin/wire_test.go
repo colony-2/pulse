@@ -112,8 +112,8 @@ func TestServerInitializationAndPartialError(t *testing.T) {
 		t.Fatal("reconfigured")
 	}
 	r, e := s.Submit(life, req)
-	if e != nil || r.Results[0].Status != pb.Status_ACCEPTED || r.Results[1].Status != pb.Status_UNKNOWN || strings.Contains(r.String(), "SECRET") {
-		t.Fatal("lost partial acceptance or leaked error")
+	if e != nil || r.Results[0].Status != pb.Status_ACCEPTED || r.Results[1].Status != pb.Status_UNKNOWN || string(r.ProviderError) != "SECRET" || r.DiagnosticCode != "provider_error" {
+		t.Fatal("lost partial acceptance or original method error", r, e)
 	}
 	if _, e = s.List(life, &pb.ListRequest{}); e == nil || strings.Contains(e.Error(), "SECRET") {
 		t.Fatal(e)
@@ -179,5 +179,67 @@ func BenchmarkDefaultConcurrentPayload(b *testing.B) {
 			}()
 		}
 		wg.Wait()
+	}
+}
+
+// Original diagnostics are separate from validated results, including malformed
+// bytes and duplicate IDs. They must never consume the result's wire budget.
+func TestOriginalSubmissionObservations(t *testing.T) {
+	ls := []compute.Launch{launch("a")}
+	raw := []compute.Submission{
+		{LaunchID: "a", Status: compute.NoCapacity, Reason: "occupied\nledger: launch-b"},
+		{LaunchID: "a", Status: "native-status", Reason: "raw\x00\xff"},
+		{LaunchID: "other", Status: compute.NoCapacity, Reason: "unrelated-secret"},
+	}
+	safe, bad := encodeResults(ls, raw)
+	if !bad || safe[0].Status != pb.Status_UNKNOWN {
+		t.Fatal(safe, bad)
+	}
+	response := &pb.SubmitResponse{Results: safe}
+	attachSubmissionObservations(response, ls, raw, 4096)
+	data, err := proto.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := &pb.SubmitResponse{}
+	if err := proto.Unmarshal(data, decoded); err != nil {
+		t.Fatal(err)
+	}
+	observed := decoded.Observations
+	if observed == nil || len(observed.Results) != 2 || observed.CaptureError != "" {
+		t.Fatal(observed)
+	}
+	for i, r := range raw[:2] {
+		got := observed.Results[i]
+		if got.LaunchId != r.LaunchID || string(got.Status) != string(r.Status) || string(got.Reason) != r.Reason {
+			t.Fatal("original bytes changed", got)
+		}
+	}
+	if strings.Contains(string(data), "unrelated-secret") {
+		t.Fatal("unrelated result attributed")
+	}
+	out, stillBad := normalizeResults(ls, decoded.Results)
+	if stillBad || out[0].Status != compute.Unknown {
+		t.Fatal("diagnostics changed authoritative results", out, stillBad)
+	}
+}
+
+func TestOriginalSubmissionObservationBudget(t *testing.T) {
+	ls := []compute.Launch{launch("a")}
+	for _, limit := range []int{32, 128, 256, 1024} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			response := &pb.SubmitResponse{Results: []*pb.Submission{{LaunchId: "a", Status: pb.Status_ACCEPTED}}}
+			before := proto.Clone(response.Results[0])
+			attachSubmissionObservations(response, ls, []compute.Submission{{LaunchID: "a", Status: compute.Accepted, Reason: strings.Repeat("雪", 10000)}}, limit)
+			if proto.Size(response) > limit || !proto.Equal(before, response.Results[0]) {
+				t.Fatal("diagnostics changed acceptance or exceeded wire bound", proto.Size(response), limit)
+			}
+			if response.Observations != nil && response.Observations.CaptureError == "" {
+				t.Fatal("silent truncation")
+			}
+			if _, err := proto.Marshal(response); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

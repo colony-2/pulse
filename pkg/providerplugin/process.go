@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"github.com/colony-2/pulse/pkg/compute"
 	pb "github.com/colony-2/pulse/pkg/providerplugin/proto/v1"
 	"github.com/hashicorp/go-hclog"
@@ -157,7 +158,7 @@ func (p *Process) startGeneration(parent context.Context) (_ *generation, _ *pb.
 	if gc, ok := client.(*plugin.GRPCClient); ok {
 		g.health = grpc_health_v1.NewHealthClient(gc.Conn)
 	}
-	info, e := g.rpc.Configure(ctx, &pb.ConfigureRequest{ProviderName: p.cfg.Name, ConfigYaml: p.cfg.ConfigYAML, BaseDir: p.cfg.BaseDir})
+	info, e := g.rpc.Configure(ctx, &pb.ConfigureRequest{ProviderName: p.cfg.Name, ConfigYaml: p.cfg.ConfigYAML, BaseDir: p.cfg.BaseDir, MaxMessageBytes: int64(p.cfg.MaxMessageBytes)})
 	if e != nil || ctx.Err() != nil || info == nil || info.MaxMessageBytes < MaxConfigBytes+1024 || info.MaxMessageBytes > MaxMessageBytes || !safeIdentity(info.Implementation) || !safeIdentity(info.Version) {
 		return nil, nil, ErrInitialization
 	}
@@ -333,6 +334,16 @@ func (p *Process) acquire(ctx context.Context) (*generation, context.Context, fu
 	return g, call, func() { stop(); cancel(); <-p.slots; p.calls.Done() }, true
 }
 func (p *Process) Submit(ctx context.Context, ls []compute.Launch) ([]compute.Submission, error) {
+	return p.submit(ctx, ls, nil)
+}
+
+func (p *Process) SubmitWithDiagnostics(ctx context.Context, ls []compute.Launch) ([]compute.Submission, compute.SubmissionDiagnostics, error) {
+	var d compute.SubmissionDiagnostics
+	out, err := p.submit(ctx, ls, &d)
+	return out, d, err
+}
+
+func (p *Process) submit(ctx context.Context, ls []compute.Launch, d *compute.SubmissionDiagnostics) ([]compute.Submission, error) {
 	request, e := encodeLaunches(ls)
 	if e != nil {
 		return results(ls, compute.Rejected, "invalid launch batch"), ErrProtocol
@@ -352,14 +363,51 @@ func (p *Process) Submit(ctx context.Context, ls []compute.Launch) ([]compute.Su
 	// that sound like safe declines. No application retry is ever performed.
 	response, e := g.rpc.Submit(call, request, grpc.MaxCallRecvMsgSize(g.limit), grpc.MaxCallSendMsgSize(g.limit))
 	if e != nil || response == nil {
-		return results(ls, compute.Unknown, ErrUncertain.Error()), ErrUncertain
+		return results(ls, compute.Unknown, ErrUncertain.Error()), errors.Join(ErrUncertain, e)
+	}
+	if d != nil {
+		ids := map[string]bool{}
+		for _, l := range ls {
+			ids[l.LaunchID] = true
+		}
+		d.OriginalResults = []compute.Submission{}
+		if observed := response.Observations; observed != nil {
+			for _, r := range observed.Results {
+				if r != nil && ids[r.LaunchId] {
+					d.OriginalResults = append(d.OriginalResults, compute.Submission{LaunchID: r.LaunchId, Status: compute.Status(r.Status), Reason: string(r.Reason)})
+				}
+			}
+			if observed.CaptureError != "" {
+				d.CaptureError = &observed.CaptureError
+			}
+		} else {
+			// Old SDKs cannot expose observations before server normalization. Retain
+			// what they returned and explicitly report this diagnostic limitation.
+			for _, r := range response.Results {
+				if r != nil && ids[r.LaunchId] {
+					d.OriginalResults = append(d.OriginalResults, compute.Submission{LaunchID: r.LaunchId, Status: statusFromWire(r.Status), Reason: r.Reason})
+				}
+			}
+			message := "original observations before server normalization unavailable (older SDK or exhausted response budget)"
+			d.CaptureError = &message
+		}
 	}
 	out, bad := normalizeResults(ls, response.Results)
+	if response.ProviderError != nil {
+		return out, &submissionError{text: string(response.ProviderError)}
+	}
 	if bad || response.DiagnosticCode != "" {
 		return out, ErrProtocol
 	}
 	return out, nil
 }
+
+// Keep the original method text while retaining the existing error category.
+// Per-item results remain authoritative, even when a batch method returned an error.
+type submissionError struct{ text string }
+
+func (e *submissionError) Error() string { return e.text }
+func (*submissionError) Unwrap() error   { return ErrProtocol }
 func (p *Process) List(ctx context.Context, q compute.ListRequest) (compute.ListResponse, error) {
 	q, e := q.Normalize()
 	if e != nil {

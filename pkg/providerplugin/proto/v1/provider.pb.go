@@ -84,12 +84,14 @@ func (Status) EnumDescriptor() ([]byte, []int) {
 }
 
 type ConfigureRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ProviderName  string                 `protobuf:"bytes,1,opt,name=provider_name,json=providerName,proto3" json:"provider_name,omitempty"`
-	ConfigYaml    []byte                 `protobuf:"bytes,2,opt,name=config_yaml,json=configYaml,proto3" json:"config_yaml,omitempty"`
-	BaseDir       string                 `protobuf:"bytes,3,opt,name=base_dir,json=baseDir,proto3" json:"base_dir,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	ProviderName string                 `protobuf:"bytes,1,opt,name=provider_name,json=providerName,proto3" json:"provider_name,omitempty"`
+	ConfigYaml   []byte                 `protobuf:"bytes,2,opt,name=config_yaml,json=configYaml,proto3" json:"config_yaml,omitempty"`
+	BaseDir      string                 `protobuf:"bytes,3,opt,name=base_dir,json=baseDir,proto3" json:"base_dir,omitempty"`
+	// Optional host response bound. Zero retains the legacy server-side limit.
+	MaxMessageBytes int64 `protobuf:"varint,4,opt,name=max_message_bytes,json=maxMessageBytes,proto3" json:"max_message_bytes,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ConfigureRequest) Reset() {
@@ -141,6 +143,13 @@ func (x *ConfigureRequest) GetBaseDir() string {
 		return x.BaseDir
 	}
 	return ""
+}
+
+func (x *ConfigureRequest) GetMaxMessageBytes() int64 {
+	if x != nil {
+		return x.MaxMessageBytes
+	}
+	return 0
 }
 
 type ConfigureResponse struct {
@@ -527,8 +536,14 @@ type SubmitResponse struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Results        []*Submission          `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
 	DiagnosticCode string                 `protobuf:"bytes,2,opt,name=diagnostic_code,json=diagnosticCode,proto3" json:"diagnostic_code,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Original method error for operator placement logs, separate from results.
+	// Presence distinguishes a returned empty error from no error. Bytes preserve
+	// the returned text without protobuf string validation or sanitization.
+	ProviderError []byte `protobuf:"bytes,3,opt,name=provider_error,json=providerError,proto3,oneof" json:"provider_error,omitempty"`
+	// Operator-only observations, never used for admission. Absent on old SDKs.
+	Observations  *SubmissionObservations `protobuf:"bytes,4,opt,name=observations,proto3" json:"observations,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SubmitResponse) Reset() {
@@ -575,6 +590,132 @@ func (x *SubmitResponse) GetDiagnosticCode() string {
 	return ""
 }
 
+func (x *SubmitResponse) GetProviderError() []byte {
+	if x != nil {
+		return x.ProviderError
+	}
+	return nil
+}
+
+func (x *SubmitResponse) GetObservations() *SubmissionObservations {
+	if x != nil {
+		return x.Observations
+	}
+	return nil
+}
+
+type OriginalSubmission struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	LaunchId      string                 `protobuf:"bytes,1,opt,name=launch_id,json=launchId,proto3" json:"launch_id,omitempty"`
+	Status        []byte                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	Reason        []byte                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OriginalSubmission) Reset() {
+	*x = OriginalSubmission{}
+	mi := &file_providerplugin_v1_provider_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OriginalSubmission) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OriginalSubmission) ProtoMessage() {}
+
+func (x *OriginalSubmission) ProtoReflect() protoreflect.Message {
+	mi := &file_providerplugin_v1_provider_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OriginalSubmission.ProtoReflect.Descriptor instead.
+func (*OriginalSubmission) Descriptor() ([]byte, []int) {
+	return file_providerplugin_v1_provider_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *OriginalSubmission) GetLaunchId() string {
+	if x != nil {
+		return x.LaunchId
+	}
+	return ""
+}
+
+func (x *OriginalSubmission) GetStatus() []byte {
+	if x != nil {
+		return x.Status
+	}
+	return nil
+}
+
+func (x *OriginalSubmission) GetReason() []byte {
+	if x != nil {
+		return x.Reason
+	}
+	return nil
+}
+
+type SubmissionObservations struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Results       []*OriginalSubmission  `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
+	CaptureError  string                 `protobuf:"bytes,2,opt,name=capture_error,json=captureError,proto3" json:"capture_error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmissionObservations) Reset() {
+	*x = SubmissionObservations{}
+	mi := &file_providerplugin_v1_provider_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmissionObservations) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmissionObservations) ProtoMessage() {}
+
+func (x *SubmissionObservations) ProtoReflect() protoreflect.Message {
+	mi := &file_providerplugin_v1_provider_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmissionObservations.ProtoReflect.Descriptor instead.
+func (*SubmissionObservations) Descriptor() ([]byte, []int) {
+	return file_providerplugin_v1_provider_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *SubmissionObservations) GetResults() []*OriginalSubmission {
+	if x != nil {
+		return x.Results
+	}
+	return nil
+}
+
+func (x *SubmissionObservations) GetCaptureError() string {
+	if x != nil {
+		return x.CaptureError
+	}
+	return ""
+}
+
 type ListRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PageSize      int32                  `protobuf:"varint,1,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
@@ -586,7 +727,7 @@ type ListRequest struct {
 
 func (x *ListRequest) Reset() {
 	*x = ListRequest{}
-	mi := &file_providerplugin_v1_provider_proto_msgTypes[7]
+	mi := &file_providerplugin_v1_provider_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -598,7 +739,7 @@ func (x *ListRequest) String() string {
 func (*ListRequest) ProtoMessage() {}
 
 func (x *ListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_providerplugin_v1_provider_proto_msgTypes[7]
+	mi := &file_providerplugin_v1_provider_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -611,7 +752,7 @@ func (x *ListRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListRequest.ProtoReflect.Descriptor instead.
 func (*ListRequest) Descriptor() ([]byte, []int) {
-	return file_providerplugin_v1_provider_proto_rawDescGZIP(), []int{7}
+	return file_providerplugin_v1_provider_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ListRequest) GetPageSize() int32 {
@@ -650,7 +791,7 @@ type Instance struct {
 
 func (x *Instance) Reset() {
 	*x = Instance{}
-	mi := &file_providerplugin_v1_provider_proto_msgTypes[8]
+	mi := &file_providerplugin_v1_provider_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -662,7 +803,7 @@ func (x *Instance) String() string {
 func (*Instance) ProtoMessage() {}
 
 func (x *Instance) ProtoReflect() protoreflect.Message {
-	mi := &file_providerplugin_v1_provider_proto_msgTypes[8]
+	mi := &file_providerplugin_v1_provider_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -675,7 +816,7 @@ func (x *Instance) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Instance.ProtoReflect.Descriptor instead.
 func (*Instance) Descriptor() ([]byte, []int) {
-	return file_providerplugin_v1_provider_proto_rawDescGZIP(), []int{8}
+	return file_providerplugin_v1_provider_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Instance) GetId() string {
@@ -737,7 +878,7 @@ type ListResponse struct {
 
 func (x *ListResponse) Reset() {
 	*x = ListResponse{}
-	mi := &file_providerplugin_v1_provider_proto_msgTypes[9]
+	mi := &file_providerplugin_v1_provider_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -749,7 +890,7 @@ func (x *ListResponse) String() string {
 func (*ListResponse) ProtoMessage() {}
 
 func (x *ListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_providerplugin_v1_provider_proto_msgTypes[9]
+	mi := &file_providerplugin_v1_provider_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -762,7 +903,7 @@ func (x *ListResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListResponse.ProtoReflect.Descriptor instead.
 func (*ListResponse) Descriptor() ([]byte, []int) {
-	return file_providerplugin_v1_provider_proto_rawDescGZIP(), []int{9}
+	return file_providerplugin_v1_provider_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ListResponse) GetItems() []*Instance {
@@ -787,7 +928,7 @@ type ShutdownRequest struct {
 
 func (x *ShutdownRequest) Reset() {
 	*x = ShutdownRequest{}
-	mi := &file_providerplugin_v1_provider_proto_msgTypes[10]
+	mi := &file_providerplugin_v1_provider_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -799,7 +940,7 @@ func (x *ShutdownRequest) String() string {
 func (*ShutdownRequest) ProtoMessage() {}
 
 func (x *ShutdownRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_providerplugin_v1_provider_proto_msgTypes[10]
+	mi := &file_providerplugin_v1_provider_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -812,7 +953,7 @@ func (x *ShutdownRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShutdownRequest.ProtoReflect.Descriptor instead.
 func (*ShutdownRequest) Descriptor() ([]byte, []int) {
-	return file_providerplugin_v1_provider_proto_rawDescGZIP(), []int{10}
+	return file_providerplugin_v1_provider_proto_rawDescGZIP(), []int{12}
 }
 
 type ShutdownResponse struct {
@@ -823,7 +964,7 @@ type ShutdownResponse struct {
 
 func (x *ShutdownResponse) Reset() {
 	*x = ShutdownResponse{}
-	mi := &file_providerplugin_v1_provider_proto_msgTypes[11]
+	mi := &file_providerplugin_v1_provider_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -835,7 +976,7 @@ func (x *ShutdownResponse) String() string {
 func (*ShutdownResponse) ProtoMessage() {}
 
 func (x *ShutdownResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_providerplugin_v1_provider_proto_msgTypes[11]
+	mi := &file_providerplugin_v1_provider_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -848,19 +989,20 @@ func (x *ShutdownResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShutdownResponse.ProtoReflect.Descriptor instead.
 func (*ShutdownResponse) Descriptor() ([]byte, []int) {
-	return file_providerplugin_v1_provider_proto_rawDescGZIP(), []int{11}
+	return file_providerplugin_v1_provider_proto_rawDescGZIP(), []int{13}
 }
 
 var File_providerplugin_v1_provider_proto protoreflect.FileDescriptor
 
 const file_providerplugin_v1_provider_proto_rawDesc = "" +
 	"\n" +
-	" providerplugin/v1/provider.proto\x12\x17pulse.providerplugin.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"s\n" +
+	" providerplugin/v1/provider.proto\x12\x17pulse.providerplugin.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x9f\x01\n" +
 	"\x10ConfigureRequest\x12#\n" +
 	"\rprovider_name\x18\x01 \x01(\tR\fproviderName\x12\x1f\n" +
 	"\vconfig_yaml\x18\x02 \x01(\fR\n" +
 	"configYaml\x12\x19\n" +
-	"\bbase_dir\x18\x03 \x01(\tR\abaseDir\"\x9d\x01\n" +
+	"\bbase_dir\x18\x03 \x01(\tR\abaseDir\x12*\n" +
+	"\x11max_message_bytes\x18\x04 \x01(\x03R\x0fmaxMessageBytes\"\x9d\x01\n" +
 	"\x11ConfigureResponse\x12&\n" +
 	"\x0eimplementation\x18\x01 \x01(\tR\x0eimplementation\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x1a\n" +
@@ -900,10 +1042,20 @@ const file_providerplugin_v1_provider_proto_rawDesc = "" +
 	"\x06status\x18\x02 \x01(\x0e2\x1f.pulse.providerplugin.v1.StatusR\x06status\x12\x16\n" +
 	"\x06reason\x18\x03 \x01(\tR\x06reason\"F\n" +
 	"\rSubmitRequest\x125\n" +
-	"\x05items\x18\x01 \x03(\v2\x1f.pulse.providerplugin.v1.LaunchR\x05items\"x\n" +
+	"\x05items\x18\x01 \x03(\v2\x1f.pulse.providerplugin.v1.LaunchR\x05items\"\x8c\x02\n" +
 	"\x0eSubmitResponse\x12=\n" +
 	"\aresults\x18\x01 \x03(\v2#.pulse.providerplugin.v1.SubmissionR\aresults\x12'\n" +
-	"\x0fdiagnostic_code\x18\x02 \x01(\tR\x0ediagnosticCode\"f\n" +
+	"\x0fdiagnostic_code\x18\x02 \x01(\tR\x0ediagnosticCode\x12*\n" +
+	"\x0eprovider_error\x18\x03 \x01(\fH\x00R\rproviderError\x88\x01\x01\x12S\n" +
+	"\fobservations\x18\x04 \x01(\v2/.pulse.providerplugin.v1.SubmissionObservationsR\fobservationsB\x11\n" +
+	"\x0f_provider_error\"a\n" +
+	"\x12OriginalSubmission\x12\x1b\n" +
+	"\tlaunch_id\x18\x01 \x01(\tR\blaunchId\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\fR\x06status\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\fR\x06reason\"\x84\x01\n" +
+	"\x16SubmissionObservations\x12E\n" +
+	"\aresults\x18\x01 \x03(\v2+.pulse.providerplugin.v1.OriginalSubmissionR\aresults\x12#\n" +
+	"\rcapture_error\x18\x02 \x01(\tR\fcaptureError\"f\n" +
 	"\vListRequest\x12\x1b\n" +
 	"\tpage_size\x18\x01 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
@@ -954,51 +1106,55 @@ func file_providerplugin_v1_provider_proto_rawDescGZIP() []byte {
 }
 
 var file_providerplugin_v1_provider_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_providerplugin_v1_provider_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_providerplugin_v1_provider_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_providerplugin_v1_provider_proto_goTypes = []any{
-	(Status)(0),                   // 0: pulse.providerplugin.v1.Status
-	(*ConfigureRequest)(nil),      // 1: pulse.providerplugin.v1.ConfigureRequest
-	(*ConfigureResponse)(nil),     // 2: pulse.providerplugin.v1.ConfigureResponse
-	(*Launch)(nil),                // 3: pulse.providerplugin.v1.Launch
-	(*Process)(nil),               // 4: pulse.providerplugin.v1.Process
-	(*Submission)(nil),            // 5: pulse.providerplugin.v1.Submission
-	(*SubmitRequest)(nil),         // 6: pulse.providerplugin.v1.SubmitRequest
-	(*SubmitResponse)(nil),        // 7: pulse.providerplugin.v1.SubmitResponse
-	(*ListRequest)(nil),           // 8: pulse.providerplugin.v1.ListRequest
-	(*Instance)(nil),              // 9: pulse.providerplugin.v1.Instance
-	(*ListResponse)(nil),          // 10: pulse.providerplugin.v1.ListResponse
-	(*ShutdownRequest)(nil),       // 11: pulse.providerplugin.v1.ShutdownRequest
-	(*ShutdownResponse)(nil),      // 12: pulse.providerplugin.v1.ShutdownResponse
-	nil,                           // 13: pulse.providerplugin.v1.Launch.MetadataEntry
-	nil,                           // 14: pulse.providerplugin.v1.Process.EnvEntry
-	nil,                           // 15: pulse.providerplugin.v1.Instance.MetadataEntry
-	(*timestamppb.Timestamp)(nil), // 16: google.protobuf.Timestamp
+	(Status)(0),                    // 0: pulse.providerplugin.v1.Status
+	(*ConfigureRequest)(nil),       // 1: pulse.providerplugin.v1.ConfigureRequest
+	(*ConfigureResponse)(nil),      // 2: pulse.providerplugin.v1.ConfigureResponse
+	(*Launch)(nil),                 // 3: pulse.providerplugin.v1.Launch
+	(*Process)(nil),                // 4: pulse.providerplugin.v1.Process
+	(*Submission)(nil),             // 5: pulse.providerplugin.v1.Submission
+	(*SubmitRequest)(nil),          // 6: pulse.providerplugin.v1.SubmitRequest
+	(*SubmitResponse)(nil),         // 7: pulse.providerplugin.v1.SubmitResponse
+	(*OriginalSubmission)(nil),     // 8: pulse.providerplugin.v1.OriginalSubmission
+	(*SubmissionObservations)(nil), // 9: pulse.providerplugin.v1.SubmissionObservations
+	(*ListRequest)(nil),            // 10: pulse.providerplugin.v1.ListRequest
+	(*Instance)(nil),               // 11: pulse.providerplugin.v1.Instance
+	(*ListResponse)(nil),           // 12: pulse.providerplugin.v1.ListResponse
+	(*ShutdownRequest)(nil),        // 13: pulse.providerplugin.v1.ShutdownRequest
+	(*ShutdownResponse)(nil),       // 14: pulse.providerplugin.v1.ShutdownResponse
+	nil,                            // 15: pulse.providerplugin.v1.Launch.MetadataEntry
+	nil,                            // 16: pulse.providerplugin.v1.Process.EnvEntry
+	nil,                            // 17: pulse.providerplugin.v1.Instance.MetadataEntry
+	(*timestamppb.Timestamp)(nil),  // 18: google.protobuf.Timestamp
 }
 var file_providerplugin_v1_provider_proto_depIdxs = []int32{
-	16, // 0: pulse.providerplugin.v1.Launch.start_before:type_name -> google.protobuf.Timestamp
-	13, // 1: pulse.providerplugin.v1.Launch.metadata:type_name -> pulse.providerplugin.v1.Launch.MetadataEntry
+	18, // 0: pulse.providerplugin.v1.Launch.start_before:type_name -> google.protobuf.Timestamp
+	15, // 1: pulse.providerplugin.v1.Launch.metadata:type_name -> pulse.providerplugin.v1.Launch.MetadataEntry
 	4,  // 2: pulse.providerplugin.v1.Launch.process:type_name -> pulse.providerplugin.v1.Process
-	14, // 3: pulse.providerplugin.v1.Process.env:type_name -> pulse.providerplugin.v1.Process.EnvEntry
+	16, // 3: pulse.providerplugin.v1.Process.env:type_name -> pulse.providerplugin.v1.Process.EnvEntry
 	0,  // 4: pulse.providerplugin.v1.Submission.status:type_name -> pulse.providerplugin.v1.Status
 	3,  // 5: pulse.providerplugin.v1.SubmitRequest.items:type_name -> pulse.providerplugin.v1.Launch
 	5,  // 6: pulse.providerplugin.v1.SubmitResponse.results:type_name -> pulse.providerplugin.v1.Submission
-	15, // 7: pulse.providerplugin.v1.Instance.metadata:type_name -> pulse.providerplugin.v1.Instance.MetadataEntry
-	16, // 8: pulse.providerplugin.v1.Instance.created_at:type_name -> google.protobuf.Timestamp
-	16, // 9: pulse.providerplugin.v1.Instance.started_at:type_name -> google.protobuf.Timestamp
-	9,  // 10: pulse.providerplugin.v1.ListResponse.items:type_name -> pulse.providerplugin.v1.Instance
-	1,  // 11: pulse.providerplugin.v1.InstanceProvider.Configure:input_type -> pulse.providerplugin.v1.ConfigureRequest
-	6,  // 12: pulse.providerplugin.v1.InstanceProvider.Submit:input_type -> pulse.providerplugin.v1.SubmitRequest
-	8,  // 13: pulse.providerplugin.v1.InstanceProvider.List:input_type -> pulse.providerplugin.v1.ListRequest
-	11, // 14: pulse.providerplugin.v1.InstanceProvider.Shutdown:input_type -> pulse.providerplugin.v1.ShutdownRequest
-	2,  // 15: pulse.providerplugin.v1.InstanceProvider.Configure:output_type -> pulse.providerplugin.v1.ConfigureResponse
-	7,  // 16: pulse.providerplugin.v1.InstanceProvider.Submit:output_type -> pulse.providerplugin.v1.SubmitResponse
-	10, // 17: pulse.providerplugin.v1.InstanceProvider.List:output_type -> pulse.providerplugin.v1.ListResponse
-	12, // 18: pulse.providerplugin.v1.InstanceProvider.Shutdown:output_type -> pulse.providerplugin.v1.ShutdownResponse
-	15, // [15:19] is the sub-list for method output_type
-	11, // [11:15] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	9,  // 7: pulse.providerplugin.v1.SubmitResponse.observations:type_name -> pulse.providerplugin.v1.SubmissionObservations
+	8,  // 8: pulse.providerplugin.v1.SubmissionObservations.results:type_name -> pulse.providerplugin.v1.OriginalSubmission
+	17, // 9: pulse.providerplugin.v1.Instance.metadata:type_name -> pulse.providerplugin.v1.Instance.MetadataEntry
+	18, // 10: pulse.providerplugin.v1.Instance.created_at:type_name -> google.protobuf.Timestamp
+	18, // 11: pulse.providerplugin.v1.Instance.started_at:type_name -> google.protobuf.Timestamp
+	11, // 12: pulse.providerplugin.v1.ListResponse.items:type_name -> pulse.providerplugin.v1.Instance
+	1,  // 13: pulse.providerplugin.v1.InstanceProvider.Configure:input_type -> pulse.providerplugin.v1.ConfigureRequest
+	6,  // 14: pulse.providerplugin.v1.InstanceProvider.Submit:input_type -> pulse.providerplugin.v1.SubmitRequest
+	10, // 15: pulse.providerplugin.v1.InstanceProvider.List:input_type -> pulse.providerplugin.v1.ListRequest
+	13, // 16: pulse.providerplugin.v1.InstanceProvider.Shutdown:input_type -> pulse.providerplugin.v1.ShutdownRequest
+	2,  // 17: pulse.providerplugin.v1.InstanceProvider.Configure:output_type -> pulse.providerplugin.v1.ConfigureResponse
+	7,  // 18: pulse.providerplugin.v1.InstanceProvider.Submit:output_type -> pulse.providerplugin.v1.SubmitResponse
+	12, // 19: pulse.providerplugin.v1.InstanceProvider.List:output_type -> pulse.providerplugin.v1.ListResponse
+	14, // 20: pulse.providerplugin.v1.InstanceProvider.Shutdown:output_type -> pulse.providerplugin.v1.ShutdownResponse
+	17, // [17:21] is the sub-list for method output_type
+	13, // [13:17] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_providerplugin_v1_provider_proto_init() }
@@ -1006,13 +1162,14 @@ func file_providerplugin_v1_provider_proto_init() {
 	if File_providerplugin_v1_provider_proto != nil {
 		return
 	}
+	file_providerplugin_v1_provider_proto_msgTypes[6].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_providerplugin_v1_provider_proto_rawDesc), len(file_providerplugin_v1_provider_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   15,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

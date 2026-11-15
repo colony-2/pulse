@@ -10,6 +10,7 @@ import (
 	provider "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/bases"
 	"github.com/colony-2/pulse/internal/c2j"
+	"github.com/colony-2/pulse/internal/placement"
 	"github.com/colony-2/pulse/internal/providerutil"
 	"github.com/colony-2/pulse/pkg/compute"
 )
@@ -44,6 +45,16 @@ func Metadata(l provider.Launch) map[string]string {
 	return map[string]string{"pulse_metadata_version": "1", "pulse_managed_by": "pulse", "pulse_jobdb_instance_id": l.Job.InstanceID, "pulse_tenant_id": l.Job.TenantID, "pulse_job_id": l.Job.JobID, "pulse_launch_id": l.LaunchID, "pulse_jobdb": l.Job.JobDB}
 }
 func (p *Provider) Submit(ctx context.Context, launches []provider.Launch) ([]provider.Submission, error) {
+	return p.submit(ctx, launches, nil)
+}
+
+func (p *Provider) SubmitWithDiagnostics(ctx context.Context, launches []provider.Launch) ([]provider.Submission, map[string]placement.SubmissionDetail, error) {
+	details := map[string]placement.SubmissionDetail{}
+	out, err := p.submit(ctx, launches, details)
+	return out, details, err
+}
+
+func (p *Provider) submit(ctx context.Context, launches []provider.Launch, details map[string]placement.SubmissionDetail) ([]provider.Submission, error) {
 	if err := providerutil.Launches(launches); err != nil {
 		return nil, err
 	}
@@ -77,7 +88,25 @@ func (p *Provider) Submit(ctx context.Context, launches []provider.Launch) ([]pr
 	if len(native) == 0 {
 		return out, nil
 	}
-	results, err := p.Native.Submit(ctx, native)
+	var results []compute.Submission
+	var err error
+	var observations compute.SubmissionDiagnostics
+	if detailed, ok := p.Native.(compute.DiagnosticSubmitter); ok && details != nil {
+		results, observations, err = detailed.SubmitWithDiagnostics(ctx, native)
+	} else {
+		results, err = p.Native.Submit(ctx, native)
+	}
+	if observations.OriginalResults != nil {
+		for _, l := range native {
+			detail := placement.SubmissionDetail{OriginalResults: []provider.Submission{}, Error: placement.Error(err), ErrorScope: "batch", OriginalResultsError: observations.CaptureError}
+			for _, r := range observations.OriginalResults {
+				if r.LaunchID == l.LaunchID {
+					detail.OriginalResults = append(detail.OriginalResults, provider.Submission{LaunchID: r.LaunchID, Status: provider.Status(r.Status), Reason: r.Reason})
+				}
+			}
+			details[l.LaunchID] = detail
+		}
+	}
 	for _, r := range results {
 		out = append(out, provider.Submission{LaunchID: r.LaunchID, Status: provider.Status(r.Status), Reason: r.Reason})
 	}

@@ -130,3 +130,39 @@ func TestDiscoveredClaimCapabilityExpires(t *testing.T) {
 		t.Fatal("expired capability could reschedule work")
 	}
 }
+
+type receiptLease struct {
+	jobdb.ExecutionLease
+	route   jobdb.Route
+	state   jobdb.ExecutionState
+	request jobdb.RescheduleExecutionRequest
+	err     error
+}
+
+func (l *receiptLease) Route() jobdb.Route                   { return l.route }
+func (l *receiptLease) ExecutionState() jobdb.ExecutionState { return l.state }
+func (l *receiptLease) Reschedule(_ context.Context, r jobdb.RescheduleExecutionRequest) error {
+	l.request = r
+	return l.err
+}
+func TestReleaseReceiptMatchesAppliedDeadline(t *testing.T) {
+	for _, task := range []bool{false, true} {
+		l := &receiptLease{route: jobdb.Route{JobType: "recipe"}, state: jobdb.ExecutionState{TaskWait: &jobdb.TaskWait{}}}
+		if task {
+			l.route.TaskType = "operation"
+		}
+		c := &Claimed{Lease: l}
+		receipt, err := c.ReleaseWithReceipt(t.Context(), time.Minute)
+		if err != nil || !receipt.Acknowledged || l.request.WaitUntil == nil || !receipt.RequestedUntil.Equal(*l.request.WaitUntil) || l.request.NextRoute != l.route {
+			t.Fatal(receipt, err, l.request)
+		}
+		if (l.request.TaskWait != nil) != task {
+			t.Fatal("wrong task coordinates", l.request)
+		}
+		l.err = fmt.Errorf("release failed")
+		receipt, err = c.ReleaseWithReceipt(t.Context(), time.Minute)
+		if err == nil || receipt.Acknowledged || !receipt.RequestedUntil.Equal(*l.request.WaitUntil) {
+			t.Fatal(receipt, err)
+		}
+	}
+}

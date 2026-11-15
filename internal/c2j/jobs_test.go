@@ -5,6 +5,7 @@ import (
 	"github.com/colony-2/c2j/pkg/execution"
 	provider "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/bases"
+	"github.com/colony-2/pulse/internal/placement"
 	"github.com/colony-2/pulse/pkg/compute"
 	"os"
 	"reflect"
@@ -196,5 +197,79 @@ func TestInvalidBaseDemandRejected(t *testing.T) {
 				t.Fatal("invalid demand fell back to defaults")
 			}
 		})
+	}
+}
+
+func TestAllocationDiagnosticKnowledge(t *testing.T) {
+	for _, tc := range []struct{ name, base, platform string }{
+		{"wildcard", "ubuntu-26*", ""},
+		{"exact", "ubuntu-26.04-arm64", "linux/arm64"},
+		{"native", "oci:linux/amd64:docker.io/library/alpine:3", "linux/amd64"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			j := Job{ID: "j", Tenant: "t", Execution: &View{Status: "unresolved"}}
+			_, d, err := j.AllocationWithDiagnostic(provider.Allocation{Base: tc.base})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range []placement.Fact{d.CPUMillis, d.MemoryBytes, d.ScratchBytes} {
+				if f.State != "unspecified" || f.Value != nil {
+					t.Fatal(d)
+				}
+			}
+			if !reflect.DeepEqual(d.Capabilities.Value, []string{}) {
+				t.Fatal(d)
+			}
+			if tc.platform == "" {
+				if d.Platform.State != "unknown" || d.Platform.Value != nil {
+					t.Fatal(d)
+				}
+			} else if d.Platform.Value != tc.platform {
+				t.Fatal(d)
+			}
+		})
+	}
+	platform := "linux/amd64"
+	demand, err := execution.Initial(nil, true, execution.Requirements{Platform: &platform})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := execution.PayloadWithDemand(nil, demand.Demand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := execution.Inspect(nil, payload)
+	j := Job{ID: "j", Tenant: "t", Execution: &view}
+	a, d, err := j.AllocationWithDiagnostic(provider.Allocation{Base: "ubuntu-26*"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Platform.Value != platform {
+		t.Fatal(d)
+	}
+	j.Execution = nil
+	_, d, err = j.AllocationWithDiagnostic(a)
+	for _, f := range []placement.Fact{d.Base, d.Platform, d.Capabilities, d.CPUMillis, d.MemoryBytes, d.ScratchBytes} {
+		if f.State != "unknown" || f.Value != nil {
+			t.Fatal(d)
+		}
+	}
+}
+
+func TestAllocationDiagnosticPreservesFactsBeforeBaseTranslationFailure(t *testing.T) {
+	platform, memory := "darwin/arm64", "8Gi"
+	demand, err := execution.Initial(nil, true, execution.Requirements{Platform: &platform, Resources: execution.Resources{Memory: &memory}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := execution.PayloadWithDemand(nil, demand.Demand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := execution.Inspect(nil, payload)
+	j := Job{ID: "j", Tenant: "t", Execution: &view}
+	_, d, err := j.AllocationWithDiagnostic(provider.Allocation{Base: "ubuntu-26*", CPUMillis: 1000})
+	if err == nil || d.Base.State != "unknown" || d.Platform.Value != platform || d.MemoryBytes.Value != int64(8<<30) || d.CPUMillis.Value != int64(1000) || d.ScratchBytes.State != "unspecified" {
+		t.Fatal(d, err)
 	}
 }

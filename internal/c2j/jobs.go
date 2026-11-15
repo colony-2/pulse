@@ -10,6 +10,7 @@ import (
 	"github.com/colony-2/c2j/pkg/execution"
 	provider "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/bases"
+	"github.com/colony-2/pulse/internal/placement"
 	"github.com/colony-2/pulse/internal/providerutil"
 	"github.com/colony-2/pulse/internal/quantity"
 	"github.com/colony-2/pulse/pkg/compute"
@@ -39,6 +40,19 @@ type Page struct {
 }
 
 func (j Job) Allocation(defaults provider.Allocation) (provider.Allocation, error) {
+	a, _, err := j.AllocationWithDiagnostic(defaults)
+	return a, err
+}
+
+// AllocationWithDiagnostic captures facts during the existing translation so
+// partial knowledge survives a later preparation error without allowing launch.
+func (j Job) AllocationWithDiagnostic(defaults provider.Allocation) (a provider.Allocation, snapshot placement.Requested, allocationErr error) {
+	snapshot = placement.UnknownRequest("leased allocation unavailable")
+	a, allocationErr = j.allocation(defaults, &snapshot)
+	return a, snapshot, allocationErr
+}
+
+func (j Job) allocation(defaults provider.Allocation, snapshot *placement.Requested) (provider.Allocation, error) {
 	if j.Tenant == "" || j.ID == "" {
 		return defaults, fmt.Errorf("missing job identity")
 	}
@@ -58,6 +72,7 @@ func (j Job) Allocation(defaults provider.Allocation) (provider.Allocation, erro
 		if v.Status != "unresolved" {
 			return defaults, fmt.Errorf("resolved execution view lacks demand")
 		}
+		*snapshot = placement.Allocation(defaults)
 		return defaults, providerutil.Allocation(defaults)
 	}
 	if err := v.Demand.Validate(); err != nil {
@@ -65,17 +80,38 @@ func (j Job) Allocation(defaults provider.Allocation) (provider.Allocation, erro
 	}
 	r := v.Demand.Effective
 	a := defaults
+	*snapshot = placement.Allocation(defaults)
+	if r.Base != nil || r.Image != nil || r.Platform != nil {
+		snapshot.Base = placement.Unknown("effective base translation incomplete")
+		snapshot.Platform = placement.Unknown("effective base translation incomplete")
+	}
+	if r.Platform != nil {
+		snapshot.Platform = placement.Known(strings.ToLower(*r.Platform))
+	}
+	snapshot.Capabilities = placement.Known(append(append([]string{}, defaults.Capabilities...), r.Capabilities...))
+	// Valid leased quantities are positive. The provider's zero denotes an absent
+	// constraint, so no explicit-zero presence can be lost in this translation.
+	for _, field := range []struct {
+		source *string
+		fact   *placement.Fact
+	}{{r.Resources.CPU, &snapshot.CPUMillis}, {r.Resources.Memory, &snapshot.MemoryBytes}, {r.Resources.EphemeralStorage, &snapshot.ScratchBytes}} {
+		if field.source != nil {
+			*field.fact = placement.Unknown("resource translation incomplete")
+		}
+	}
 	for _, field := range []struct {
 		v    *string
 		dest *int64
 		cpu  bool
-	}{{r.Resources.CPU, &a.CPUMillis, true}, {r.Resources.Memory, &a.MemoryBytes, false}, {r.Resources.EphemeralStorage, &a.ScratchBytes, false}} {
+		fact *placement.Fact
+	}{{r.Resources.CPU, &a.CPUMillis, true, &snapshot.CPUMillis}, {r.Resources.Memory, &a.MemoryBytes, false, &snapshot.MemoryBytes}, {r.Resources.EphemeralStorage, &a.ScratchBytes, false, &snapshot.ScratchBytes}} {
 		if field.v != nil {
 			n, e := quantity.Parse(*field.v, field.cpu)
 			if e != nil {
 				return a, e
 			}
 			*field.dest = n
+			*field.fact = placement.Known(n)
 		}
 	}
 	a.Capabilities = append(append([]string(nil), defaults.Capabilities...), r.Capabilities...)
@@ -105,6 +141,10 @@ func (j Job) Allocation(defaults provider.Allocation) (provider.Allocation, erro
 		if err != nil {
 			return a, err
 		}
+	}
+	*snapshot = placement.Allocation(a)
+	if r.Platform != nil {
+		snapshot.Platform = placement.Known(strings.ToLower(*r.Platform))
 	}
 	return a, providerutil.Allocation(a)
 }

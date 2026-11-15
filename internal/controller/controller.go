@@ -8,6 +8,7 @@ import (
 	provider "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/c2j"
 	"github.com/colony-2/pulse/internal/config"
+	"github.com/colony-2/pulse/internal/placement"
 	"github.com/colony-2/pulse/internal/scheduler"
 	"github.com/colony-2/pulse/pkg/compute"
 	"log/slog"
@@ -58,10 +59,14 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 	c.pass++
 	targets = append(targets[offset:], targets[:offset]...)
 	var errs []error
-	for _, provider := range c.Providers {
+	preparation := map[string]placement.ProviderPreparation{}
+	for name, provider := range c.Providers {
+		preparation[name] = placement.UnknownProviderPreparation()
 		if maintenance, ok := provider.(interface{ Maintain(context.Context) error }); ok {
 			call, cancel := context.WithTimeout(ctx, c.Config.Call)
-			if err := maintenance.Maintain(call); err != nil {
+			err := maintenance.Maintain(call)
+			preparation[name] = placement.ReturnedProviderPreparation(err)
+			if err != nil {
 				c.Log.Warn("provider maintenance deferred", "error", err)
 			}
 			cancel()
@@ -114,32 +119,45 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 					req.StartBefore = &deadline
 				}
 
-				jobs = append(jobs, scheduler.Job{Key: k, Request: req, Prepare: func(ctx context.Context, request provider.Launch) (provider.Launch, func(context.Context) error, error) {
+				jobs = append(jobs, scheduler.Job{Key: k, Request: req, PrepareDetailed: func(ctx context.Context, request provider.Launch) (scheduler.Prepared, error) {
+					prepared := scheduler.Prepared{Requested: placement.UnknownRequest("lease allocation unavailable"), Stage: "claim"}
 					if c.Claimer == nil {
-						return provider.Launch{}, nil, errors.New("JobDB lease client is required")
+						return prepared, errors.New("JobDB lease client is required")
 					}
 					claimed, err := c.Claimer.Claim(ctx, t.JobDB, j, request.LaunchID, c.Config.Lease, c.Config.Defaults.Routes)
-					var release func(context.Context) error
 					if claimed != nil {
-						release = func(ctx context.Context) error { return claimed.Release(ctx, c.Config.Cool) }
+						prepared.Release = func(ctx context.Context) (placement.Release, error) {
+							receipt, err := claimed.ReleaseWithReceipt(ctx, c.Config.Cool)
+							release := placement.Release{Outcome: "failed", RequestedUntil: placement.Known(receipt.RequestedUntil), AcknowledgedUntil: placement.Unknown("JobDB did not acknowledge release"), Error: placement.Error(err)}
+							if receipt.Acknowledged {
+								release.Outcome = "acknowledged"
+								release.AcknowledgedUntil = placement.Known(receipt.RequestedUntil)
+							}
+							return release, err
+						}
 					}
 					if err != nil {
-						return provider.Launch{}, release, err
+						return prepared, err
 					}
 					if claimed == nil {
-						return provider.Launch{}, nil, scheduler.ErrNotEligible
+						return prepared, scheduler.ErrNotEligible
 					}
-					allocation, err := claimed.Job.Allocation(c.Config.Allocation)
+					prepared.Stage = "allocation"
+					allocation, snapshot, err := claimed.Job.AllocationWithDiagnostic(c.Config.Allocation)
+					prepared.Requested = snapshot
 					if err != nil {
 						c.Log.Error("invalid leased execution demand", "job", j.ID, "error", err)
-						return provider.Launch{}, release, err
+						return prepared, err
 					}
 					request.Allocation = allocation
 					request.Lease = provider.Lease(claimed.Encoded)
+					prepared.Stage = "exported_lease"
 					if request.Lease == "" {
-						return provider.Launch{}, release, errors.New("empty exported lease")
+						return prepared, errors.New("empty exported lease")
 					}
-					return request, release, nil
+					prepared.Launch = request
+					prepared.Stage = "complete"
+					return prepared, nil
 				}})
 				selected[k] = true
 				if len(jobs) >= c.Config.PerTenant {
@@ -168,8 +186,14 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 				errs = append(errs, e)
 			}
 			for _, r := range results {
-				// Provider diagnostics may echo credential-bearing request bodies.
-				c.Log.Info("launch result", "instance", r.Key.Instance, "tenant", r.Key.Tenant, "job", r.Key.Job, "launch_id", r.Submission.LaunchID, "service", r.Service, "status", r.Submission.Status)
+				for i := range r.Attempts {
+					r.Attempts[i].ProviderPreparation = preparation[r.Attempts[i].Service]
+					if kind := c.Config.Providers[r.Attempts[i].Service].Type; kind != "" {
+						r.Attempts[i].ProviderType = kind
+					}
+				}
+				c.Log.Info("launch result", "instance", r.Key.Instance, "tenant", r.Key.Tenant, "job", r.Key.Job, "launch_id", r.Submission.LaunchID, "service", r.Service, "status", r.Submission.Status,
+					"requested", r.Requested, "preparation", r.Preparation, "attempts", r.Attempts, "reason", r.Submission.Reason, "execution_admission", r.ExecutionAdmission, "retry", r.Retry)
 			}
 		}
 	}

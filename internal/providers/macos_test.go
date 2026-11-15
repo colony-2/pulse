@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -406,5 +407,60 @@ func TestOrchardRejectsIncompleteDockerConfiguration(t *testing.T) {
 				t.Fatal("invalid Docker configuration reached a usable provider")
 			}
 		})
+	}
+}
+
+// This runtime can return authoritative results and errors together, or raw
+// malformed results. The shim must not discard either observation.
+type macDiagnosticRuntime struct {
+	macFake
+	submit func([]api.Launch) ([]api.Submission, error)
+}
+
+func (f *macDiagnosticRuntime) Submit(_ context.Context, ls []api.Launch) ([]api.Submission, error) {
+	f.calls = append(f.calls, ls...)
+	return f.submit(ls)
+}
+func TestMacDiagnosticErrorsAndOriginalReasons(t *testing.T) {
+	for _, malformed := range []bool{false, true} {
+		t.Run(fmt.Sprint(malformed), func(t *testing.T) {
+			runtime := &macDiagnosticRuntime{submit: func(ls []api.Launch) ([]api.Submission, error) {
+				results := []api.Submission{{LaunchID: ls[0].LaunchID, Status: api.NoCapacity, Reason: "occupied reservation: original native reason"}}
+				if malformed {
+					results = append(results, api.Submission{LaunchID: ls[0].LaunchID, Status: api.Unavailable, Reason: "second original reason"})
+				}
+				return results, errors.New("raw runtime error: " + ls[0].LaunchID)
+			}}
+			p := &macProvider{runtime: runtime}
+			first, second := macLaunch("macos*"), macLaunch("macos*")
+			second.LaunchID = "second"
+			out, details, err := p.SubmitWithDiagnostics(t.Context(), []api.Launch{first, second})
+			if err == nil || !strings.Contains(err.Error(), "raw runtime error: test") {
+				t.Fatal(err)
+			}
+			d := details[first.LaunchID]
+			if *d.Error != "raw runtime error: test" || d.OriginalResults[0].Reason != "occupied reservation: original native reason" {
+				t.Fatal(d)
+			}
+			if malformed {
+				if len(runtime.calls) != 1 || len(out) != 1 || out[0].Status != api.Unknown || len(d.OriginalResults) != 2 || d.NormalizationError == nil {
+					t.Fatal(out, details, runtime.calls)
+				}
+			} else {
+				if len(runtime.calls) != 2 || len(out) != 2 || out[0].Status != api.NoCapacity || !strings.Contains(err.Error(), "raw runtime error: second") || *details["second"].Error != "raw runtime error: second" {
+					t.Fatal(out, details, err)
+				}
+			}
+		})
+	}
+}
+func TestMacReconciliationDiagnosticReason(t *testing.T) {
+	runtime := &macFake{}
+	p := &macProvider{runtime: runtime}
+	p.activity.Lock()
+	defer p.activity.Unlock()
+	out, details, err := p.SubmitWithDiagnostics(t.Context(), []api.Launch{macLaunch("macos*")})
+	if err != nil || len(runtime.calls) != 0 || len(details) != 0 || out[0].Status != api.NoCapacity || out[0].Reason != "macOS slots are being reconciled" {
+		t.Fatal(out, details, err)
 	}
 }

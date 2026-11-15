@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	api "github.com/colony-2/pulse-provider-api"
 	tart "github.com/colony-2/pulse-tart"
 	"github.com/colony-2/pulse/internal/config"
+	"github.com/colony-2/pulse/internal/placement"
 	"github.com/colony-2/pulse/internal/providerutil"
 )
 
@@ -221,8 +223,15 @@ func (p *macProvider) GetCapabilities(ctx context.Context) (api.Capabilities, er
 	return p.runtime.GetCapabilities(ctx)
 }
 func (p *macProvider) Submit(ctx context.Context, launches []api.Launch) ([]api.Submission, error) {
+	out, _, err := p.SubmitWithDiagnostics(ctx, launches)
+	return out, err
+}
+
+func (p *macProvider) SubmitWithDiagnostics(ctx context.Context, launches []api.Launch) ([]api.Submission, map[string]placement.SubmissionDetail, error) {
+	details := map[string]placement.SubmissionDetail{}
+	var errs []error
 	if err := providerutil.Launches(launches); err != nil {
-		return nil, err
+		return nil, details, err
 	}
 	out := make([]api.Submission, 0, len(launches))
 	// Reconcile can spend minutes cloning a cold image under the library's
@@ -231,7 +240,7 @@ func (p *macProvider) Submit(ctx context.Context, launches []api.Launch) ([]api.
 		for _, launch := range launches {
 			out = append(out, api.Submission{LaunchID: launch.LaunchID, Status: api.NoCapacity, Reason: "macOS slots are being reconciled"})
 		}
-		return out, nil
+		return out, details, errors.Join(errs...)
 	}
 	defer p.activity.RUnlock()
 	for _, launch := range launches {
@@ -242,14 +251,26 @@ func (p *macProvider) Submit(ctx context.Context, launches []api.Launch) ([]api.
 			continue
 		}
 		responses, err := p.runtime.Submit(ctx, []api.Launch{launch})
+		detail := placement.SubmissionDetail{OriginalResults: []api.Submission{}, Error: placement.Error(err)}
+		for _, response := range responses {
+			if response.LaunchID == launch.LaunchID {
+				detail.OriginalResults = append(detail.OriginalResults, response)
+			}
+		}
+		if err != nil {
+			errs = append(errs, err)
+		}
+		details[launch.LaunchID] = detail
 		if len(responses) != 1 || responses[0].LaunchID != launch.LaunchID || !providerutil.ValidSubmission(responses[0]) {
 			result = api.Submission{LaunchID: launch.LaunchID, Status: api.Unknown, Reason: "missing or invalid Tart/Orchard submission result"}
+			detail.NormalizationError = &result.Reason
+			details[launch.LaunchID] = detail
 			out = append(out, result)
-			return out, err
+			return out, details, errors.Join(errs...)
 		}
 		out = append(out, responses[0])
 	}
-	return out, nil
+	return out, details, errors.Join(errs...)
 }
 
 // Start warming only when the controller starts work, never during pulse check.

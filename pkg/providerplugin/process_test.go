@@ -222,6 +222,9 @@ func TestCrashNoFallbackNoReleaseNoReplay(t *testing.T) {
 	if e != nil || len(out) != 1 || out[0].Submission.Status != provider.Unknown || fallback.calls != 0 || released {
 		t.Fatal(out, e, fallback.calls, released)
 	}
+	if len(out[0].Attempts) != 1 || out[0].Attempts[0].SubmissionError == nil || !strings.Contains(*out[0].Attempts[0].SubmissionError, "rpc error:") {
+		t.Fatal("lost concrete RPC failure in placement diagnostic", out[0].Attempts)
+	}
 	waitFor(t, func() bool { return p.Health().Generation == 2 && p.Health().State == "ready" })
 	if countEvents(t, c, "submit") != 1 {
 		t.Fatal("replayed a launch")

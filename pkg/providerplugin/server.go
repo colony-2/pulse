@@ -2,6 +2,7 @@ package providerplugin
 
 import (
 	"context"
+	"fmt"
 	"github.com/colony-2/pulse/pkg/compute"
 	pb "github.com/colony-2/pulse/pkg/providerplugin/proto/v1"
 	"github.com/hashicorp/go-hclog"
@@ -9,12 +10,15 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const InterfaceName = "instance_provider"
@@ -37,8 +41,9 @@ func pluginSet(s *server) map[int]plugin.PluginSet {
 	return map[int]plugin.PluginSet{ProtocolVersion: {InterfaceName: &rpcPlugin{server: s}}}
 }
 
-// Serve reserves stdout for the framework. Provider diagnostics must never
-// contain configuration, credentials, stdin, or raw native API errors.
+// Serve reserves stdout for the framework. Submission method errors are captured
+// for operator placement diagnostics; do not add configuration, stdin,
+// or request payloads to diagnostics merely to supply an error.
 func Serve(factory Factory, options ...ServeOptions) {
 	o := ServeOptions{}
 	if len(options) > 0 {
@@ -87,14 +92,15 @@ func Serve(factory Factory, options ...ServeOptions) {
 
 type server struct {
 	pb.UnimplementedInstanceProviderServer
-	mu        sync.RWMutex
-	attempted bool
-	stopping  bool
-	provider  compute.Provider
-	factory   Factory
-	options   ServeOptions
-	life      context.Context
-	cancel    context.CancelFunc
+	mu            sync.RWMutex
+	attempted     bool
+	stopping      bool
+	provider      compute.Provider
+	factory       Factory
+	options       ServeOptions
+	responseLimit int
+	life          context.Context
+	cancel        context.CancelFunc
 }
 
 func (s *server) Configure(ctx context.Context, r *pb.ConfigureRequest) (*pb.ConfigureResponse, error) {
@@ -105,7 +111,7 @@ func (s *server) Configure(ctx context.Context, r *pb.ConfigureRequest) (*pb.Con
 	}
 	s.attempted = true
 	s.mu.Unlock()
-	if r == nil || !filepath.IsAbs(r.BaseDir) || ValidateYAML(r.ConfigYaml) != nil {
+	if r == nil || !filepath.IsAbs(r.BaseDir) || ValidateYAML(r.ConfigYaml) != nil || (r.MaxMessageBytes != 0 && (r.MaxMessageBytes < MaxConfigBytes+1024 || r.MaxMessageBytes > MaxMessageBytes)) {
 		return nil, status.Error(codes.InvalidArgument, ErrInitialization.Error())
 	}
 	p, e := s.factory(ctx, Init{Name: r.ProviderName, ConfigYAML: append([]byte{}, r.ConfigYaml...), BaseDir: r.BaseDir, Lifetime: s.life})
@@ -119,7 +125,14 @@ func (s *server) Configure(ctx context.Context, r *pb.ConfigureRequest) (*pb.Con
 		return nil, status.Error(codes.Unavailable, ErrUnavailable.Error())
 	}
 	s.provider = p
-	return &pb.ConfigureResponse{Implementation: s.options.Implementation, Version: s.options.Version, Features: s.options.Features, MaxMessageBytes: int64(s.options.MaxMessageBytes)}, nil
+	s.responseLimit = s.options.MaxMessageBytes
+	if s.responseLimit == 0 {
+		s.responseLimit = DefaultMaxMessageBytes
+	}
+	if r.MaxMessageBytes != 0 {
+		s.responseLimit = min(s.responseLimit, int(r.MaxMessageBytes))
+	}
+	return &pb.ConfigureResponse{Implementation: s.options.Implementation, Version: s.options.Version, Features: s.options.Features, MaxMessageBytes: int64(s.responseLimit)}, nil
 }
 func (s *server) ready() (compute.Provider, error) {
 	s.mu.RLock()
@@ -144,8 +157,76 @@ func (s *server) Submit(ctx context.Context, r *pb.SubmitRequest) (*pb.SubmitRes
 	if e != nil || bad {
 		code = "provider_error"
 	}
-	return &pb.SubmitResponse{Results: out, DiagnosticCode: code}, nil
+	response := &pb.SubmitResponse{Results: out, DiagnosticCode: code}
+	if e != nil {
+		attachSubmissionError(response, e.Error(), s.responseLimit)
+	}
+	attachSubmissionObservations(response, ls, rs, s.responseLimit)
+	return response, nil
 }
+
+// Prioritize the existing authoritative results within the negotiated message
+// bound. Newly transported method text uses the remaining room; an oversize
+// error is explicitly marked rather than turning acceptance into RPC failure.
+func attachSubmissionError(response *pb.SubmitResponse, raw string, limit int) {
+	budget := limit - proto.Size(response)
+	if 1+protowire.SizeBytes(len(raw)) <= budget {
+		response.ProviderError = []byte(raw)
+		return
+	}
+	// 128 bytes cover the field tag/length and marker at the 128 MiB maximum.
+	keep := max(0, min(len(raw), budget-128))
+	if utf8.ValidString(raw) {
+		for keep > 0 && keep < len(raw) && !utf8.RuneStart(raw[keep]) {
+			keep--
+		}
+	}
+	response.ProviderError = []byte(raw[:keep] + fmt.Sprintf("\n[truncated after %d bytes; provider error exceeds negotiated response limit]", keep))
+}
+
+// Preserve matching duplicates and malformed Reasons without relaxing admission
+// validation. Diagnostics use only space left by results and the method error.
+func attachSubmissionObservations(response *pb.SubmitResponse, ls []compute.Launch, rs []compute.Submission, limit int) {
+	ids := map[string]bool{}
+	for _, l := range ls {
+		ids[l.LaunchID] = true
+	}
+	const truncated = "original provider results truncated at negotiated response limit"
+	observed := &pb.SubmissionObservations{CaptureError: truncated}
+	response.Observations = observed
+	if proto.Size(response) > limit {
+		response.Observations = nil
+		return
+	}
+	for _, r := range rs {
+		if !ids[r.LaunchID] {
+			continue
+		}
+		item := &pb.OriginalSubmission{LaunchId: r.LaunchID, Status: []byte(r.Status), Reason: []byte(r.Reason)}
+		observed.Results = append(observed.Results, item)
+		if proto.Size(response) > limit {
+			// Preserve the prefix of this Reason if it fits. The separate capture
+			// error explicitly covers this item and any remaining observations.
+			raw := item.Reason
+			item.Reason = nil
+			budget := limit - proto.Size(response) - 16
+			if budget >= 0 {
+				keep := min(len(raw), budget)
+				if utf8.Valid(raw) {
+					for keep > 0 && keep < len(raw) && !utf8.RuneStart(raw[keep]) {
+						keep--
+					}
+				}
+				item.Reason = raw[:keep]
+			} else {
+				observed.Results = observed.Results[:len(observed.Results)-1]
+			}
+			return
+		}
+	}
+	observed.CaptureError = ""
+}
+
 func (s *server) List(ctx context.Context, r *pb.ListRequest) (*pb.ListResponse, error) {
 	p, e := s.ready()
 	if e != nil {

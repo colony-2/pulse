@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -269,14 +270,22 @@ func (p *Provider) request(ctx context.Context, token, method, path string, body
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, (16<<20)+1))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		const limit = 16 << 20
+		message := fmt.Sprintf("cloud API HTTP %d", resp.StatusCode)
+		if len(data) > 0 {
+			message += ": " + string(data[:min(len(data), limit)])
+		}
+		if len(data) > limit {
+			message += fmt.Sprintf("\n[truncated after %d bytes]", limit)
+		}
+		return nil, resp.StatusCode, errors.Join(errors.New(message), err)
+	}
 	if err != nil {
 		return nil, resp.StatusCode, err
 	}
 	if len(data) > 16<<20 {
 		return nil, resp.StatusCode, fmt.Errorf("cloud response too large")
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, resp.StatusCode, fmt.Errorf("cloud API HTTP %d", resp.StatusCode)
 	}
 	out := map[string]json.RawMessage{}
 	if len(data) > 0 {
@@ -348,7 +357,7 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 			token, e := p.token(ctx)
 			if e != nil {
 				result.Status = compute.Unavailable
-				result.Reason = "cloud authentication unavailable"
+				result.Reason = fmt.Sprintf("cloud authentication unavailable: %v", e)
 				out = append(out, result)
 				continue
 			}

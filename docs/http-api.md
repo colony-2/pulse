@@ -53,7 +53,7 @@ Example response:
 }
 ```
 
-`status` is `starting` until a polling pass completes, then `ok` or `degraded` according to the last completed pass. The endpoint returns HTTP `200` in all three cases: it reports controller state without probing providers or JobDB. Counters reflect pass-level errors; individual admission declines are not a provider health check. `running` means a poll is in progress, not that jobs are executing. Timestamps with no observation yet use Go's zero timestamp (`0001-01-01T00:00:00Z`). Error details remain in controller logs.
+`status` is `starting` until a polling pass completes, then `ok` or `degraded` according to the last completed pass. The endpoint returns HTTP `200` in all three cases: it reports controller state without probing providers or JobDB. Counters reflect pass-level errors; individual admission declines are not a provider health check. `running` means a poll is in progress, not that jobs are executing. Timestamps with no observation yet use Go's zero timestamp (`0001-01-01T00:00:00Z`). Error details remain in controller logs. Successful polling does not establish successful placement. Use the correlated [launch-result diagnostic](placement-diagnostics.md) to see requested allocation, original provider errors and retry eligibility; cooldowns are eligibility gates, not scheduled launch times.
 
 ### Configuration
 
