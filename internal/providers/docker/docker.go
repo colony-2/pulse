@@ -500,7 +500,7 @@ func (p *Provider) Submit(ctx context.Context, ls []compute.Launch) ([]compute.S
 		if a.ScratchBytes > 0 {
 			tmpfs[p.cfg.ScratchPath] = fmt.Sprintf("rw,size=%d,mode=1777", a.ScratchBytes)
 		}
-		body := map[string]any{"Image": plan.ImageID, "Entrypoint": l.Process.Command, "Cmd": l.Process.Args, "OpenStdin": l.Process.Stdin != "", "StdinOnce": true, "AttachStdin": l.Process.Stdin != "", "Env": env, "Labels": labels, "WorkingDir": l.Process.WorkingDir, "HostConfig": map[string]any{"NanoCpus": cpu, "Memory": memory, "MemorySwap": memory, "RestartPolicy": map[string]any{"Name": "no"}, "AutoRemove": true, "Tmpfs": tmpfs, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "3"}}}}
+		body := map[string]any{"Image": plan.ImageID, "Entrypoint": l.Process.Command, "Cmd": l.Process.Args, "OpenStdin": l.Process.Stdin != "", "StdinOnce": true, "AttachStdin": l.Process.Stdin != "", "Env": env, "Labels": labels, "WorkingDir": l.Process.WorkingDir, "HostConfig": map[string]any{"NanoCpus": cpu, "Memory": memory, "MemorySwap": memory, "RestartPolicy": map[string]any{"Name": "no"}, "AutoRemove": true, "Init": true, "Tmpfs": tmpfs, "LogConfig": map[string]any{"Type": "json-file", "Config": map[string]string{"max-size": "10m", "max-file": "3"}}}}
 		if cache != nil {
 			body["HostConfig"].(map[string]any)["Mounts"] = cache.mounts()
 		}

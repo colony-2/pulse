@@ -421,6 +421,9 @@ func TestConcurrentBatchesAndRestart(t *testing.T) {
 	}
 	for _, body := range d.creates {
 		h := body["HostConfig"].(map[string]any)
+		if h["Init"] != true {
+			t.Fatalf("worker create request has HostConfig.Init = %v, want true", h["Init"])
+		}
 		if h["AutoRemove"] != true || h["Memory"] != float64(2<<30) || h["MemorySwap"] != float64(2<<30) {
 			t.Fatal(h)
 		}
