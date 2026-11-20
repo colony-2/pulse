@@ -395,3 +395,25 @@ func TestCobraCommands(t *testing.T) {
 		})
 	}
 }
+
+func TestCLIDefaultProviderFlags(t *testing.T) {
+	t.Setenv("PULSE_CONFIG", "providers: {}")
+	for _, tt := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"check", "--docker=false", "--vz=false"}, "no default providers enabled"},
+		{[]string{"--docker=false", "--docker-config={}", "run", "--once"}, "--docker-config cannot be used with --docker=false"},
+		{[]string{"--vz=false", "--vz-config={}", "check"}, "--vz-config cannot be used with --vz=false"},
+		{[]string{"check", "--docker-config="}, "--docker-config requires one YAML mapping"},
+		{[]string{"--docker", "--docker-config={capacity: {max_containers: -1}}", "--vz=false"}, "max_containers must be nonnegative"},
+	} {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			cmd := newRootCmd()
+			cmd.SetArgs(append([]string{"--jobdb=https://example.com/tenant"}, tt.args...))
+			if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("expected %q, got %v", tt.want, err)
+			}
+		})
+	}
+}

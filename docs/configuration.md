@@ -100,6 +100,28 @@ and 8 GiB each. Linux VMs include Docker. Set `vm_counts` to override the per-OS
 and shared limits. The default selector remains `ubuntu-26*`. Use
 `defaults.base: 'macos*'` for macOS work. See [VZ settings and examples](macos-providers.md).
 
+### Default provider flags
+
+Use `--docker` and `--vz` to enable the corresponding default provider or
+`--docker=false` and `--vz=false` to disable it. These flags apply to `pulse`,
+`pulse run`, and `pulse check` when the selected configuration has an omitted
+or empty `providers` map. At least one provider must be enabled. Explicit
+`launch_services` must reference enabled providers. VZ requires Apple Silicon
+with macOS 14 or later.
+
+`--docker-config` accepts an inline YAML mapping with the fields from a Docker
+provider entry, such as `socket`, `capacity`, and `dependency_cache`.
+`--vz-config` accepts the fields under a VZ provider’s `config`, such as
+`vm_counts` and `vz`. Use each config flag with its provider enabled.
+
+```sh
+pulse check --jobdb https://jobdb.example/acme --vz=false \
+  --docker-config '{capacity: {max_containers: 4}}'
+
+pulse check --jobdb https://jobdb.example/acme --docker=false --vz \
+  --vz-config '{vm_counts: {macos: 1, linux: 2, total: 2}}'
+```
+
 ## Execution lifetime
 
 c2j enforces recipe and operation timeouts, cancels process trees, and stops work on lease-renewal failure. Pulse no longer adds a one-hour timer to every container. Docker runs c2j directly and sends the lease through native stdin; no helper or host bind mount is required. Remove obsolete Docker `helper` settings when upgrading.

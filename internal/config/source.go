@@ -17,8 +17,19 @@ func LoadSource(path string) (*Config, error) {
 }
 
 // LoadOptions gives an explicit JobDB URI precedence over configured targets.
-// Pulse sources are selected, never merged: file, PULSE_CONFIG, then pulse.yaml.
 func LoadOptions(ctx context.Context, path, jobdb string) (*Config, error) {
+	return LoadWithOverrides(ctx, path, Overrides{JobDB: jobdb})
+}
+
+// Overrides supplies command-line values after selecting the Pulse configuration.
+type Overrides struct {
+	JobDB      string
+	Docker, VZ DefaultProviderOverride
+}
+
+// LoadWithOverrides applies overrides to the selected configuration.
+// Pulse sources are selected, never merged: file, PULSE_CONFIG, then pulse.yaml.
+func LoadWithOverrides(ctx context.Context, path string, overrides Overrides) (*Config, error) {
 	var data []byte
 	var err error
 	source := path
@@ -40,7 +51,7 @@ func LoadOptions(ctx context.Context, path, jobdb string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := parse(ctx, data, strings.TrimSpace(jobdb))
+	cfg, err := parse(ctx, data, overrides)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
 	}

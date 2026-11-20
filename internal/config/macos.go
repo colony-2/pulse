@@ -87,15 +87,3 @@ func MacOSOptions(p Provider) (MacOSConfig, error) {
 	// must not maintain its own catalog of images or supported capabilities.
 	return c, nil
 }
-
-// Automatic providers only apply when the provider map is omitted or empty.
-func automaticProviders(vzSupported bool) (map[string]Provider, []Service, string) {
-	providers := map[string]Provider{"docker": {Type: "docker"}}
-	services := []Service{{Name: "docker", Priority: 1}}
-	if vzSupported {
-		providers["vz"] = Provider{Type: "vz"}
-		services = append(services, Service{Name: "vz", Priority: 2})
-		return providers, services, "enabled: Apple Silicon with macOS 14 or later"
-	}
-	return providers, services, "disabled: requires macOS 14 or later on Apple Silicon"
-}

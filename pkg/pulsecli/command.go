@@ -32,6 +32,13 @@ func NewCommand(version string) *cobra.Command {
 	var path, jobdb string
 	var once bool
 	root := &cobra.Command{Use: "pulse", Short: "Run c2j jobs for a JobDB tenant", SilenceUsage: true, SilenceErrors: true}
+	flags := root.PersistentFlags()
+	flags.StringVar(&path, "config", "", "optional configuration file (overrides PULSE_CONFIG and pulse.yaml)")
+	flags.StringVar(&jobdb, "jobdb", "", "JobDB tenant URI (defaults to C2J_JOBDB or .c2/config.yaml)")
+	docker := flags.Bool("docker", true, "enable the default Docker provider (set false to disable)")
+	vz := flags.Bool("vz", false, "enable the default VZ provider (automatic on supported Apple Silicon, set false to disable)")
+	dockerConfig := flags.String("docker-config", "", "inline YAML settings for the default Docker provider")
+	vzConfig := flags.String("vz-config", "", "inline YAML settings for the default VZ provider")
 	execute := func(check bool) func(*cobra.Command, []string) error {
 		return func(cmd *cobra.Command, _ []string) error {
 			if cmd.Flags().Changed("config") && path == "" {
@@ -40,15 +47,17 @@ func NewCommand(version string) *cobra.Command {
 			if cmd.Flags().Changed("jobdb") && strings.TrimSpace(jobdb) == "" {
 				return fmt.Errorf("--jobdb requires a nonempty tenant URI")
 			}
-			cfg, err := config.LoadOptions(cmd.Context(), path, jobdb)
+			cfg, err := config.LoadWithOverrides(cmd.Context(), path, config.Overrides{
+				JobDB:  jobdb,
+				Docker: defaultProviderOverride(cmd, "docker", docker, dockerConfig),
+				VZ:     defaultProviderOverride(cmd, "vz", vz, vzConfig),
+			})
 			if err != nil {
 				return err
 			}
 			return runPulse(cmd.Context(), cfg, once, check, cmd.OutOrStdout(), version)
 		}
 	}
-	root.PersistentFlags().StringVar(&path, "config", "", "optional configuration file (overrides PULSE_CONFIG and pulse.yaml)")
-	root.PersistentFlags().StringVar(&jobdb, "jobdb", "", "JobDB tenant URI (defaults to C2J_JOBDB or .c2/config.yaml)")
 	root.Args, root.RunE = cobra.NoArgs, execute(false)
 	runCmd := &cobra.Command{Use: "run", Short: "Run jobs for the selected tenant", Args: cobra.NoArgs, RunE: execute(false)}
 	runCmd.Flags().BoolVar(&once, "once", false, "run one discovery/submission pass")
@@ -60,6 +69,17 @@ func NewCommand(version string) *cobra.Command {
 		}},
 	)
 	return root
+}
+
+func defaultProviderOverride(cmd *cobra.Command, name string, enabled *bool, yaml *string) config.DefaultProviderOverride {
+	var override config.DefaultProviderOverride
+	if cmd.Flags().Changed(name) {
+		override.Enabled = enabled
+	}
+	if cmd.Flags().Changed(name + "-config") {
+		override.ConfigYAML = yaml
+	}
+	return override
 }
 
 func runPulse(parent context.Context, cfg *config.Config, once, check bool, out io.Writer, version string) error {

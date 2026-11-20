@@ -15,7 +15,10 @@ func TestAutomaticVZSelection(t *testing.T) {
 		{"unsupported", false, "disabled: requires macOS 14 or later on Apple Silicon"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			providers, services, reason := automaticProviders(tc.supported)
+			providers, services, reason, err := automaticProviders(tc.supported, Overrides{})
+			if err != nil {
+				t.Fatal(err)
+			}
 			wantProviders := map[string]Provider{"docker": {Type: "docker"}}
 			wantServices := []Service{{Name: "docker", Priority: 1}}
 			if tc.supported {

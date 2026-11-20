@@ -128,10 +128,10 @@ func Load(path string) (*Config, error) {
 }
 
 func Parse(b []byte) (*Config, error) {
-	return parse(context.Background(), b, "")
+	return parse(context.Background(), b, Overrides{})
 }
 
-func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
+func parse(ctx context.Context, b []byte, overrides Overrides) (*Config, error) {
 	base, err := os.Getwd()
 	if err != nil {
 		return nil, err
@@ -146,7 +146,7 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 	if e := d.Decode(&extra); e != io.EOF {
 		return nil, fmt.Errorf("configuration must contain one YAML document")
 	}
-	if jobdb != "" {
+	if jobdb := strings.TrimSpace(overrides.JobDB); jobdb != "" {
 		if len(c.Targets) > 1 {
 			return nil, fmt.Errorf("--jobdb cannot override multiple configured targets")
 		}
@@ -308,15 +308,8 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 	if len(c.Targets) == 0 {
 		return nil, fmt.Errorf("targets are required")
 	}
-	var defaultServices []Service
-	c.VZAutoDiscovery = "disabled: explicit providers configured"
-	if len(c.Providers) == 0 {
-		c.Providers, defaultServices, c.VZAutoDiscovery = automaticProviders(supportsVZ())
-		for i := range c.Targets {
-			if len(c.Targets[i].Services) == 0 {
-				c.Targets[i].Services = append([]Service(nil), defaultServices...)
-			}
-		}
+	if err := c.configureProviders(overrides); err != nil {
+		return nil, err
 	}
 	for name, p := range c.Providers {
 		if name == "" {
@@ -331,6 +324,9 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 		}
 		if p.Type == "vz" {
 			if _, err := MacOSOptions(p); err != nil {
+				if overrides.VZ.ConfigYAML != nil {
+					return nil, fmt.Errorf("--vz-config: %w", err)
+				}
 				return nil, err
 			}
 		} else if len(p.Options) > 0 {
