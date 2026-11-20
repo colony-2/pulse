@@ -267,7 +267,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 					t.Fatal("completed job was claimed or launched again")
 				}
 			case "recipe failure":
-				want := "command execution failed: exit status 23"
+				want := "intentional-recipe-failure [exit 23]"
 				if code == "0" || resultErr == nil || info.Status != jobdb.JobStatusCompleted || !strings.Contains(logs+fmt.Sprint(resultErr), want) {
 					t.Fatalf("missing c2j failure outcome %q: exit=%s data=%s\n%s", want, code, data, logs)
 				}
