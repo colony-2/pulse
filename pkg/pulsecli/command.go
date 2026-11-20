@@ -5,13 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/colony-2/pulse/internal/c2j"
-	"github.com/colony-2/pulse/internal/config"
-	"github.com/colony-2/pulse/internal/controller"
-	"github.com/colony-2/pulse/internal/httpapi"
-	"github.com/colony-2/pulse/internal/providers"
-	"github.com/colony-2/pulse/internal/scheduler"
-	"github.com/spf13/cobra"
 	"io"
 	"log/slog"
 	"net"
@@ -19,7 +12,20 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	pulsevm "github.com/colony-2/pulse-tart"
+	"github.com/colony-2/pulse/internal/c2j"
+	"github.com/colony-2/pulse/internal/config"
+	"github.com/colony-2/pulse/internal/controller"
+	"github.com/colony-2/pulse/internal/httpapi"
+	"github.com/colony-2/pulse/internal/providers"
+	"github.com/colony-2/pulse/internal/scheduler"
+	"github.com/spf13/cobra"
 )
+
+// RunnerMain handles private VZ runner invocations. Call it first in the main
+// function of a custom Pulse executable that uses the embedded VZ runner.
+func RunnerMain() { pulsevm.RunnerMain() }
 
 // NewCommand constructs a Pulse CLI, including any registered Go providers.
 func NewCommand(version string) *cobra.Command {
@@ -68,7 +74,7 @@ func runPulse(parent context.Context, cfg *config.Config, once, check bool, out 
 		return e
 	}
 	providerCtx, providerCancel := context.WithTimeout(ctx, cfg.Call)
-	slog.Info("provider selection", "tart_auto_discovery", cfg.TartAutoDiscovery)
+	slog.Info("provider selection", "vz_auto_discovery", cfg.VZAutoDiscovery)
 	instances, closeProviders, e := providers.Build(providerCtx, cfg)
 	providerCancel()
 	if e != nil {

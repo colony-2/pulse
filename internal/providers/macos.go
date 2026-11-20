@@ -11,7 +11,7 @@ import (
 	"time"
 
 	api "github.com/colony-2/pulse-provider-api"
-	tart "github.com/colony-2/pulse-tart"
+	pulsevm "github.com/colony-2/pulse-tart"
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/placement"
 	"github.com/colony-2/pulse/internal/providerutil"
@@ -24,13 +24,12 @@ type macRuntime interface {
 	Close() error
 }
 
-func macSettings(name string, p config.Provider, baseDir string) (tart.Config, tart.TartConfig, tart.OrchardConfig, error) {
-	var c tart.Config
-	var local tart.TartConfig
-	var remote tart.OrchardConfig
+func macSettings(name string, p config.Provider, baseDir string) (pulsevm.Config, pulsevm.VZConfig, error) {
+	var c pulsevm.Config
+	var local pulsevm.VZConfig
 	options, err := config.MacOSOptions(p)
 	if err != nil {
-		return c, local, remote, err
+		return c, local, err
 	}
 	path := func(s string) string {
 		if s == "" || filepath.IsAbs(s) {
@@ -54,29 +53,20 @@ func macSettings(name string, p config.Provider, baseDir string) (tart.Config, t
 		}
 		return v, nil
 	}
-	identity := fmt.Sprintf("pulse-%s-%x", p.Type, sha256.Sum256([]byte(name)))[:32]
 	c.OwnerID = options.OwnerID
 	if c.OwnerID == "" {
-		c.OwnerID = identity
-	}
-	c.StateDir = path(options.StateDir)
-	if c.StateDir == "" {
-		root, e := os.UserConfigDir()
-		if e != nil {
-			return c, local, remote, e
-		}
-		c.StateDir = filepath.Join(root, "pulse", "providers", identity)
+		c.OwnerID = fmt.Sprintf("pulse-vz-%x", sha256.Sum256([]byte(name)))[:32]
 	}
 	c.BootstrapTimeout, err = duration(options.BootstrapTimeout)
 	if err != nil {
-		return c, local, remote, err
+		return c, local, err
 	}
-	c.VMCounts = tart.VMCounts{MacOS: options.VMCounts.MacOS, Linux: options.VMCounts.Linux, Total: options.VMCounts.Total}
-	knownBases := append(tart.DefaultBases(), tart.DefaultLinuxBase())
-	password := func(image, username, env string) (tart.Secret, error) {
+	c.VMCounts = pulsevm.VMCounts{MacOS: options.VMCounts.MacOS, Linux: options.VMCounts.Linux, Total: options.VMCounts.Total}
+	knownBases := append(pulsevm.DefaultBases(), pulsevm.DefaultLinuxBase())
+	password := func(image, username, env string) (pulsevm.Secret, error) {
 		if env != "" {
 			if value := os.Getenv(env); value != "" {
-				return tart.Secret(value), nil
+				return pulsevm.Secret(value), nil
 			}
 		} else {
 			// Only library-published images may use their published login.
@@ -86,111 +76,88 @@ func macSettings(name string, p config.Provider, baseDir string) (tart.Config, t
 				}
 			}
 		}
-		return "", fmt.Errorf("Tart/Orchard image requires a populated ssh_password_env")
+		return "", fmt.Errorf("VM image requires a populated ssh_password_env")
 	}
 	if options.Bases != nil {
-		c.Bases = make([]tart.Base, 0, len(options.Bases))
+		c.Bases = make([]pulsevm.Base, 0, len(options.Bases))
 	}
 	for _, b := range options.Bases {
 		secret, e := password(b.Image, b.SSHUsername, b.SSHPasswordEnv)
 		if e != nil {
-			return c, local, remote, e
+			return c, local, e
 		}
 		key, e := read(b.SSHHostKeyFile)
 		if e != nil {
-			return c, local, remote, fmt.Errorf("cannot read macOS SSH host key")
+			return c, local, fmt.Errorf("cannot read macOS SSH host key")
 		}
-		c.Bases = append(c.Bases, tart.Base{Name: b.Name, OS: b.OS, Image: b.Image, OSVersion: b.OSVersion, SSHUsername: b.SSHUsername, SSHPassword: secret, SSHHostKey: key, Capabilities: b.Capabilities})
+		c.Bases = append(c.Bases, pulsevm.Base{Name: b.Name, OS: b.OS, Image: b.Image, OSVersion: b.OSVersion, SSHUsername: b.SSHUsername, SSHPassword: secret, SSHHostKey: key, Capabilities: b.Capabilities})
 	}
 	if options.Slots != nil {
-		c.Slots = make([]tart.SlotGroup, 0, len(options.Slots))
+		c.Slots = make([]pulsevm.SlotGroup, 0, len(options.Slots))
 	}
 	for _, s := range options.Slots {
-		c.Slots = append(c.Slots, tart.SlotGroup{Name: s.Name, Count: s.Count, Base: s.Base, CPU: s.CPU, MemoryMiB: s.MemoryMiB, DockerProfile: s.DockerProfile})
+		c.Slots = append(c.Slots, pulsevm.SlotGroup{Name: s.Name, Count: s.Count, Base: s.Base, CPU: s.CPU, MemoryMiB: s.MemoryMiB, DockerProfile: s.DockerProfile})
 	}
 	if d := options.Docker; d != nil {
-		c.Docker = &tart.DockerConfig{}
+		c.Docker = &pulsevm.DockerConfig{}
 		c.Docker.ReadyTimeout, err = duration(d.ReadyTimeout)
 		if err != nil {
-			return c, local, remote, err
+			return c, local, err
 		}
 		if d.Profiles == nil && options.Slots != nil {
-			c.Docker.Profiles = []tart.DockerEngineProfile{tart.DefaultDockerEngine()}
+			c.Docker.Profiles = []pulsevm.DockerEngineProfile{pulsevm.DefaultDockerEngine()}
 		}
 		for _, profile := range d.Profiles {
-			engine := tart.DockerEngineProfile{Name: profile.Name, Image: profile.Image, SSHUsername: profile.SSHUsername, CPU: profile.CPU, MemoryMiB: profile.MemoryMiB, DiskGiB: profile.DiskGiB, EngineVersion: profile.EngineVersion}
+			engine := pulsevm.DockerEngineProfile{Name: profile.Name, Image: profile.Image, SSHUsername: profile.SSHUsername, CPU: profile.CPU, MemoryMiB: profile.MemoryMiB, DiskGiB: profile.DiskGiB, EngineVersion: profile.EngineVersion}
 			if engine.Image == "" {
-				engine.Image = tart.DefaultDockerEngine().Image
+				engine.Image = pulsevm.DefaultDockerEngine().Image
 			}
 			engine.SSHPassword, err = password(engine.Image, engine.SSHUsername, profile.SSHPasswordEnv)
 			if err != nil {
-				return c, local, remote, err
+				return c, local, err
 			}
 			engine.SSHHostKey, err = read(profile.SSHHostKeyFile)
 			if err != nil {
-				return c, local, remote, fmt.Errorf("cannot read Docker engine SSH host key")
+				return c, local, fmt.Errorf("cannot read Docker engine SSH host key")
 			}
 			c.Docker.Profiles = append(c.Docker.Profiles, engine)
 		}
 	}
-	if t := options.Tart; t != nil {
-		local.Binary, local.Home = t.Binary, path(t.Home)
-		local.DockerEndpoint = tart.DockerEndpoint(t.DockerEndpoint)
-		local.PythonBinary = t.PythonBinary
-		if local.PythonBinary != "" && filepath.Base(local.PythonBinary) != local.PythonBinary {
-			local.PythonBinary = path(local.PythonBinary)
-		}
-		if local.Binary != "" && filepath.Base(local.Binary) != local.Binary {
-			local.Binary = path(local.Binary)
-		}
-		local.CommandTimeout, err = duration(t.CommandTimeout)
+	if v := options.VZ; v != nil {
+		local.Home = path(v.Home)
+		local.Runner = path(v.Runner)
+		local.DockerEndpoint = pulsevm.DockerEndpoint(v.DockerEndpoint)
+		local.CommandTimeout, err = duration(v.CommandTimeout)
 		if err != nil {
-			return c, local, remote, err
+			return c, local, err
 		}
-		local.SSHTimeout, err = duration(t.SSHTimeout)
+		local.SSHTimeout, err = duration(v.SSHTimeout)
 		if err != nil {
-			return c, local, remote, err
+			return c, local, err
 		}
-	}
-	if o := options.Orchard; o != nil {
-		token := os.Getenv(o.TokenEnv)
-		if o.TokenEnv != "" && token == "" {
-			return c, local, remote, fmt.Errorf("Orchard token_env is empty")
-		}
-		remote = tart.OrchardConfig{URL: o.URL, Worker: o.Worker, WorkerLabels: o.WorkerLabels, Username: o.Username, Token: tart.Secret(token), AllowInsecureHTTP: o.AllowHTTP}
-		remote.DockerEndpoint = tart.DockerEndpoint(o.DockerEndpoint)
-		remote.CACert, err = read(o.CACertFile)
+		local.DeliveryTimeout, err = duration(v.DeliveryTimeout)
 		if err != nil {
-			return c, local, remote, fmt.Errorf("cannot read Orchard CA certificate")
+			return c, local, err
 		}
-		remote.RequestTimeout, err = duration(o.RequestTimeout)
-	}
-	if err != nil {
-		return c, local, remote, err
 	}
 	// Leave omitted catalogs, pools, counts and resource sizes to the library.
 	// Resolve here so startup reporting and maintenance use its effective values.
-	c, err = tart.ResolveConfig(c)
-	return c, local, remote, err
+	c, err = pulsevm.ResolveConfig(c)
+	return c, local, err
 }
 
 func buildMac(ctx context.Context, name string, p config.Provider, cfg *config.Config) (api.Provider, func(), error) {
-	c, local, remote, err := macSettings(name, p, cfg.BaseDir)
+	c, local, err := macSettings(name, p, cfg.BaseDir)
 	if err != nil {
 		return nil, nil, err
 	}
-	var r *tart.Runtime
-	if p.Type == "tart" {
-		r, err = tart.NewTart(c, local)
-	} else {
-		r, err = tart.NewOrchard(c, remote)
-	}
+	r, err := pulsevm.NewVZ(c, local)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s provider %s initialization failed: %w", p.Type, name, err)
 	}
 	if err = r.Check(ctx); err != nil {
 		_ = r.Close()
-		return nil, nil, fmt.Errorf("%s provider %s connectivity check failed: %w", p.Type, name, err)
+		return nil, nil, fmt.Errorf("%s provider %s runtime check failed: %w", p.Type, name, err)
 	}
 	host := &macProvider{runtime: r, vmCounts: c.VMCounts, bootstrapTimeout: c.BootstrapTimeout, envUnsupported: len(cfg.Defaults.Env) != 0}
 	for _, slot := range c.Slots {
@@ -205,7 +172,7 @@ func buildMac(ctx context.Context, name string, p config.Provider, cfg *config.C
 type macProvider struct {
 	runtime          macRuntime
 	slots            int
-	vmCounts         tart.VMCounts
+	vmCounts         pulsevm.VMCounts
 	bootstrapTimeout time.Duration
 	envUnsupported   bool
 	activity         sync.RWMutex
@@ -235,7 +202,7 @@ func (p *macProvider) SubmitWithDiagnostics(ctx context.Context, launches []api.
 	}
 	out := make([]api.Submission, 0, len(launches))
 	// Reconcile can spend minutes cloning a cold image under the library's
-	// journal lock. Decline before dispatch instead of queuing a claimed lease.
+	// state lock. Decline before dispatch instead of queuing a claimed lease.
 	if !p.activity.TryRLock() {
 		for _, launch := range launches {
 			out = append(out, api.Submission{LaunchID: launch.LaunchID, Status: api.NoCapacity, Reason: "macOS slots are being reconciled"})
@@ -262,7 +229,7 @@ func (p *macProvider) SubmitWithDiagnostics(ctx context.Context, launches []api.
 		}
 		details[launch.LaunchID] = detail
 		if len(responses) != 1 || responses[0].LaunchID != launch.LaunchID || !providerutil.ValidSubmission(responses[0]) {
-			result = api.Submission{LaunchID: launch.LaunchID, Status: api.Unknown, Reason: "missing or invalid Tart/Orchard submission result"}
+			result = api.Submission{LaunchID: launch.LaunchID, Status: api.Unknown, Reason: "missing or invalid VZ submission result"}
 			detail.NormalizationError = &result.Reason
 			details[launch.LaunchID] = detail
 			out = append(out, result)
@@ -280,7 +247,7 @@ func (p *macProvider) Maintain(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.closed {
-		return tart.ErrClosed
+		return pulsevm.ErrClosed
 	}
 	if err := ctx.Err(); err != nil {
 		return err

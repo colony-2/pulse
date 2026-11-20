@@ -1,9 +1,9 @@
-# A Tart-only host does not require Docker. Local Tart requires Apple Silicon macOS.
+# VZ requires macOS 14 or later on Apple Silicon. This setup runs without host Docker.
 defaults:
   base: 'macos*'
 providers:
   mac:
-    type: tart
+    type: vz
     # No config is required: pulse-tart supplies its VM and Linux Docker defaults.
     # config:
     #   vm_counts: {macos: 1, linux: 2, total: 2}

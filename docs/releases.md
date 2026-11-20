@@ -1,6 +1,6 @@
 # Packaging and releases
 
-Pulse follows [c2j's GitHub Actions release pattern](https://github.com/colony-2/c2j/blob/main/.github/workflows/release.yaml): test, bump a version on `main`, build native Go executables, optionally sign macOS binaries, publish GitHub assets, and publish an npm wrapper. Pulse additionally publishes a distroless container for both Linux architectures.
+Pulse follows [c2j's GitHub Actions release pattern](https://github.com/colony-2/c2j/blob/main/.github/workflows/release.yaml): test, bump a version on `main`, build native Go executables, sign the Apple Silicon binary for virtualization, publish GitHub assets, and publish an npm wrapper. Pulse additionally publishes a distroless container for both Linux architectures.
 
 ## Release outputs
 
@@ -28,7 +28,7 @@ The workflow is [.github/workflows/release.yaml](../.github/workflows/release.ya
 
 1. Reuse the test workflow: Go race/vet/build checks across Linux AMD64/ARM64 and macOS, npm/Python tests, OpenAPI validation, cross-platform package builds, and both container architectures.
 2. Use the same `anothrNick/github-tag-action` version and patch-bump default as c2j. Main-branch releases use `vMAJOR.MINOR.PATCH` tags.
-3. Build static Go executables and optionally sign/notarize both Darwin binaries before packaging.
+3. Build static Go executables. The macOS job signs the Apple Silicon binary with the virtualization entitlement, then uploads the Darwin binaries to the packaging job. If Developer ID secrets are configured, it signs and notarizes both Darwin binaries.
 4. Pack the npm tarball and smoke-test its installer against the local, checksum-verified release archives.
 5. Build and smoke-test the non-root distroless image for both architectures with the c2j listing library pinned in `go.mod`. Record its module version in the release metadata. The default images contain no separate c2j executable.
 6. Publish the versioned images and multi-architecture manifest to GHCR; attach all artifacts to GitHub Releases.
@@ -57,9 +57,9 @@ Publish to `@colony2/pulse`, following c2j's two supported authentication modes:
 
 Both paths request provenance and public access. The npm package name and GitHub download repository are fixed to Pulse, so forks must update the package metadata, installer URL, image labels, and workflow owner guard before publishing their own package.
 
-### Optional macOS signing
+### Optional Developer ID signing
 
-The c2j signing convention is retained. Configure either all of these secrets or none:
+Configure all five secrets to sign and notarize with Developer ID.
 
 - `MACOS_SIGN_P12`
 - `MACOS_SIGN_PASSWORD`
@@ -67,7 +67,12 @@ The c2j signing convention is retained. Configure either all of these secrets or
 - `APPLE_API_KEY_ID`
 - `APPLE_API_KEY`
 
-With all five present, Quill v0.7.1 signs and notarizes Darwin binaries before their checksums and npm packages are produced. Partial configuration fails the release. Without secrets, the archives contain unsigned binaries; macOS policy may require users to approve downloaded executables.
+Store the PKCS#12 certificate and key as base64 in `MACOS_SIGN_P12`. The Apple
+API key can be PEM or base64. With all five secrets present, the macOS runner
+uses `codesign` and `notarytool` before the archives and checksums are produced.
+Partial configuration fails the release. Without secrets, the Apple Silicon
+binary is ad-hoc signed with the virtualization entitlement. macOS may require
+users to approve downloaded executables.
 
 ## Container composition
 
@@ -97,6 +102,9 @@ scripts/build-release.sh 0.0.0
 scripts/package-release.sh 0.0.0
 node scripts/smoke-npm.js 0.0.0
 ```
+
+Run the release build script on macOS to include the VZ entitlement in local
+Apple Silicon archives.
 
 With Docker and Buildx available:
 

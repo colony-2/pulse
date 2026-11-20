@@ -74,8 +74,8 @@ func diagnosticFixture(t *testing.T) (*Controller, *diagnosticProvider, *diagnos
 	t.Helper()
 	p := &diagnosticProvider{reason: "macOS slots are being reconciled", status: api.NoCapacity, err: errors.New("native admission: worker unavailable\nraw \"response\": " + strings.Repeat("x", 5000))}
 	lease := &diagnosticLease{}
-	cfg := &config.Config{Call: time.Second, Batch: time.Second, Cool: time.Minute, BatchSize: 1, PerTenant: 1, MaxPages: 1, Allocation: api.Allocation{Base: "ubuntu-26*", CPUMillis: 2000, MemoryBytes: 2 << 30, Capabilities: []string{"git"}}, Providers: map[string]config.Provider{"tart": {Type: "tart"}}}
-	cfg.Targets = []config.Target{{Instance: "db", Tenant: "tenant", JobDB: "https://db/tenant", Services: []config.Service{{Name: "tart", Priority: 1}}}}
+	cfg := &config.Config{Call: time.Second, Batch: time.Second, Cool: time.Minute, BatchSize: 1, PerTenant: 1, MaxPages: 1, Allocation: api.Allocation{Base: "ubuntu-26*", CPUMillis: 2000, MemoryBytes: 2 << 30, Capabilities: []string{"git"}}, Providers: map[string]config.Provider{"vz": {Type: "vz"}}}
+	cfg.Targets = []config.Target{{Instance: "db", Tenant: "tenant", JobDB: "https://db/tenant", Services: []config.Service{{Name: "vz", Priority: 1}}}}
 	listed := c2j.Job{Tenant: "tenant", ID: "job", Execution: &c2j.View{Status: "not_loaded"}}
 	base, memory := "macos*arm64", "8Gi"
 	d, err := execution.Initial(nil, true, execution.Requirements{Base: &base, Resources: execution.Resources{Memory: &memory}, Capabilities: []string{"docker"}})
@@ -88,7 +88,7 @@ func diagnosticFixture(t *testing.T) (*Controller, *diagnosticProvider, *diagnos
 	}
 	view := execution.Inspect(nil, payload)
 	var buf bytes.Buffer
-	c := &Controller{Config: cfg, Providers: map[string]api.Provider{"tart": p}, Scheduler: scheduler.New(time.Minute, time.Second), Log: slog.New(slog.NewJSONHandler(&buf, nil))}
+	c := &Controller{Config: cfg, Providers: map[string]api.Provider{"vz": p}, Scheduler: scheduler.New(time.Minute, time.Second), Log: slog.New(slog.NewJSONHandler(&buf, nil))}
 	// Ensure the two deadline gates differ. Eligibility must use the later gate,
 	// not the time the controller happens to write its log.
 	localNow := time.Now().UTC().Add(24 * time.Hour)
@@ -131,7 +131,7 @@ func TestNoCapacityCorrelatedDiagnosticAndDeadlines(t *testing.T) {
 	}
 	d := decodeLaunch(t, buf)
 	t.Logf("correlated diagnostic: %s", strings.TrimSpace(buf.String()))
-	if d.Message != "launch result" || d.Level != "INFO" || d.Instance != "db" || d.Tenant != "tenant" || d.Job != "job" || d.Service != "tart" || d.LaunchID == "" || d.Status != api.NoCapacity || d.Admission != "not_accepted" {
+	if d.Message != "launch result" || d.Level != "INFO" || d.Instance != "db" || d.Tenant != "tenant" || d.Job != "job" || d.Service != "vz" || d.LaunchID == "" || d.Status != api.NoCapacity || d.Admission != "not_accepted" {
 		t.Fatal(d)
 	}
 	if len(p.requests) != 1 || d.LaunchID != p.requests[0].LaunchID || p.requests[0].Base != "macos*arm64" || p.requests[0].MemoryBytes != 8<<30 {
@@ -150,7 +150,7 @@ func TestNoCapacityCorrelatedDiagnosticAndDeadlines(t *testing.T) {
 	if a.ProviderPreparation.Observation != "unknown" || a.ProviderPreparation.Scope != "provider" || a.ProviderPreparation.Error != nil {
 		t.Fatal("invented provider preparation observation", a.ProviderPreparation)
 	}
-	if a.Service != "tart" || a.ProviderType != "tart" || !a.SubmitCalled || *a.SubmissionError != p.err.Error() || *a.DiscoveryError != p.discoveryErr.Error() || a.SubmissionErrorScope != "batch" || a.OriginalResults[0].Reason != p.reason || d.Reason != p.reason {
+	if a.Service != "vz" || a.ProviderType != "vz" || !a.SubmitCalled || *a.SubmissionError != p.err.Error() || *a.DiscoveryError != p.discoveryErr.Error() || a.SubmissionErrorScope != "batch" || a.OriginalResults[0].Reason != p.reason || d.Reason != p.reason {
 		t.Fatal(a)
 	}
 	for _, f := range []placement.Fact{a.Capacity.Occupied, a.Capacity.AvailableWorkers, a.Capacity.ResourceLimits, a.Capacity.AdmissionConstraint} {
@@ -223,7 +223,7 @@ func TestLaunchDiagnosticPreparationAndText(t *testing.T) {
 	if err := c.Once(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"launch result", "instance=db", "tenant=tenant", "job=job", "launch_id=", "service=tart", "macOS slots are being reconciled", "cpu_millis", "next_eligible_at", `raw \\\"response\\\"`} {
+	for _, want := range []string{"launch result", "instance=db", "tenant=tenant", "job=job", "launch_id=", "service=vz", "macOS slots are being reconciled", "cpu_millis", "next_eligible_at", `raw \\\"response\\\"`} {
 		if !strings.Contains(buf.String(), want) {
 			t.Fatalf("text missing %q: %s", want, buf.String())
 		}

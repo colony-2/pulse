@@ -344,6 +344,7 @@ func TestCLIConfigurationSources(t *testing.T) {
 		{name: "empty env does not fall back", args: []string{"check"}, env: []string{"PULSE_CONFIG="}, wantError: "PULSE_CONFIG"},
 		{name: "empty explicit path", args: []string{"--config=", "check"}, env: []string{"PULSE_CONFIG=" + string(data)}, wantError: "nonempty file path"},
 		{name: "version ignores config", args: []string{"version"}, env: []string{"PULSE_CONFIG=[invalid"}},
+		{name: "VZ runner handles private invocation", args: []string{"__pulse-vm"}, wantError: "VZ runner: missing runner operation"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := exec.Command(binary, tt.args...)

@@ -12,19 +12,18 @@ resolution, executor construction, and typed job identity.
 | `plugin` | Local executable using the shared provider SDK, or an authenticated HTTP service configured with `plugin.endpoint`. See [plugin configuration and HTTP contract](implementing-a-provider-plugin.md). |
 | `remote` | Authenticated HTTPS implementing [protocol v1](../REMOTE_PROVIDER_PROTOCOL.md). Uses `endpoint` and `token_env`. `allow_http` is an explicit development option. |
 | `docker` | Local Docker Engine on Linux or Docker Desktop on macOS, accessed over a Unix socket. Runs c2j directly without host mounts or a helper. Applies CPU/memory/swap limits when available; otherwise warns at startup and runs without those limits. One admission owner per daemon. |
-| `tart` | Local ARM64 VMs (macOS and Linux with built-in Docker) through the linked `pulse-tart` Go library. Library defaults provide two macOS and four Linux job VMs; requires Apple Silicon macOS and Tart. See [macOS providers](macos-providers.md). |
-| `orchard` | ARM64 VMs (macOS and Linux with built-in Docker) on an Orchard worker through the same library. Explicit controller/worker configuration; the Pulse host can run on Linux. See [macOS providers](macos-providers.md). |
+| `vz` | Local ARM64 VMs through Apple Virtualization.framework. Requires Apple Silicon with macOS 14 or later. Defaults provide two macOS job VMs and four Linux job VMs with built-in Docker. See [VZ configuration](macos-providers.md). |
 | `cloudrun` | Cloud Run Jobs REST v2. Requires `project`, `region`, and optionally `service_account`. Uses native Google Application Default Credentials (attached service account, credential file, or federation). Optional `token_env` overrides discovery. |
 | `ecs` | Standalone Fargate tasks via the AWS SDK for Go v2. Requires `region`, `cluster`, `subnets`, `execution_role`, and `supervisor_path`; optional `task_role`, `security_groups`, and `public_ip`. Uses the AWS credential chain, including environment credentials and task/instance roles. |
 | `azurejobs` | Manual Container Apps Jobs REST API `2025-07-01`. Requires `subscription`, `resource_group`, `environment_id`, and `region`. Uses native Azure environment, workload-identity, or managed-identity credentials. Optional `token_env` overrides discovery. |
 
-Pulse includes the Docker, VM, and cloud implementations. `remote` and HTTP plugins connect to separately hosted provider services. `orchard` connects to an Orchard controller.
+Pulse includes the Docker, VM, and cloud implementations. `remote` and HTTP plugins connect to separately hosted provider services.
 
 All cloud adapters work in the default distroless image. See [cloud authentication](cloud-authentication.md) for environment variables, mounted credential files, identity permissions, and refresh behavior.
 
 ### Local Docker capacity
 
-Omitting `providers` (or setting it to an empty map) creates a provider named `docker`, plus `tart` on Apple Silicon macOS when Tart is on `PATH`. Targets without `launch_services` use Docker at priority 1 and Tart at priority 2. See [the minimal Docker example](../examples/docker-default.yaml) and [macOS defaults](macos-providers.md). Explicit provider maps and target service selections are preserved; invalid or unavailable configured providers do not silently fall back to Docker.
+Omitting `providers` (or setting it to an empty map) creates a provider named `docker`, plus `vz` on Apple Silicon with macOS 14 or later. Targets without `launch_services` use Docker at priority 1 and VZ at priority 2. See [the minimal Docker example](../examples/docker-default.yaml) and [macOS defaults](macos-providers.md). Explicit provider maps and target service selections are preserved; invalid or unavailable configured providers do not silently fall back to Docker.
 
 Pulse discovers the Docker socket in its core provider code, without invoking the Docker CLI. An explicit provider `socket` wins; otherwise Pulse uses a named `DOCKER_CONTEXT`, `DOCKER_HOST`, or the saved current context from Docker's configuration (`DOCKER_CONFIG` or `~/.docker`). The `default` context uses `DOCKER_HOST` when set, otherwise `/var/run/docker.sock`. With no selected context or host, Pulse uses Docker Desktop's `~/.docker/run/docker.sock` on macOS when present, otherwise `/var/run/docker.sock`. Socket symlinks are resolved so aliases share admission ownership. Selected contexts must use a local Unix socket; invalid or remote configurations fail instead of falling back to another daemon. Docker Desktop normally selects its `desktop-linux` context; a system `/var/run/docker.sock` symlink is optional ([Docker Desktop socket setup](https://docs.docker.com/desktop/setup/install/mac-permission-requirements/)).
 
@@ -64,7 +63,7 @@ All cloud executor images need the updated `pulse-exec` helper to deliver lease 
 
 Executor images must support `c2j run with-lease --lease-file -`. Pulse pins c2j v0.0.118 and JobDB v0.0.70 in [go.mod](../go.mod). Upgrade the JobDB server and executor c2j together: this JobDB release exports version 2 lease capabilities, which older workers cannot decode. New jobs also use demand schema v4. Providers must report the concrete allocation label through `C2J_EXECUTION_BASE` or `--execution-base`.
 
-As checked on November 5, 2026, `ghcr.io/colony-2/base2:latest` contains c2j 0.0.118. Keep executor images compatible when updating Pulse. The pinned Tart/Orchard guest bundle supports JobDB v2 leases and reports the concrete base through `--execution-base`; see [macOS runtime behavior](macos-providers.md#runtime-behavior-and-limits).
+As checked on November 5, 2026, `ghcr.io/colony-2/base2:latest` contains c2j 0.0.118. Keep executor images compatible when updating Pulse. The VZ guest bundle supports JobDB v2 leases and reports the concrete base through `--execution-base`; see [macOS runtime behavior](macos-providers.md#runtime-behavior-and-limits).
 
 Remote providers receive an optional sensitive `process.stdin` field and must pipe it to the child exactly, then EOF. Upgrade existing provider implementations before deploying this controller. Unsupported stdin must produce a definite decline before side effects; silently dropping it is invalid.
 

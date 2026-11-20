@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -134,8 +135,6 @@ func TestDockerC2JIntegration(t *testing.T) {
 
 			key := jobRef.Key()
 
-			// Exercise default Docker discovery without discovering an installed
-			// Tart and preparing real macOS VMs as a side effect of this Docker test.
 			// Pulse's Docker/JobDB clients do not require host command-line tools.
 			cmd := exec.CommandContext(ctx, binary, "run", "--once")
 			cmd.Dir = t.TempDir()
@@ -152,6 +151,10 @@ func TestDockerC2JIntegration(t *testing.T) {
 				jobDB = f.localhostURL(t) + "/docker-test"
 			}
 			cmd.Env = append(cmd.Env, "C2J_JOBDB="+jobDB)
+			if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+				// Select only Docker on hosts that also default to VZ.
+				cmd.Env = append(cmd.Env, fmt.Sprintf("PULSE_CONFIG=providers: {docker: {type: docker}}\ntargets: [{jobdb: %q, launch_services: [{name: docker, priority: 1}]}]", jobDB))
+			}
 			endpoint, _ := url.Parse(jobDB)
 			cmd.Env = append(cmd.Env, "NO_PROXY="+os.Getenv("NO_PROXY")+","+os.Getenv("no_proxy")+","+endpoint.Hostname())
 			var out []byte

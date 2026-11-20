@@ -17,9 +17,7 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -80,9 +78,9 @@ type DependencyCache struct {
 	MaxAge     string `yaml:"max_age"`
 }
 type Config struct {
-	BaseDir           string `yaml:"-"`
-	TartAutoDiscovery string `yaml:"-"`
-	HTTP              struct {
+	BaseDir         string `yaml:"-"`
+	VZAutoDiscovery string `yaml:"-"`
+	HTTP            struct {
 		Listen string `yaml:"listen"`
 	} `yaml:"http"`
 	PollInterval     string `yaml:"poll_interval"`
@@ -311,9 +309,9 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 		return nil, fmt.Errorf("targets are required")
 	}
 	var defaultServices []Service
-	c.TartAutoDiscovery = "disabled: explicit providers configured"
+	c.VZAutoDiscovery = "disabled: explicit providers configured"
 	if len(c.Providers) == 0 {
-		c.Providers, defaultServices, c.TartAutoDiscovery = automaticProviders(runtime.GOOS, runtime.GOARCH, exec.LookPath)
+		c.Providers, defaultServices, c.VZAutoDiscovery = automaticProviders(supportsVZ())
 		for i := range c.Targets {
 			if len(c.Targets[i].Services) == 0 {
 				c.Targets[i].Services = append([]Service(nil), defaultServices...)
@@ -325,13 +323,13 @@ func parse(ctx context.Context, b []byte, jobdb string) (*Config, error) {
 			return nil, fmt.Errorf("empty provider name")
 		}
 		switch p.Type {
-		case "remote", "docker", "cloudrun", "ecs", "azurejobs", "plugin", "tart", "orchard":
+		case "remote", "docker", "cloudrun", "ecs", "azurejobs", "plugin", "vz":
 		default:
 			if _, ok := providerregistry.Lookup(p.Type); !ok {
 				return nil, fmt.Errorf("unknown provider type %q", p.Type)
 			}
 		}
-		if p.Type == "tart" || p.Type == "orchard" {
+		if p.Type == "vz" {
 			if _, err := MacOSOptions(p); err != nil {
 				return nil, err
 			}

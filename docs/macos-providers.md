@@ -1,37 +1,33 @@
-# Tart and Orchard providers
+# VZ provider
 
-Pulse links the published [`pulse-tart`](https://github.com/colony-2/pulse-tart)
-Go library for both `type: tart` and `type: orchard`. The library implements the
-shared provider API and owns VM creation, guest bootstrap, lease delivery,
-suspended templates, capacity accounting, recovery, and cleanup. No provider
-plugin or copied implementation is involved.
+Pulse uses Apple Virtualization.framework through the linked
+[`pulse-tart` Go library](https://github.com/colony-2/pulse-tart). The library
+manages VM creation, guest bootstrap, lease delivery, capacity, recovery, and
+cleanup.
 
-## Automatic Tart configuration
+## Automatic VZ configuration
 
-When `providers` is omitted or empty, Pulse enables Docker and, on Apple Silicon
-macOS with `tart` on `PATH`, also enables a provider named `tart`. Targets without
-`launch_services` use Docker at priority 1 and Tart at priority 2. Explicit
-provider maps and service lists remain authoritative. Intel macOS and Linux do not automatically
-enable local Tart. Orchard requires explicit connection settings.
+When `providers` is omitted or empty, Pulse enables Docker and adds a provider
+named `vz` on Apple Silicon with macOS 14 or later. Targets without
+`launch_services` use Docker at priority 1 and VZ at priority 2. An explicit
+provider map controls which providers are enabled.
 
 Pulse leaves VM counts, bases, slots, resource sizes, and Linux Docker setup to
-pulse-tart's conventions. No `config` block is needed for local Tart. This
-release defaults to **two macOS job VMs and four Linux job VMs**, each with
+the library. The VZ provider defaults to **two macOS job VMs and four Linux job VMs**, each with
 **4 vCPU / 8 GiB**. Linux includes Docker; macOS Docker remains opt-in.
 Counts do not scale to host resources: six job VMs reserve 24 vCPU / 48 GiB
-before worker overhead. Use optional count overrides for smaller hosts.
+before host overhead. Use optional count overrides for smaller hosts.
 
 Automatic detection preserves the default `ubuntu-26*` selector. Select a
 macOS base with `defaults.base: 'macos*'`; Linux work continues to use Docker.
-To run only Tart, including on a Mac without Docker installed, configure it
-explicitly as in [tart.yaml](../examples/tart.yaml). A minimal configuration is:
+Use an explicit VZ-only configuration to run on a Mac without Docker. See [vz.yaml](../examples/vz.yaml).
 
 ```yaml
 defaults:
   base: 'macos*'
 providers:
   mac:
-    type: tart
+    type: vz
 targets:
   - jobdb: https://jobdb.example/acme
     launch_services: [{name: mac, priority: 1}]
@@ -42,8 +38,7 @@ The library's default catalog is `macos-26-arm64`, `macos-15-arm64`, and
 conventional pool when slots are omitted. The two macOS versions share the same
 two-job limit: either version can use both positions, or each can run one job.
 The default eight configured positions (two per macOS version and four Linux)
-remain bounded by six total job VMs. There are no aliases; old explicit Sequoia
-configurations must use the library's current label and image settings.
+remain bounded by six total job VMs.
 
 To override only the job counts, leave the catalog and slots omitted:
 
@@ -67,19 +62,17 @@ returns `no_capacity`; leases are not queued while templates prepare.
 
 ## Configuration
 
-Both provider types accept a strict `config` mapping:
+The provider accepts a strict `config` mapping.
 
 | Field | Meaning |
 | --- | --- |
-| `owner_id` | Stable library ownership identity; defaults to a hash of provider type/name. |
-| `state_dir` | Durable private journal directory; defaults under the OS user configuration directory at `pulse/providers/<identity>`. |
+| `owner_id` | Stable ownership identity derived from the provider name by default. |
 | `bootstrap_timeout` | Preparation deadline; default `45m`. |
 | `vm_counts` | Optional `macos`, `linux`, and `total` job limits; omitted values use library conventions. |
 | `bases` | Optional replacement catalog; omitted uses the library’s default macOS and Linux bases. |
 | `slots` | Optional explicit groups; omitted creates a pool for every configured base, sharing the per-OS and total VM limits. |
 | `docker` | Optional macOS Docker opt-in or advanced engine settings; Linux Docker is automatic. |
-| `tart` | Local settings for `type: tart`. |
-| `orchard` | Required connection settings for `type: orchard`. |
+| `vz` | Optional VM storage, runner, timeout, and Docker endpoint settings. |
 
 Each base accepts `name`, `os` (`darwin` by default or `linux`), digest-pinned `image`, `os_version`,
 `ssh_username` (default `admin`), `ssh_password_env`, optional
@@ -90,24 +83,34 @@ version and the capabilities declared in its catalog. Define slots with
 Explicit empty catalogs/groups are invalid; use zero VM counts to drain. Job and
 engine VM sizes are currently fixed at 4 vCPU / 8192 MiB; other sizes are rejected.
 
-Local `tart` settings are `binary` (default `tart` on `PATH`), `home` (default
-`~/.tart`), `command_timeout`, `ssh_timeout`, `docker_endpoint`, and optional
-`python_binary` for the Docker endpoint supervisor. Orchard settings are `url`,
-`worker`, optional `worker_labels`, `username`, `token_env`, `ca_cert_file`,
-`request_timeout`, `docker_endpoint`, and `allow_http` for explicit lab HTTP connections. See
-[orchard.yaml](../examples/orchard.yaml). Credentials are read at construction;
-`config` is redacted from the public diagnostics endpoint. Relative file paths
-resolve against the Pulse configuration file directory (working directory for
-inline configuration). A bare Tart binary name is resolved on `PATH`.
+| Field under `config.vz` | Meaning |
+| --- | --- |
+| `home` | VM inventory and cache directory. Defaults to `~/.pulse-vz`. |
+| `runner` | Path to an optional standalone signed VZ runner. Defaults to the Pulse executable. |
+| `command_timeout` | Native command deadline. Defaults to `2m`. |
+| `ssh_timeout` | Guest SSH deadline. Defaults to `15s`. |
+| `delivery_timeout` | Pre-execution delivery deadline. Defaults to `2m`. |
+| `docker_endpoint` | Host IPv4 address and reserved port range for macOS Docker. |
 
-Keep owner/state identity stable across restarts. One runtime owns each journal;
-separate providers need separate ownership scopes and journals. Do not remove
-state to retry an uncertain launch. Closing Pulse releases the library's local
-resources while native VMs survive; the next process recovers the same journal.
+Relative paths resolve against the configuration file directory, or the
+working directory for inline configuration. Pulse reads credentials during
+construction and redacts `config` from public diagnostics.
+
+The embedded runner needs the `com.apple.security.virtualization` entitlement.
+Pulse releases and `make build` on Apple Silicon include it. If you build
+Pulse directly with Go, sign it before running VZ.
+
+```sh
+codesign --force --sign - --entitlements cmd/pulse/vz.entitlements ./pulse
+```
+
+Keep the provider name or explicit `owner_id` and VZ home stable across
+restarts. Running VMs survive Pulse shutdown. The next runtime uses persisted
+VM properties to recover ownership and execution state.
 
 ## Runtime behavior and limits
 
-`pulse check` validates library configuration and checks backend connectivity
+`pulse check` validates library configuration and checks the signed VZ runner and local inventory
 without preparing or launching VMs. Once the controller runs, Pulse reconciles
 slots in the background, retrying observation errors. Preparation has its own
 deadline so a cold image download can outlast `call_timeout`. Shutdown cancels
@@ -127,27 +130,25 @@ Scratch reservations, positive infrastructure timeouts, start-before deadlines, 
 supported and are declined. Use c2j recipe timeouts. Capabilities and resource
 requirements are passed to the library for admission and verification. The
 legacy c2j image/platform compatibility path remains container-oriented: use
-`defaults.base` for these macOS providers and omit legacy image/platform requests.
+`defaults.base` for VZ and omit legacy image/platform requests.
 Supply a JobDB URL reachable from the VM; Docker's loopback-host rewrite does not
-apply to Tart or Orchard.
+apply to VZ.
 
-The pinned pulse-tart library exposes `GetCapabilities` with a complete configured
-catalog and passes the selected concrete base to c2j through `--execution-base`.
+The VZ runtime reports a complete configured catalog and passes the selected
+concrete base to c2j through `--execution-base`.
 The library resolves c2j during image preparation. Existing prepared images are
 reused; upgrading Pulse does not reinstall c2j in those images.
 
-## Docker in Tart/Orchard guests
+## Docker in VZ guests
 
-Linux Docker needs no profiles, slot definitions, or worker endpoint. The
+Linux Docker needs no profiles, slot definitions, or host endpoint. The
 library provisions the integrated engine in the Linux job VM and reports its
 `docker` capability through `GetCapabilities`.
 
-For macOS Docker, set `docker: {}` and a backend `docker_endpoint`. The library
-adds its default engine profile to the conventional macOS group. See
-[tart-docker.yaml](../examples/tart-docker.yaml); no manual slots or profiles are
-needed. Orchard accepts the same endpoint under `orchard`, using the worker's
-guest-reachable IPv4 address. Reserve the port range for this provider owner on
-that worker. The library validates the endpoint before provisioning.
+For macOS Docker, set `docker: {}` and configure `vz.docker_endpoint` with
+the host's guest-reachable IPv4 address and a port range reserved for this
+provider. The library validates the endpoint and adds its default engine
+profile to the conventional macOS groups. See [vz-docker.yaml](../examples/vz-docker.yaml).
 
 Explicit slot configurations remain an advanced override: assign a
 `docker_profile` to each intended group and configure the corresponding engine
@@ -168,5 +169,5 @@ less memory than the VM reservation for worker overhead.
 
 Build contexts, copies, engine-owned volumes, and supported TCP services work
 without host bind mounts. Job workspace bind mounts are unsupported. See the
-[pulse-tart Docker contract](https://github.com/colony-2/pulse-tart/blob/72c3adac845e16835576aca9325fcb1b33cf8269/docs/docker-library.md)
+[pulse-tart Docker contract](https://github.com/colony-2/pulse-tart/blob/15516f696180d81fb93d2929f15dce9c0f24bf46/docs/docker-library.md)
 for the tested Docker/Compose behavior and VM lifecycle.

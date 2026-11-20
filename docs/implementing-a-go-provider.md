@@ -49,6 +49,7 @@ import (
 )
 
 func main() {
+    pulsecli.RunnerMain()
     err := providerregistry.Register("acme", func(ctx context.Context, opts providerregistry.Options) (provider.Provider, func(), error) {
         // Decode opts.Config (JSON) into your own configuration type.
         // opts.BaseDir resolves relative paths; opts.Env contains executor defaults.
@@ -66,6 +67,10 @@ func main() {
     }
 }
 ```
+
+On Apple Silicon, the `RunnerMain` hook lets the custom executable act as the
+VZ runner. Sign it with the virtualization entitlement when using the embedded
+runner. See [VZ configuration](macos-providers.md#configuration).
 
 The example assumes your `acme.New` returns `(provider.Provider, func(), error)`;
 adapt the constructor call to your implementation. Factories receive a bounded

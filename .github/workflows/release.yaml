@@ -61,8 +61,77 @@ jobs:
           echo "tag=$REQUESTED_TAG" >> "$GITHUB_OUTPUT"
           echo "version=${REQUESTED_TAG#v}" >> "$GITHUB_OUTPUT"
 
-  build:
+  darwin:
     needs: create-tag
+    runs-on: macos-15
+    env:
+      VERSION: ${{ needs.create-tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.create-tag.outputs.tag }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Build Darwin executables
+        run: scripts/build-release.sh "$VERSION" darwin/amd64 darwin/arm64
+      - name: Sign and notarize with Developer ID when configured
+        env:
+          SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          NOTARY_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          set -euo pipefail
+          required=(SIGN_P12 SIGN_PASSWORD NOTARY_ISSUER NOTARY_KEY_ID NOTARY_KEY)
+          present=0
+          for name in "${required[@]}"; do
+            if [[ -n "${!name}" ]]; then present=$((present + 1)); fi
+          done
+          if [[ "$present" -eq 0 ]]; then
+            exit 0
+          elif [[ "$present" -ne "${#required[@]}" ]]; then
+            echo 'Configure all five Apple signing secrets, or none.' >&2
+            exit 1
+          fi
+
+          signing_dir=$(mktemp -d)
+          keychain="$signing_dir/signing.keychain-db"
+          trap 'security delete-keychain "$keychain" 2>/dev/null || true; rm -rf "$signing_dir"' EXIT
+          printf '%s' "$SIGN_P12" | base64 -D > "$signing_dir/certificate.p12"
+          if [[ "$NOTARY_KEY" == '-----BEGIN '* ]]; then
+            printf '%s\n' "$NOTARY_KEY" > "$signing_dir/notary.p8"
+          else
+            printf '%s' "$NOTARY_KEY" | base64 -D > "$signing_dir/notary.p8"
+          fi
+          keychain_password=$(openssl rand -hex 32)
+          security create-keychain -p "$keychain_password" "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$signing_dir/certificate.p12" -k "$keychain" -P "$SIGN_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
+          codesign --force --sign 'Developer ID Application' --keychain "$keychain" \
+            --options runtime --timestamp dist/build/darwin-amd64/pulse
+          codesign --force --sign 'Developer ID Application' --keychain "$keychain" \
+            --options runtime --timestamp --entitlements cmd/pulse/vz.entitlements dist/build/darwin-arm64/pulse
+
+          (cd dist/build && zip -q "$signing_dir/notary.zip" darwin-amd64/pulse darwin-arm64/pulse)
+          xcrun notarytool submit "$signing_dir/notary.zip" --wait --output-format json \
+            --key "$signing_dir/notary.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" \
+            | tee "$signing_dir/notary-result.json"
+          jq -e '.status == "Accepted"' "$signing_dir/notary-result.json" >/dev/null
+      - name: Verify and stage Darwin executables
+        run: |
+          codesign --verify --strict dist/build/darwin-arm64/pulse
+          tar -C dist/build -cf darwin-executables.tar darwin-amd64 darwin-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darwin-executables
+          path: darwin-executables.tar
+          if-no-files-found: error
+
+  build:
+    needs: [create-tag, darwin]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -70,11 +139,6 @@ jobs:
     env:
       TAG: ${{ needs.create-tag.outputs.tag }}
       VERSION: ${{ needs.create-tag.outputs.version }}
-      QUILL_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
-      QUILL_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
-      QUILL_NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-      QUILL_NOTARY_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-      QUILL_NOTARY_KEY: ${{ secrets.APPLE_API_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,33 +154,13 @@ jobs:
           python-version: '3.13'
       - name: Check module tidiness
         run: go mod tidy -diff
-      - name: Build all four executable targets
-        run: scripts/build-release.sh "$VERSION"
-      - name: Check optional macOS signing configuration
-        id: signing
-        run: |
-          set -euo pipefail
-          required=(QUILL_SIGN_P12 QUILL_SIGN_PASSWORD QUILL_NOTARY_ISSUER QUILL_NOTARY_KEY_ID QUILL_NOTARY_KEY)
-          present=0
-          for name in "${required[@]}"; do
-            if [[ -n "${!name}" ]]; then present=$((present + 1)); fi
-          done
-          if [[ "$present" -eq 0 ]]; then
-            echo 'enabled=false' >> "$GITHUB_OUTPUT"
-          elif [[ "$present" -eq "${#required[@]}" ]]; then
-            echo 'enabled=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'Configure all five Apple signing secrets, or none.' >&2
-            exit 1
-          fi
-      - name: Sign and notarize Darwin binaries
-        if: steps.signing.outputs.enabled == 'true'
-        run: |
-          set -euo pipefail
-          go install github.com/anchore/quill/cmd/quill@v0.7.1
-          for binary in dist/build/darwin-*/pulse; do
-            "$(go env GOPATH)/bin/quill" sign-and-notarize "$binary"
-          done
+      - name: Build Linux executables
+        run: scripts/build-release.sh "$VERSION" linux/amd64 linux/arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: darwin-executables
+      - name: Extract signed Darwin executables
+        run: tar -xf darwin-executables.tar -C dist/build
       - name: Pack executable archives and npm artifact
         run: |
           scripts/package-release.sh "$VERSION"

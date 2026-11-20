@@ -65,9 +65,9 @@ targets:
 	unenforced := false
 	t.Run("CLI defaults without a helper", func(t *testing.T) {
 		binary := filepath.Join(dir, "pulse")
-		build := exec.CommandContext(ctx, "go", "build", "-o", binary, "../../cmd/pulse")
+		build := exec.CommandContext(ctx, "../../scripts/build-pulse.sh", binary)
 		if out, err := build.CombinedOutput(); err != nil {
-			t.Fatalf("build Pulse: %v\n%s", err, out)
+			t.Fatalf("prepare Pulse binary: %v\n%s", err, out)
 		}
 		cmd := exec.CommandContext(ctx, binary, "check")
 		cmd.Dir = dir

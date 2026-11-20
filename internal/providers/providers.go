@@ -45,7 +45,7 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]provider.Provide
 	}
 	for name, p := range cfg.Providers {
 		switch p.Type {
-		case "tart", "orchard":
+		case "vz":
 			instance, cleanup, err := buildMac(ctx, name, p, cfg)
 			if err != nil {
 				return fail(err)

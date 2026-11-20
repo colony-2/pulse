@@ -35,7 +35,7 @@ Pulse needs an HTTP(S) JobDB service with a tenant path. A missing tenant produc
 
 | Setting | Default |
 | --- | --- |
-| Providers | Local Docker; also Tart with library VM defaults on Apple Silicon macOS when installed |
+| Providers | Local Docker plus VZ on Apple Silicon with macOS 14 or later |
 | Base selector | `ubuntu-26*` |
 | Native image | `ghcr.io/colony-2/base2:latest` for Ubuntu 26.04 bases |
 | CPU / memory / scratch | Unspecified; no implicit resource requirements |
@@ -83,8 +83,7 @@ Providers must supply all names exactly; capabilities are not glob selectors.
 Current native/v1 transport adapters decline nonempty capability requirements
 because they do not provision and verify those optional interfaces. Registered
 Go providers can implement them; see [Go providers](implementing-a-go-provider.md).
-The built-in Tart and Orchard providers verify their configured macOS capabilities
-through the linked library; see [macOS providers](macos-providers.md).
+VZ verifies its configured guest capabilities through the linked library. See [VZ configuration](macos-providers.md).
 
 Legacy `defaults.image` and `defaults.platform` are translated into an exact
 `oci:<platform>:<normalized-image>` base. `base` and `image` are mutually exclusive.
@@ -95,13 +94,11 @@ architecture in the built-in default, or constrains a configured base without
 broadening it. `defaults.platform` remains a compatibility constraint for existing
 configuration. Unknown custom base names are passed to registered Go providers.
 
-On Apple Silicon macOS with `tart` on `PATH`, an omitted/empty provider map enables
-Tart alongside Docker, using the library’s default two macOS and four Linux job
-VMs (4 vCPU / 8 GiB each). Linux VMs include Docker. Optional `vm_counts` overrides
-select per-OS and shared limits. Explicit provider
-maps and launch-service lists remain authoritative. The Ubuntu default selector
-is preserved; use `defaults.base: 'macos*'` for macOS work. See
-[Tart and Orchard settings and examples](macos-providers.md).
+On Apple Silicon with macOS 14 or later, an omitted or empty provider map enables
+VZ alongside Docker. VZ defaults to two macOS and four Linux job VMs at 4 vCPU
+and 8 GiB each. Linux VMs include Docker. Set `vm_counts` to override the per-OS
+and shared limits. The default selector remains `ubuntu-26*`. Use
+`defaults.base: 'macos*'` for macOS work. See [VZ settings and examples](macos-providers.md).
 
 ## Execution lifetime
 
@@ -329,8 +326,8 @@ The file must be readable by UID/GID `65532:65532`. The image no longer supplies
 ## Provider discovery and placement
 
 Every provider implements `GetCapabilities`. Startup logs show its ordered base
-labels and whether the catalog is complete, plus Tart's configured slot count.
-A separate message explains whether Tart auto-discovery was enabled or skipped.
+labels and whether the catalog is complete, plus the VZ provider's configured slot count.
+A separate message explains whether VZ was enabled automatically.
 These describe configured support, not idle capacity or warmed images.
 
 Before each provider submission, Pulse refreshes its capabilities once per batch

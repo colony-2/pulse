@@ -3,16 +3,18 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/colony-2/pulse/pkg/pulsecli"
-	"github.com/spf13/cobra"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/colony-2/pulse/pkg/pulsecli"
+	"github.com/spf13/cobra"
 )
 
 var version = "dev"
 
 func main() {
+	pulsecli.RunnerMain()
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

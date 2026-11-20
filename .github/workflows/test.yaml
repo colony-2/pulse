@@ -62,6 +62,21 @@ jobs:
           python-version: '3.13'
       - run: pip install 'openapi-spec-validator==0.9.0' 'PyYAML==6.0.3'
       - run: python scripts/validate_protocol.py
+  vz:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test ./internal/config ./internal/providers -run 'VZ|Mac|DefaultProviders'
+      - run: |
+          make build
+          codesign --verify --strict bin/pulse
+          if [[ "$(sysctl -n kern.hv_support)" == 1 ]]; then
+            test "$(bin/pulse __pulse-vm probe)" = '"pulse-vz/1"'
+          fi
   packaging:
     runs-on: ubuntu-latest
     steps:

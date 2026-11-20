@@ -4,11 +4,11 @@ defaults:
   base: 'macos*'
 providers:
   mac:
-    type: tart
+    type: vz
     config:
       docker: {} # Also enable Docker on macOS; Linux already includes it.
       vm_counts: {macos: 1, linux: 1}
-      tart:
+      vz:
         docker_endpoint:
           address: 192.168.64.1
           port_min: 45100

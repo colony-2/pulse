@@ -76,8 +76,8 @@ func TestCapabilityFiltering(t *testing.T) {
 func TestCapabilitiesUseLeasedDemandAndRefresh(t *testing.T) {
 	calls := [][]string{}
 	docker := &describedProvider{fake: &fake{calls: &calls, name: "docker"}, capabilities: api.Capabilities{BasesComplete: true, Bases: []api.BaseCapabilities{{Name: "ubuntu-26.04-amd64"}}}}
-	tart := &describedProvider{fake: &fake{calls: &calls, name: "tart"}, capabilities: api.Capabilities{BasesComplete: true, Bases: []api.BaseCapabilities{{Name: "macos-15-arm64"}}}}
-	services := []Service{{Name: "docker", Priority: 1, Provider: docker}, {Name: "tart", Priority: 2, Provider: tart}}
+	vz := &describedProvider{fake: &fake{calls: &calls, name: "vz"}, capabilities: api.Capabilities{BasesComplete: true, Bases: []api.BaseCapabilities{{Name: "macos-15-arm64"}}}}
+	services := []Service{{Name: "docker", Priority: 1, Provider: docker}, {Name: "vz", Priority: 2, Provider: vz}}
 	s := New(time.Minute, time.Second)
 	js := jobs(1)
 	js[0].Prepare = func(_ context.Context, l api.Launch) (api.Launch, func(context.Context) error, error) {
@@ -87,7 +87,7 @@ func TestCapabilitiesUseLeasedDemandAndRefresh(t *testing.T) {
 	if _, err := s.Run(t.Context(), "scope", services, js); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(calls, [][]string{{"tart", "a"}}) {
+	if !reflect.DeepEqual(calls, [][]string{{"vz", "a"}}) {
 		t.Fatal("filtered listing instead of leased demand", calls)
 	}
 	// A changed support snapshot must not stay cached across passes.
@@ -95,7 +95,7 @@ func TestCapabilitiesUseLeasedDemandAndRefresh(t *testing.T) {
 	if _, err := s.Run(t.Context(), "scope", services, js); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(calls, [][]string{{"tart", "a"}, {"docker", "a"}}) {
+	if !reflect.DeepEqual(calls, [][]string{{"vz", "a"}, {"docker", "a"}}) {
 		t.Fatal("stale discovery or priority ignored", calls)
 	}
 }

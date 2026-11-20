@@ -58,13 +58,10 @@ truncation or replacement; the finite transport capture bounds are described abo
 record contains no full launch, environment or exported lease. Provider errors
 stay in operator logs; public HTTP responses retain their existing shapes.
 
-Tart's pinned runtime includes reached admission gates and original native causes
-in its existing Reason and error channels. Newly captured native HTTP error bodies
-and Tart stderr retain up to 16,384 bytes and explicitly mark truncation. Pulse
-retains the text returned to it in full. Relevant earlier preparation errors can
-explain a later refusal; their provider-side observation is held in memory and
-expires on recovery, relevant state changes or closure. Missing historical
-observations remain unknown.
+VZ reports reached admission gates and native causes in its Reason and error
+channels. Pulse logs the text returned by the runtime. A preparation error can
+explain a later refusal. The provider retains that error in memory until
+recovery, a relevant state change, or closure.
 
 Capacity observations are explicitly unknown when the provider contract does
 not supply them. Read the original Reason for an observed admission gate, such

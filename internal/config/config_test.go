@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -231,7 +232,7 @@ func TestClaimBatchLimits(t *testing.T) {
 	}
 }
 
-func TestDefaultDockerProvider(t *testing.T) {
+func TestDefaultProviders(t *testing.T) {
 	start := strings.Index(valid, "providers:\n")
 	end := strings.Index(valid, "targets:\n")
 	base := valid[:start] + valid[end:]
@@ -243,11 +244,18 @@ func TestDefaultDockerProvider(t *testing.T) {
 				t.Fatal(err)
 			}
 			p := cfg.Providers["docker"]
-			if len(cfg.Providers) != 1 || p.Type != "docker" || p.Socket != "" || p.Capacity.CPU != "" || p.Capacity.Memory != "" || p.Capacity.MaxContainers != 0 || p.Overhead != "256Mi" {
+			if p.Type != "docker" || p.Socket != "" || p.Capacity.CPU != "" || p.Capacity.Memory != "" || p.Capacity.MaxContainers != 0 || p.Overhead != "256Mi" {
 				t.Fatalf("unexpected Docker defaults: %+v", p)
 			}
-			if services := cfg.Targets[0].Services; len(services) != 1 || services[0] != (Service{Name: "docker", Priority: 1}) {
-				t.Fatalf("unexpected launch services: %+v", services)
+			wantServices := []Service{{Name: "docker", Priority: 1}}
+			if supportsVZ() {
+				if cfg.Providers["vz"].Type != "vz" {
+					t.Fatal("default VZ provider missing", cfg.Providers)
+				}
+				wantServices = append(wantServices, Service{Name: "vz", Priority: 2})
+			}
+			if len(cfg.Providers) != len(wantServices) || !slices.Equal(cfg.Targets[0].Services, wantServices) {
+				t.Fatal("unexpected default providers or services", cfg.Providers, cfg.Targets[0].Services)
 			}
 		})
 	}
