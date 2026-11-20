@@ -97,8 +97,8 @@ working directory for inline configuration. Pulse reads credentials during
 construction and redacts `config` from public diagnostics.
 
 The embedded runner needs the `com.apple.security.virtualization` entitlement.
-Pulse releases and `make build` on Apple Silicon include it. If you build
-Pulse directly with Go, sign it before running VZ.
+Pulse releases, `make build`, and `make install` on Apple Silicon include it.
+If you build Pulse directly with Go, sign it before running VZ.
 
 ```sh
 codesign --force --sign - --entitlements cmd/pulse/vz.entitlements ./pulse

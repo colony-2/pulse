@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-output="${1:?usage: build-pulse.sh OUTPUT}"
-if [[ "$output" != /* ]]; then
+output="${1:?usage: build-pulse.sh OUTPUT or build-pulse.sh --install}"
+if [[ "$output" != --install && "$output" != /* ]]; then
   output="$PWD/$output"
 fi
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
-go build -o "$output" ./cmd/pulse
+if [[ "$output" == --install ]]; then
+  go install ./cmd/pulse
+  output=$(go list -f '{{.Target}}' ./cmd/pulse)
+else
+  go build -o "$output" ./cmd/pulse
+fi
 
 host_os=$(uname -s)
 if [[ "$host_os" != Darwin ]]; then

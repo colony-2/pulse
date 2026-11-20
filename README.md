@@ -23,6 +23,10 @@ Download your platform's archive from [GitHub Releases](https://github.com/colon
 
 Linux and macOS are supported on AMD64 and ARM64. Container images support Linux AMD64 and ARM64. The local Docker provider supports Linux servers and Docker Desktop on macOS, using Pulse's automatic Docker socket/context discovery.
 
+### From source
+
+Run `make install` from the checkout to install Pulse into Go's binary directory. On Apple Silicon, this signs and verifies the installed binary with the VZ entitlement.
+
 ## Quick start
 
 Start Docker Engine on Linux or Docker Desktop on macOS, then run:
