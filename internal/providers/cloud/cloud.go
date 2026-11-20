@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	provider "github.com/colony-2/pulse-provider-api"
+	"github.com/colony-2/pulse/internal/providers/adapter"
 	"github.com/colony-2/pulse/pkg/compute"
 )
 
@@ -45,6 +47,15 @@ type plan struct {
 	Request                        compute.Request
 	Allocation                     compute.Allocation
 	TotalMemory, DiskGiB, CPUUnits int64
+}
+
+// InstanceProvider exposes the configured cloud backend through the structured API.
+func (p *Provider) InstanceProvider(env, targets map[string]string) provider.Provider {
+	platforms := []string{"linux/amd64"}
+	if p.cfg.Kind == "ecs" {
+		platforms = []string{"linux/arm64", "linux/amd64"}
+	}
+	return &adapter.Provider{Native: p, Platforms: platforms, Env: env, Targets: targets}
 }
 
 func New(c Config) (*Provider, error) {

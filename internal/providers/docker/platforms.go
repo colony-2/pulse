@@ -11,6 +11,9 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	provider "github.com/colony-2/pulse-provider-api"
+	"github.com/colony-2/pulse/internal/providers/adapter"
 )
 
 type platformProbe struct {
@@ -21,6 +24,17 @@ type platformProbe struct {
 
 // NativePlatform reports the daemon's platform, independently of the controller.
 func (p *Provider) NativePlatform() string { return p.platform }
+
+// InstanceProvider exposes the Docker engine through the structured provider API.
+func (p *Provider) InstanceProvider(env, targets map[string]string) provider.Provider {
+	platforms := []string{p.NativePlatform()}
+	for _, platform := range p.SupportedPlatforms() {
+		if platform != p.NativePlatform() {
+			platforms = append(platforms, platform)
+		}
+	}
+	return &adapter.Provider{Native: p, Platforms: platforms, Env: env, Targets: targets}
+}
 
 // SupportedPlatforms returns the native platform and verified execution platforms.
 // Discovery finishes before the provider is returned to callers.

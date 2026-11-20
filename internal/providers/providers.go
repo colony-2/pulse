@@ -5,6 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"maps"
+	"net/http"
+	"os"
+	"time"
+
 	provider "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/providers/adapter"
@@ -13,14 +19,9 @@ import (
 	pluginprovider "github.com/colony-2/pulse/internal/providers/plugin"
 	"github.com/colony-2/pulse/internal/providers/remote"
 	"github.com/colony-2/pulse/internal/quantity"
-	"github.com/colony-2/pulse/pkg/compute"
 	"github.com/colony-2/pulse/pkg/providerplugin"
 	"github.com/colony-2/pulse/pkg/providerregistry"
 	"github.com/distribution/reference"
-	"log/slog"
-	"maps"
-	"os"
-	"time"
 )
 
 func Build(ctx context.Context, cfg *config.Config) (map[string]provider.Provider, func(), error) {
@@ -37,6 +38,11 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]provider.Provide
 		name   string
 	}
 	locals := map[string]local{}
+	// Native resources created before endpoint labels used the configured target.
+	targets := make(map[string]string, len(cfg.Targets))
+	for _, t := range cfg.Targets {
+		targets[t.Instance+"\x00"+t.Tenant] = t.JobDB
+	}
 	for name, p := range cfg.Providers {
 		switch p.Type {
 		case "tart", "orchard":
@@ -47,31 +53,61 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]provider.Provide
 			out[name] = instance
 			closers = append(closers, cleanup)
 		case "plugin":
-			c, e := pluginprovider.New(ctx, name, p.Plugin, cfg.BaseDir, cfg.Call)
+			if p.Plugin != nil && p.Plugin.Endpoint != "" {
+				if err := p.Plugin.ValidateEndpoint(); err != nil {
+					return fail(err)
+				}
+				if len(cfg.Defaults.Env) != 0 {
+					return fail(fmt.Errorf("HTTP plugin provider %s requires executor environment to be configured at the endpoint", name))
+				}
+				token, err := envToken(p.Plugin.TokenEnv)
+				if err != nil {
+					return fail(err)
+				}
+				c, err := remote.NewStructured(p.Plugin.Endpoint, &http.Client{Timeout: cfg.Call}, token, p.Plugin.AllowHTTP)
+				if err != nil {
+					return fail(err)
+				}
+				out[name] = c
+				continue
+			}
+			options, e := p.Plugin.ProcessConfig(name, cfg.BaseDir)
 			if e != nil {
 				return fail(e)
 			}
-			out[name] = wrap(c, p.Type, cfg)
-			closers = append(closers, c.Close)
+			options.CallTimeout = cfg.Call
+			if p.Plugin.ProtocolVersion() == providerplugin.ProtocolVersion {
+				c, err := providerplugin.Start(ctx, options)
+				if err != nil {
+					return fail(fmt.Errorf("plugin provider %s: %w", name, err))
+				}
+				out[name] = &pluginAdapter{Provider: &adapter.Provider{Native: c, Env: cfg.Defaults.Env, Targets: targets}, process: c}
+				closers = append(closers, c.Close)
+				continue
+			}
+			c, err := pluginprovider.Start(ctx, options, cfg.Defaults.Env)
+			if err != nil {
+				return fail(fmt.Errorf("plugin provider %s: %w", name, err))
+			}
+			out[name] = c
+			closers = append(closers, func() {
+				if err := c.Close(); err != nil {
+					slog.Warn("plugin provider cleanup failed", "provider", name, "error", err)
+				}
+			})
 		case "remote":
 			if p.TokenEnv == "" {
 				return fail(fmt.Errorf("remote provider %s requires token_env", name))
 			}
-			envKey := p.TokenEnv
-			if os.Getenv(envKey) == "" {
-				return fail(fmt.Errorf("missing provider token environment %s", envKey))
+			token, err := envToken(p.TokenEnv)
+			if err != nil {
+				return fail(err)
 			}
-			c, e := remote.New(p.Endpoint, nil, func() (string, error) {
-				v := os.Getenv(envKey)
-				if v == "" {
-					return "", fmt.Errorf("missing provider token environment %s", envKey)
-				}
-				return v, nil
-			}, p.AllowHTTP)
+			c, e := remote.New(p.Endpoint, nil, token, p.AllowHTTP)
 			if e != nil {
 				return fail(e)
 			}
-			out[name] = wrap(c, p.Type, cfg)
+			out[name] = &adapter.Provider{Native: c, Env: cfg.Defaults.Env, Targets: targets}
 		case "docker":
 			socket, e := docker.ResolveSocket(p.Socket)
 			if e != nil {
@@ -117,7 +153,7 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]provider.Provide
 			if e != nil {
 				return fail(e)
 			}
-			out[name] = wrap(c, p.Type, cfg)
+			out[name] = c.InstanceProvider(cfg.Defaults.Env, targets)
 			locals[socket] = local{dc, name}
 			closers = append(closers, c.Close)
 		default:
@@ -156,42 +192,28 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]provider.Provide
 			if e != nil {
 				return fail(e)
 			}
-			out[name] = wrap(c, p.Type, cfg)
+			out[name] = c.InstanceProvider(cfg.Defaults.Env, targets)
 		}
 	}
 	logProviders(ctx, slog.Default(), cfg, out)
 	return out, closeAll, nil
 }
 
-func wrap(native compute.Provider, kind string, cfg *config.Config) provider.Provider {
-	targets := map[string]string{}
-	for _, t := range cfg.Targets {
-		targets[t.Instance+"\x00"+t.Tenant] = t.JobDB
-	}
-	p := &adapter.Provider{Native: native, Env: cfg.Defaults.Env, Targets: targets}
-	switch kind {
-	case "cloudrun", "azurejobs":
-		p.Platforms = []string{"linux/amd64"}
-	case "ecs":
-		p.Platforms = []string{"linux/arm64", "linux/amd64"}
-	case "docker":
-		d := native.(*docker.Provider)
-		p.Platforms = []string{d.NativePlatform()}
-		for _, platform := range d.SupportedPlatforms() {
-			if platform != d.NativePlatform() {
-				p.Platforms = append(p.Platforms, platform)
-			}
+func envToken(key string) (func() (string, error), error) {
+	read := func() (string, error) {
+		value := os.Getenv(key)
+		if value == "" {
+			return "", fmt.Errorf("missing provider token environment %s", key)
 		}
+		return value, nil
 	}
-	if h, ok := native.(interface{ Health() providerplugin.Health }); ok {
-		return &pluginAdapter{Provider: p, health: h}
-	}
-	return p
+	_, err := read()
+	return read, err
 }
 
 type pluginAdapter struct {
 	*adapter.Provider
-	health interface{ Health() providerplugin.Health }
+	process *providerplugin.Process
 }
 
-func (p *pluginAdapter) Health() providerplugin.Health { return p.health.Health() }
+func (p *pluginAdapter) Health() providerplugin.Health { return p.process.Health() }

@@ -17,7 +17,7 @@ func (c *Config) Public() (map[string]any, error) {
 		if p.Options != nil {
 			p.Options = map[string]any{"redacted": true}
 		}
-		if p.Plugin != nil {
+		if p.Plugin != nil && p.Plugin.Endpoint == "" {
 			safe := *p.Plugin
 			safe.Config = yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "[REDACTED]"}
 			safe.Args = []string{"[REDACTED]"}

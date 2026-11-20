@@ -91,3 +91,39 @@ func TestPluginInvalidConfigurationIsSafe(t *testing.T) {
 		}
 	}
 }
+
+func TestHTTPPluginConfiguration(t *testing.T) {
+	const config = `
+providers:
+  hosted:
+    type: plugin
+    plugin:
+      endpoint: https://providers.example.com/compute
+      token_env: PROVIDER_TOKEN
+targets:
+  - jobdb: https://db.example.com/tenant
+    launch_services:
+      - name: hosted
+        priority: 1
+`
+	cfg, err := Parse([]byte(config))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := cfg.Providers["hosted"].Plugin; p.Endpoint != "https://providers.example.com/compute" || p.TokenEnv != "PROVIDER_TOKEN" {
+		t.Fatal("HTTP plugin configuration changed")
+	}
+	for name, invalid := range map[string]string{
+		"plaintext":      strings.Replace(config, "https://providers", "http://providers", 1),
+		"embedded login": strings.Replace(config, "https://providers", "https://user:CANARY@providers", 1),
+		"query":          strings.Replace(config, "/compute\n", "/compute?token=CANARY\n", 1),
+		"mixed":          strings.Replace(config, "/compute\n", "/compute\n      command: /opt/provider\n", 1),
+		"missing token":  strings.Replace(config, "      token_env: PROVIDER_TOKEN\n", "", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(invalid)); err == nil || strings.Contains(err.Error(), "CANARY") {
+				t.Fatal(err)
+			}
+		})
+	}
+}

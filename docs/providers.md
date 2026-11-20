@@ -9,6 +9,7 @@ resolution, executor construction, and typed job identity.
 
 | Configuration type | Implementation and prerequisites |
 | --- | --- |
+| `plugin` | Local executable using the shared provider SDK, or an authenticated HTTP service configured with `plugin.endpoint`. See [plugin configuration and HTTP contract](implementing-a-provider-plugin.md). |
 | `remote` | Authenticated HTTPS implementing [protocol v1](../REMOTE_PROVIDER_PROTOCOL.md). Uses `endpoint` and `token_env`. `allow_http` is an explicit development option. |
 | `docker` | Local Docker Engine on Linux or Docker Desktop on macOS, accessed over a Unix socket. Runs c2j directly without host mounts or a helper. Applies CPU/memory/swap limits when available; otherwise warns at startup and runs without those limits. One admission owner per daemon. |
 | `tart` | Local ARM64 VMs (macOS and Linux with built-in Docker) through the linked `pulse-tart` Go library. Library defaults provide two macOS and four Linux job VMs; requires Apple Silicon macOS and Tart. See [macOS providers](macos-providers.md). |
@@ -17,7 +18,7 @@ resolution, executor construction, and typed job identity.
 | `ecs` | Standalone Fargate tasks via the AWS SDK for Go v2. Requires `region`, `cluster`, `subnets`, `execution_role`, and `supervisor_path`; optional `task_role`, `security_groups`, and `public_ip`. Uses the AWS credential chain, including environment credentials and task/instance roles. |
 | `azurejobs` | Manual Container Apps Jobs REST API `2025-07-01`. Requires `subscription`, `resource_group`, `environment_id`, and `region`. Uses native Azure environment, workload-identity, or managed-identity credentials. Optional `token_env` overrides discovery. |
 
-These implementations are built in. `remote` connects to a separate provider service; `orchard` connects to an Orchard controller. A future external-runner registry/dispatcher can implement the remote protocol without adding runner registration or long polling to Pulse.
+Pulse includes the Docker, VM, and cloud implementations. `remote` and HTTP plugins connect to separately hosted provider services. `orchard` connects to an Orchard controller.
 
 All cloud adapters work in the default distroless image. See [cloud authentication](cloud-authentication.md) for environment variables, mounted credential files, identity permissions, and refresh behavior.
 

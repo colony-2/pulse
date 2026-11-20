@@ -11,6 +11,7 @@ import (
 	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
 	jobremote "github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
+	provider "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/pkg/compute"
 	"gopkg.in/yaml.v3"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -53,9 +55,13 @@ func TestCLIThroughListingAndProviderProtocols(t *testing.T) {
 	}
 	metadata, _ := json.Marshal(map[string]any{"execution": initial, "repo": "https://github.com/acme/first.git"})
 	metadata2, _ := json.Marshal(map[string]any{"execution": initial, "repo": "https://github.com/acme/second.git"})
-	for _, source := range []string{"file", "environment", "plugin-file", "plugin-environment"} {
+	for _, source := range []string{"file", "environment", "plugin-file", "plugin-environment", "http-plugin-file", "http-plugin-environment"} {
 		t.Run(source, func(t *testing.T) {
 			isPlugin := strings.HasPrefix(source, "plugin-")
+			isHTTPPlugin := strings.HasPrefix(source, "http-plugin-")
+			if isPlugin && runtime.GOOS != "linux" {
+				t.Skip("the shared process SDK supports Linux")
+			}
 			backend := toy.New()
 			_, err := celltest.Submit(backend, celltest.Context(t.Context()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "first", CellRepo: "github.com/acme/first", TenantId: job.TenantID, JobID: job.JobID, JobType: "recipe", Metadata: metadata, Data: jobdb.NewTaskDataOrPanic(1)}})
 			if err != nil {
@@ -82,25 +88,12 @@ func TestCLIThroughListingAndProviderProtocols(t *testing.T) {
 					json.NewEncoder(w).Encode(map[string]bool{"ready": true})
 					return
 				}
-				if r.URL.Path != "/v1/submit" && !(isPlugin && r.URL.Path == "/submit") {
-					t.Error(r.URL.Path)
-					w.WriteHeader(404)
+				if (isPlugin && r.URL.Path == "/capabilities") || (isHTTPPlugin && r.URL.Path == "/v1/capabilities") {
+					json.NewEncoder(w).Encode(provider.Capabilities{BasesComplete: true, Bases: []provider.BaseCapabilities{{Name: "ubuntu-26.04-arm64", Capabilities: []string{}}}})
 					return
 				}
-				var in struct {
-					Items []compute.Launch `json:"items"`
-				}
-				var target any = &in
-				if isPlugin {
-					target = &in.Items
-				}
-				if err := json.NewDecoder(r.Body).Decode(target); err != nil {
-					t.Error(err)
-					return
-				}
-				results := []map[string]any{}
-				for _, item := range in.Items {
-					capability, err := jobremote.DecodeLeaseCapability([]byte(item.Process.Stdin))
+				checkLease := func(lease, jobID string) {
+					capability, err := jobremote.DecodeLeaseCapability([]byte(lease))
 					if err != nil {
 						t.Error("missing lease capability")
 						return
@@ -110,22 +103,58 @@ func TestCLIThroughListingAndProviderProtocols(t *testing.T) {
 						t.Error(err)
 						return
 					}
-					lease, err := runtime.ImportLease(context.Background(), capability)
-					if err != nil || lease.Job().JobKey.JobId != item.Metadata["pulse_job_id"] {
+					imported, err := runtime.ImportLease(context.Background(), capability)
+					if err != nil || imported.Job().JobKey.JobId != jobID {
 						t.Error("invalid handed-off lease", err)
+					}
+				}
+				if r.URL.Path != "/v1/submit" && !(isPlugin && r.URL.Path == "/submit") {
+					t.Error(r.URL.Path)
+					w.WriteHeader(404)
+					return
+				}
+				results := []map[string]any{}
+				if isPlugin || isHTTPPlugin {
+					var in struct {
+						Items []provider.Launch `json:"items"`
+					}
+					var target any = &in
+					if isPlugin {
+						target = &in.Items
+					}
+					if err := json.NewDecoder(r.Body).Decode(target); err != nil {
+						t.Error(err)
 						return
 					}
-					args := strings.Join(item.Process.Args, " ")
-					if !strings.Contains(args, "run with-lease") || !strings.Contains(args, "--lease-file -") || strings.Contains(args, "--worker-id") || strings.Contains(args, "--on-not-ready") {
-						t.Error("incorrect lease command", args)
+					for _, item := range in.Items {
+						checkLease(string(item.Lease), item.Job.JobID)
+						if item.Base != base || item.CPUMillis != 1000 || item.TimeoutSeconds != 0 || item.Job.JobDB != db.URL+"/acme" || item.Job.TenantID != "acme" || item.Job.InstanceID == "" {
+							t.Error("incorrect structured assignment", item)
+						}
+						results = append(results, map[string]any{"launch_id": item.LaunchID, "status": "accepted"})
 					}
-					if item.TimeoutSeconds != 0 || item.CPUMillis != 1000 || item.Image != "ghcr.io/colony-2/base2:latest" || item.Metadata["pulse_job_id"] == "" || item.Process.Env["C2J_EXECUTION_CPU"] != "1000m" || item.Process.Env["C2J_EXECUTION_BASE"] != "ubuntu-26.04-arm64" || item.Process.Env["PULSE_JOB_ID"] == "" || item.Process.Env["PULSE_CONFIG"] != "" {
-						t.Error(item)
+				} else {
+					var in struct {
+						Items []compute.Launch `json:"items"`
 					}
-					results = append(results, map[string]any{"launch_id": item.LaunchID, "status": "accepted"})
+					if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+						t.Error(err)
+						return
+					}
+					for _, item := range in.Items {
+						checkLease(string(item.Process.Stdin), item.Metadata["pulse_job_id"])
+						args := strings.Join(item.Process.Args, " ")
+						if !strings.Contains(args, "run with-lease") || !strings.Contains(args, "--lease-file -") || strings.Contains(args, "--worker-id") || strings.Contains(args, "--on-not-ready") {
+							t.Error("incorrect lease command", args)
+						}
+						if item.TimeoutSeconds != 0 || item.CPUMillis != 1000 || item.Image != "ghcr.io/colony-2/base2:latest" || item.Metadata["pulse_job_id"] == "" || item.Process.Env["C2J_EXECUTION_CPU"] != "1000m" || item.Process.Env["C2J_EXECUTION_BASE"] != "ubuntu-26.04-arm64" || item.Process.Env["PULSE_JOB_ID"] == "" || item.Process.Env["PULSE_CONFIG"] != "" {
+							t.Error(item)
+						}
+						results = append(results, map[string]any{"launch_id": item.LaunchID, "status": "accepted"})
+					}
 				}
 				mu.Lock()
-				submitted += len(in.Items)
+				submitted += len(results)
 				mu.Unlock()
 				if isPlugin {
 					json.NewEncoder(w).Encode(results)
@@ -141,6 +170,9 @@ func TestCLIThroughListingAndProviderProtocols(t *testing.T) {
 			if isPlugin {
 				cfg["defaults"] = map[string]any{"platform": "linux/amd64"}
 				cfg["providers"] = map[string]any{"remote": map[string]any{"type": "plugin", "plugin": map[string]any{"command": pluginBinary, "pass_env": []string{"PULSE_TEST_PROVIDER_TOKEN"}, "config": map[string]any{"endpoint": server.URL, "token_env": "PULSE_TEST_PROVIDER_TOKEN"}}}}
+			}
+			if isHTTPPlugin {
+				cfg["providers"] = map[string]any{"remote": map[string]any{"type": "plugin", "plugin": map[string]any{"endpoint": server.URL, "allow_http": true, "token_env": "PULSE_TEST_PROVIDER_TOKEN"}}}
 			}
 			data, _ := yaml.Marshal(cfg)
 			cmd := exec.Command(binary, "run", "--once")

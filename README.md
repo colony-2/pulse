@@ -158,6 +158,6 @@ Lists include queued, starting, and running instances and exclude terminal insta
 
 [Apache-2.0](LICENSE).
 
-## Local provider plugins
+## Provider plugins
 
-Use `type: plugin` to run a trusted, independently installed compute provider. Pulse starts and supervises the executable, delivers only its configuration, and preserves uncertain submission outcomes without replay. See [installation and the public SDK](docs/implementing-a-provider-plugin.md) and the [separate-module reference provider](examples/provider-plugin).
+Use `type: plugin` to start a local compute provider or to call a hosted HTTP provider via `plugin.endpoint`. Both use structured assignments from `pulse-provider-api`. See the [plugin configuration and HTTP contract](docs/implementing-a-provider-plugin.md) and the [separate-module reference provider](examples/provider-plugin).

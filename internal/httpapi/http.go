@@ -13,6 +13,7 @@ import (
 	"time"
 
 	provider "github.com/colony-2/pulse-provider-api"
+	sdk "github.com/colony-2/pulse-provider-api/plugin"
 	"github.com/colony-2/pulse/internal/controller"
 	"github.com/colony-2/pulse/internal/providerutil"
 	"github.com/colony-2/pulse/internal/scheduler"
@@ -71,10 +72,17 @@ func (a *API) Handler() http.Handler {
 		write(w, 200, map[string]any{"status": state, "version": a.Version, "started_at": a.StartedAt, "uptime_seconds": time.Since(a.StartedAt).Seconds(), "providers": len(a.Controller.Providers), "poll": status})
 	})
 	mux.HandleFunc("GET /providers/health", func(w http.ResponseWriter, r *http.Request) {
-		items := []providerplugin.Health{}
+		items := []sdk.Health{}
 		for _, p := range a.Controller.Providers {
-			if h, ok := p.(interface{ Health() providerplugin.Health }); ok {
+			switch h := p.(type) {
+			case interface{ Health() sdk.Health }:
 				items = append(items, h.Health())
+			case interface{ Health() providerplugin.Health }:
+				v := h.Health()
+				items = append(items, sdk.Health{
+					Name: v.Name, Implementation: v.Implementation, Version: v.Version, Protocol: v.Protocol,
+					State: v.State, RestartCount: v.Restarts, Generation: uint64(v.Generation), LastFailure: v.LastFailure,
+				})
 			}
 		}
 		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })

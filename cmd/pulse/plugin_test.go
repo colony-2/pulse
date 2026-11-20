@@ -8,13 +8,14 @@ import (
 	"github.com/colony-2/jobdb/pkg/jobdb/celltest"
 	jobremote "github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
-	"github.com/colony-2/pulse/pkg/compute"
+	provider "github.com/colony-2/pulse-provider-api"
 	"gopkg.in/yaml.v3"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -23,6 +24,9 @@ import (
 )
 
 func TestCLIPluginLifecycle(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the shared process SDK supports Linux")
+	}
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "pulse")
 	plugin := filepath.Join(dir, "provider")
@@ -45,8 +49,10 @@ func TestCLIPluginLifecycle(t *testing.T) {
 		case "/health":
 			initializations.Add(1)
 			json.NewEncoder(w).Encode(map[string]bool{"ready": true})
+		case "/capabilities":
+			json.NewEncoder(w).Encode(provider.Capabilities{})
 		case "/list":
-			json.NewEncoder(w).Encode(compute.ListResponse{Items: []compute.Instance{}})
+			json.NewEncoder(w).Encode(provider.ListResponse{Items: []provider.Instance{}})
 		case "/submit":
 			submissions.Add(1)
 			t.Error("empty JobDB submitted workload")

@@ -1,15 +1,17 @@
 # Instance provider plugins
 
-Pulse can start a trusted local executable as a `type: plugin` compute provider.
-Plugins use HashiCorp go-plugin over automatically authenticated local gRPC.
-The public Go SDK is `github.com/colony-2/pulse/pkg/providerplugin`; compute types
-remain in `pkg/compute`. Existing Docker, cloud, and remote providers are unchanged.
+Use `type: plugin` to connect Pulse to a provider that implements
+[`pulse-provider-api`](https://github.com/colony-2/pulse-provider-api).
+Pulse can start a local provider executable or call a separately hosted HTTP
+endpoint. Both receive the structured launch assignment, including the requested
+base selector, capabilities, JobDB reference, lease, and deadlines. The provider
+resolves the execution environment and constructs the c2j invocation.
 
-## Install and configure
+## Local executable
 
-Install an executable for the **controller's** OS and architecture at an absolute,
-operator-controlled path. Linux and macOS are supported. Pulse does not search
-PATH, invoke a shell, download plugins, or reload configuration while running.
+On Linux, build the executable with the standalone
+[`pulse-provider-api/plugin` SDK](https://github.com/colony-2/pulse-provider-api/tree/27abdc0b7a4a29a84445487deebe3832cdebf8fc/plugin)
+and install it at an absolute, operator-controlled path.
 
 ```yaml
 providers:
@@ -19,7 +21,6 @@ providers:
       command: /opt/pulse/plugins/custom-provider
       args: []
       pass_env: [CUSTOM_TOKEN]
-      # sha256: <64 hexadecimal characters from sha256sum /opt/pulse/plugins/custom-provider>
       start_timeout: 30s
       shutdown_timeout: 5s
       max_concurrent: 4
@@ -28,9 +29,6 @@ providers:
         # This schema belongs to the installed provider.
         endpoint: https://backend.example.com
         token_env: CUSTOM_TOKEN
-
-defaults:
-  platform: linux/amd64
 
 targets:
   - instance_id: production
@@ -41,207 +39,96 @@ targets:
         priority: 1
 ```
 
-`pulse check --config /etc/pulse/pulse.yaml` starts, configures, checks readiness,
-and closes the provider without submitting work. It executes trusted plugin code
-and can perform backend reads. `version` and `--help` are conventions for plugin
-executables; the reference executable implements both.
+`pulse check --config /etc/pulse/pulse.yaml` initializes and closes local
+plugins without submitting jobs. Pulse launches the command directly in a
+private temporary directory. The SDK authenticates the local gRPC transport.
+Use `sha256` to pin the executable's digest when needed. Distroless deployments
+need the plugin executable and any runtime libraries, credential files, and
+writable temporary storage it requires.
 
-An explicit configuration file takes precedence over inline `PULSE_CONFIG`, then
-`pulse.yaml`. Relative provider file references resolve against the configuration
-file's directory. Inline configuration uses the working directory captured when
-Pulse loads it. Each subprocess runs in a different private temporary directory.
-Omitted `plugin.config` is `{}`. It must otherwise be a single mapping of at most
-1 MiB; aliases and duplicate keys are forbidden. Values are literal YAML.
+`plugin.config` is a YAML mapping with a 1 MiB limit and defaults to `{}`.
+Resolve file references from `init.BaseDir`, which is the configuration file's
+directory or the working directory for inline `PULSE_CONFIG`. The subprocess
+only receives variables explicitly selected by `pass_env` plus framework
+variables. The shared SDK reserves `PLUGIN_*`, `PULSE_PLUGIN_*`, and `TMPDIR`.
+Pulse sends `defaults.env` separately in `init.ExecutorEnv`. The factory must apply
+those values to executors or reject initialization. Keep JobDB claim/discovery
+credentials on the controller.
 
-Only variables named in `pass_env` and framework variables reach the process.
-Present values are snapshotted at startup; absent variables are omitted. `HOME`,
-proxy settings, and cloud credential variables require explicit selection. Names
-beginning with `PLUGIN_` or `PULSE_PLUGIN_` are reserved. Provider environment is
-never automatically added to worker environment. Do not forward Pulse's JobDB
-claim/discovery credential. The worker's supplied lease is secret stdin data.
+A Go plugin calls `plugin.Serve` with a factory of type
+`func(context.Context, plugin.Init) (provider.Provider, plugin.Cleanup, error)`.
+Implement `GetCapabilities`, `Submit`, and `List` as described in the
+[Go provider guide](implementing-a-go-provider.md). The factory context bounds
+startup. Use `init.Lifetime` for maintenance and detach accepted native work
+from the process and RPC lifetimes. The
+[reference executable](../examples/provider-plugin) is a separate Go module that
+forwards structured assignments to a test fixture.
 
-Pulse redacts the entire configuration block and argument values in `/config`.
-Subprocess output is discarded. Initialization, listing and lifecycle failures
-use fixed categories. Submission method errors are retained verbatim in
-operator placement logs, alongside per-item Reasons. Authors must keep secrets
-out of their own logs, submission reasons, implementation identity, and instance
-metadata/references.
-Plugin protobuf debug formatting is **not** secret-aware.
+The shared SDK uses protocol 2, the default on Linux. Existing executables built
+with Pulse's `pkg/providerplugin` use protocol 1. Set `plugin.protocol: 1` to
+keep running an existing binary on Linux during migration. macOS continues to
+default to protocol 1 because the shared process SDK supports Linux. The v1
+[protobuf contract](../proto/providerplugin/v1/provider.proto) carries concrete
+image, platform, and process fields.
 
-For a distroless deployment, copy a static executable into a derived Pulse image
-or mount it read-only. Provide its runtime libraries, CA files and credential
-files explicitly, and retain writable temporary storage for local sockets and
-private process directories. No plugin executable is required by deployments
-using built-in providers. Worker images/platforms and controller binaries can
-have different architectures. Plugin workers receive the configured JobDB URL
-without Docker's hostname translation.
+Pulse uses `call_timeout` to bound business calls. On failure, it can make up to
+three replacement attempts, with exponential delay and jitter. After five
+healthy minutes the restart budget resets. Restarting does not replay
+submissions. `GET /providers/health` shows local plugin lifecycle and protocol.
+Pulse redacts executable arguments and plugin configuration in `GET /config`.
 
-## Implement a provider
+## HTTP endpoint
 
-Create a separate module, pin a Pulse release, and import only public packages.
-The [reference module](../examples/provider-plugin) uses a local `replace` solely
-for checkout development. It talks to a deterministic native HTTP fixture; it is
-not a supported production compute backend.
+Configure the service URL and the environment variable holding its bearer token.
+Use the existing target `launch_services` setting to select the provider.
 
-```go
-func main() {
-    providerplugin.Serve(func(ctx context.Context, init providerplugin.Init) (compute.Provider, error) {
-        var settings Settings
-        if err := providerplugin.DecodeConfig(init.ConfigYAML, &settings); err != nil {
-            return nil, err
-        }
-        // Validate required settings, read referenced files through ResolvePath,
-        // initialize credentials, and reconstruct admission accounting.
-        // ctx bounds initialization; init.Lifetime is for background loops.
-        return newProvider(ctx, init.Lifetime, settings)
-    }, providerplugin.ServeOptions{
-        Implementation: "custom-provider",
-        Version: "1.0.0",
-        Shutdown: shutdownBackgroundLoops,
-    })
+```yaml
+providers:
+  hosted:
+    type: plugin
+    plugin:
+      endpoint: https://providers.example.com/compute
+      token_env: COMPUTE_PROVIDER_TOKEN
+```
+
+HTTPS is required unless you explicitly set `allow_http: true`. The endpoint may
+include a path prefix and must omit credentials, query strings, and fragments.
+Pulse sends the bearer token on each request, bounds requests by `call_timeout`,
+limits responses to 16 MiB, and declines redirects. Configure the executor
+environment at the service and leave Pulse's `defaults.env` empty.
+Process settings such as `command`, `pass_env`, and `config` belong to local
+executables.
+
+The HTTP service uses these JSON operations relative to the configured URL.
+
+| Method and path | Request and successful response |
+| --- | --- |
+| `GET /v1/capabilities` | Returns `provider.Capabilities`, including the ordered `bases` and `bases_complete`. |
+| `POST /v1/submit` | Accepts `{"items":[...]}` with `provider.Launch` objects. Returns `{"results":[...]}` with `provider.Submission` objects. |
+| `GET /v1/launches` | Accepts `page_size`, optional `page_token`, and optional exact `launch_id` as query parameters. Returns `provider.ListResponse`. Use `"items":[]` for an empty page. |
+
+For example, a submission response can include definite per-launch results and a
+method error together.
+
+```json
+{
+  "results": [
+    {"launch_id": "launch-1", "status": "accepted"},
+    {"launch_id": "launch-2", "status": "no_capacity", "reason": "all workers busy"}
+  ],
+  "error": "inventory refresh failed after admission"
 }
 ```
 
-`DecodeConfig` uses strict typed YAML decoding, rejects unknown fields and multiple
-documents, and never returns raw parse errors. Validate required fields and
-conflicting credential sources yourself. `ResolvePath(init.BaseDir, reference)`
-resolves file names independently of subprocess working directory. Factories must
-not submit workloads. A process can be configured only once, and business RPCs
-are unavailable until initialization succeeds.
+Use HTTP 200 for responses with authoritative per-launch results, including
+definite declines and results returned alongside an optional `error` string.
+After dispatch, an HTTP failure, timeout, or missing or invalid result leaves
+the affected launch uncertain. Pulse retains its lease and never automatically
+replays the submission or falls back on uncertainty. Only explicit
+`no_capacity`, `unsupported`, or `unavailable` decisions allow fallback.
+Exclude credentials and lease data from reasons, errors, and instance listings.
 
-Implement `Submit(context.Context, []compute.Launch)` and
-`List(context.Context, compute.ListRequest)`. Calls can overlap. Preserve all
-allocation, process, correlation metadata, stdin, and deadline fields. Enforce
-resources, runtime limits and start deadlines or decline before side effects.
-Do not daemonize or leave helper processes behind. Runtime enforcement of accepted
-work must remain independent of the plugin's lifetime.
-
-A `Shutdown` hook stops provider background work and closes provider resources;
-it must not terminate accepted native workloads. Cancellation likewise does not
-mean rollback. The SDK watches a dedicated parent pipe to exit on abrupt host
-loss. Hooks must honor their context and reap any helper children.
-
-## Submission safety
-
-A failed RPC may have launched work. After the host invokes Submit, transport
-loss, deadline expiry, cancellation, and malformed/oversized responses yield
-`unknown`. The scheduler retains the lease and does not fall back. Neither the
-host nor the SDK replays submissions. Native adapters must follow the same rule.
-
-Only `no_capacity`, `unsupported`, and `unavailable` allow fallback. They promise
-that the declined submission cannot subsequently start. Safe application declines
-are successful RPC responses with explicit per-item results, never gRPC errors.
-Local validation failures produce `rejected`; unavailable processes and concurrency
-overload produce `unavailable` before dispatch.
-
-Providers can return results together with a Go error. The SDK preserves valid
-results, supplies a diagnostic code and marks missing items `unknown`. An additive
-optional `provider_error` bytes field retains the original method error separately
-from the results. The host returns that exact error text while preserving
-`errors.Is(err, providerplugin.ErrProtocol)` compatibility. An empty returned error
-is distinct from no error. JSON/text log escaping preserves multiline and quoted
-errors; raw method errors do not enter public provider health. Existing negotiated
-message limits apply: the SDK prioritizes the existing results and captures error
-text in the remaining response space. An oversized error has an explicit
-`[truncated after N bytes; provider error exceeds negotiated response limit]`
-marker. This prevents extra diagnostics from turning an acceptance into transport
-failure. The host retains all text returned by the SDK, including that marker.
-The additive Configure request's `max_message_bytes` advertises the host bound;
-zero retains the legacy server bound. Older plugins that only send
-`diagnostic_code` must be rebuilt with this SDK to supply the original error;
-a host cannot recover text
-an older server discarded. Older hosts ignore the additive field.
-Duplicates, invalid statuses and malformed reasons poison only the affected
-requested ID. Unsolicited IDs produce a diagnostic without erasing independent
-acceptances. Reasons must be safe UTF-8, at most 4 KiB, and contain no NUL/newlines;
-non-accepted statuses require a reason. Enum zero is invalid.
-
-Listing is observational and must return only active managed instances. It must
-preserve original metadata, exact launch filters and opaque pagination, including
-empty pages with a continuation token. Missing instances never authorize replay.
-List failure is an error, not a successful empty page.
-
-## Limits, lifecycle, and compatibility
-
-Protocol major 1 uses the Pulse cookie and `instance_provider` interface; JobDB
-secret providers use a different protocol. Generated code is committed under
-`pkg/providerplugin/proto/v1`; the source is
-[`proto/providerplugin/v1/provider.proto`](../proto/providerplugin/v1/provider.proto).
-The v1 baseline includes finite stdin and start deadlines, without optional flags.
-New execution constraints need explicit feature negotiation or a major version.
-SDK hosts may require optional features using `ProcessConfig.RequiredFeatures`.
-
-Launch batches contain 1–100 items. Each stdin is at most 1 MiB, valid UTF-8 and
-NUL-free. Page sizes are 1–100, cursors at most 16 KiB. Message limits default to
-16 MiB, range from 1 MiB + 1 KiB to 128 MiB, and are fixed on each side at startup.
-The smaller advertised limit applies. An oversized aggregate batch is rejected
-before dispatch, never split. Size limits count serialized protobuf messages;
-memory use is larger because domain and transport copies coexist. A local Linux ARM64 benchmark of four concurrent 15 MiB payload round trips
-allocated about 315 MiB total (allocation volume, not peak resident memory).
-Measure memory under actual concurrency before raising limits; `max_concurrent` defaults to 4
-and accepts 1–1024. Admission has no queue, and lifecycle operations bypass it.
-
-The returned `Process` owns its lifetime independently of the initialization
-context. Always defer `Close()`. Startup respects both the caller deadline and
-`start_timeout`. Business calls are capped by Pulse’s `call_timeout` (two minutes by default),
-or `ProcessConfig.CallTimeout` for SDK hosts. Earlier caller deadlines apply.
-A deadline on one business call does not kill unrelated calls.
-Framework liveness checks are separate from backend readiness/capacity.
-
-After an exit, the old process is reaped before replacement. At most three
-replacement attempts use exponential delays beginning at one second with up to
-25% jitter. Five healthy minutes reset the budget. Exhaustion leaves the provider
-failed until Pulse restarts. Replacements repeat checksum, handshake and Configure
-using the same arguments, selected environment, YAML and base directory snapshot.
-Referenced credential files may change according to provider-specific semantics.
-A restart never replays work or changes native scope.
-
-`GET /providers/health` reports plugin name, implementation/version, protocol,
-state, restart count, generation and a safe last failure category. It reports
-process lifecycle, not backend capacity or job status. Existing `/status` poll
-semantics and `/instances` error behavior remain intact.
-
-The reviewed dependencies are go-plugin 1.8.0, protobuf 1.36.11 and gRPC 1.83.2;
-the latter retains the version required by Pulse's existing cloud dependency
-graph. gRPC application retries are disabled. Transparent retries are allowed
-only where gRPC knows the server application has not processed the request.
-Binary compatibility follows the protocol, not identical SDK/toolchain revisions.
-Upgrade host and plugin independently after conformance testing.
-
-## Test and regenerate
-
-```sh
-go test -race ./pkg/providerplugin/... ./internal/config ./internal/scheduler ./internal/httpapi
-(cd examples/provider-plugin && go test -race ./...)
-go test -race -run TestCLIPluginLifecycle ./cmd/pulse
-make test vet build test-packaging
-# scripts/smoke-container.sh also runs the provider-smoke distroless target.
-```
-
-`plugintest.Check` is reusable against a disposable native scope with an active
-fixture launch. The SDK tests also exercise real subprocess crashes after native
-start, no scheduler fallback or unused-lease release, cancellation, restarts,
-configuration snapshots, overload, checksum failure and abrupt host loss.
-Validate each intended production backend's credentials, native admission,
-resource/deadline enforcement and execution independently before claiming support.
-
-Regenerate using protoc 33.5 and the pinned Go generators:
-
-```sh
-go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
-go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1
-protoc -I proto --go_out=. --go_opt=module=github.com/colony-2/pulse \
-  --go-grpc_out=. --go-grpc_opt=module=github.com/colony-2/pulse \
-  proto/providerplugin/v1/provider.proto
-```
-
-
-Submission responses optionally carry operator observations taken before server
-normalization. The SDK preserves matching original statuses/Reasons, including
-duplicates and text rejected by admission validation, in byte fields separate
-from authoritative results. The host forwards them only to placement diagnostics.
-Results and returned method errors take priority in the negotiated response
-budget; partial original-result capture is explicitly reported. Old SDKs omit
-this additive v1 field, and new hosts report that pre-normalization observations
-are unavailable. Old hosts ignore it. Rebuild plugins to expose previously
-discarded Reasons; validation and accepted/uncertain ownership rules are unchanged.
+Existing `type: remote` services use the
+[process-level remote protocol](../REMOTE_PROVIDER_PROTOCOL.md). HTTP plugin
+services use `job`, `base`, and `lease` on each structured assignment, and
+return typed `job` references in listings.

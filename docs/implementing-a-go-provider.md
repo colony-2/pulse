@@ -116,11 +116,11 @@ job references. They reject nonempty capability requirements because these
 adapters do not currently provision or verify optional interfaces such as Docker
 or KVM inside the executor. Installing a CLI alone does not establish capability.
 
-`pkg/compute` and `pkg/providerplugin` retain the existing process-level v1 wire
-contract for compatibility. Existing remote services and plugin binaries can
-continue to receive concrete image/platform/process requests. They do not receive
-unresolved selectors or new capability claims. Go providers registered directly
-use the standalone API and need neither transport nor the legacy compute types.
+Local plugins using `pulse-provider-api/plugin` and HTTP plugins use the same
+structured contract as registered Go providers. Existing `type: remote` services
+and local plugins configured with `plugin.protocol: 1` still receive concrete
+image, platform, and process requests through the v1 adapters. See the
+[provider plugin guide](implementing-a-provider-plugin.md).
 
 Native resources retain the six previous correlation labels plus `pulse_jobdb`
 (the credential-free executor endpoint). For pre-migration resources missing

@@ -21,6 +21,8 @@ type Client struct {
 	base  *url.URL
 	http  *http.Client
 	Token func() (string, error)
+	// Legacy provider diagnostics include response bodies from trusted services.
+	redactErrorBody bool
 }
 
 func New(endpoint string, client *http.Client, token func() (string, error), allowHTTP bool) (*Client, error) {
@@ -52,7 +54,11 @@ func (c *Client) call(ctx context.Context, method, path string, body any, out an
 	if err != nil {
 		return 0, err
 	}
-	u.Path = strings.TrimRight(u.Path, "/") + relative.Path
+	u.RawPath = strings.TrimRight(u.EscapedPath(), "/") + relative.EscapedPath()
+	u.Path, err = url.PathUnescape(u.RawPath)
+	if err != nil {
+		return 0, err
+	}
 	u.RawQuery = relative.RawQuery
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), bytes.NewReader(data))
 	if err != nil {
@@ -77,6 +83,9 @@ func (c *Client) call(ctx context.Context, method, path string, body any, out an
 		return 0, fmt.Errorf("provider transport failure: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && c.redactErrorBody {
+		return resp.StatusCode, fmt.Errorf("provider returned HTTP %d", resp.StatusCode)
+	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
 	if resp.StatusCode != http.StatusOK {
 		// Keep the provider's returned error body, including partial reads. This
@@ -196,15 +205,8 @@ func (c *Client) List(ctx context.Context, q compute.ListRequest) (compute.ListR
 	if err != nil {
 		return compute.ListResponse{}, err
 	}
-	values := url.Values{"page_size": {fmt.Sprint(q.PageSize)}}
-	if q.PageToken != "" {
-		values.Set("page_token", q.PageToken)
-	}
-	if q.LaunchID != "" {
-		values.Set("launch_id", q.LaunchID)
-	}
 	var out compute.ListResponse
-	_, err = c.call(ctx, "GET", "/v1/launches?"+values.Encode(), nil, &out)
+	_, err = c.call(ctx, "GET", listPath(q.PageSize, q.PageToken, q.LaunchID), nil, &out)
 	if err != nil {
 		return compute.ListResponse{}, err
 	}
@@ -219,4 +221,15 @@ func (c *Client) List(ctx context.Context, q compute.ListRequest) (compute.ListR
 		seen[item.ID] = true
 	}
 	return out, nil
+}
+
+func listPath(pageSize int, pageToken, launchID string) string {
+	values := url.Values{"page_size": {fmt.Sprint(pageSize)}}
+	if pageToken != "" {
+		values.Set("page_token", pageToken)
+	}
+	if launchID != "" {
+		values.Set("launch_id", launchID)
+	}
+	return "/v1/launches?" + values.Encode()
 }
