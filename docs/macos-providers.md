@@ -85,7 +85,7 @@ engine VM sizes are currently fixed at 4 vCPU / 8192 MiB; other sizes are reject
 
 | Field under `config.vz` | Meaning |
 | --- | --- |
-| `home` | VM inventory and cache directory. Defaults to `~/.pulse-vz`. |
+| `home` | VM inventory and cache directory. Defaults to `~/.pulse/vz`. |
 | `runner` | Path to an optional standalone signed VZ runner. Defaults to the Pulse executable. |
 | `command_timeout` | Native command deadline. Defaults to `2m`. |
 | `ssh_timeout` | Guest SSH deadline. Defaults to `15s`. |
@@ -107,6 +107,8 @@ codesign --force --sign - --entitlements cmd/pulse/vz.entitlements ./pulse
 Keep the provider name or explicit `owner_id` and VZ home stable across
 restarts. Running VMs survive Pulse shutdown. The next runtime uses persisted
 VM properties to recover ownership and execution state.
+To keep using an existing inventory from the former default `~/.pulse-vz`,
+set `config.vz.home` to the absolute path of that directory.
 
 ## Runtime behavior and limits
 
@@ -169,5 +171,5 @@ less memory than the VM reservation for worker overhead.
 
 Build contexts, copies, engine-owned volumes, and supported TCP services work
 without host bind mounts. Job workspace bind mounts are unsupported. See the
-[pulse-tart Docker contract](https://github.com/colony-2/pulse-tart/blob/0307afcf2be202b72c5bf4a8e281adefc50f1a76/docs/docker-library.md)
+[pulse-tart Docker contract](https://github.com/colony-2/pulse-tart/blob/12dd1f4bffdedd9ed71fecbb85c5aa3913d6082b/docs/docker-library.md)
 for the tested Docker/Compose behavior and VM lifecycle.
