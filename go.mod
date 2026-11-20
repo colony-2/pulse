@@ -11,9 +11,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.99.0
 	github.com/colony-2/c2j v0.0.129-0.20261115173350-cd211e6aead8
 	github.com/colony-2/jobdb v0.0.86
-	github.com/colony-2/pulse-provider-api v0.0.0-20261105011626-401f11e595a8
+	github.com/colony-2/pulse-provider-api v0.0.0-20261119212001-27abdc0b7a4a
 	github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261119212001-27abdc0b7a4a
-	github.com/colony-2/pulse-tart v0.0.0-20261120043109-15516f696180
+	github.com/colony-2/pulse-tart v0.0.0-20261120182820-0307afcf2be2
 	github.com/distribution/reference v0.6.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0

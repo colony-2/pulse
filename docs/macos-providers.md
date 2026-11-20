@@ -169,5 +169,5 @@ less memory than the VM reservation for worker overhead.
 
 Build contexts, copies, engine-owned volumes, and supported TCP services work
 without host bind mounts. Job workspace bind mounts are unsupported. See the
-[pulse-tart Docker contract](https://github.com/colony-2/pulse-tart/blob/15516f696180d81fb93d2929f15dce9c0f24bf46/docs/docker-library.md)
+[pulse-tart Docker contract](https://github.com/colony-2/pulse-tart/blob/0307afcf2be202b72c5bf4a8e281adefc50f1a76/docs/docker-library.md)
 for the tested Docker/Compose behavior and VM lifecycle.
