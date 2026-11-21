@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	pulsevm "github.com/colony-2/pulse-tart"
+	pulsevm "github.com/colony-2/pulse-macvz"
 	"github.com/colony-2/pulse/internal/c2j"
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/controller"

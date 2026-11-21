@@ -1,7 +1,7 @@
 package pulsecli
 
 import (
-	providercli "github.com/colony-2/pulse-tart/cli"
+	providercli "github.com/colony-2/pulse-macvz/cli"
 	"github.com/spf13/cobra"
 )
 

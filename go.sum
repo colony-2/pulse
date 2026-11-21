@@ -68,12 +68,12 @@ github.com/colony-2/c2j v0.0.129-0.20261115173350-cd211e6aead8 h1:521aimHIkwtPi4
 github.com/colony-2/c2j v0.0.129-0.20261115173350-cd211e6aead8/go.mod h1:k/Q5SSmosfn3af5oRvsa+4t8tIeK3OWmo+FDH+Ywyaw=
 github.com/colony-2/jobdb v0.0.86 h1:R1sl0miyVd9Y6XJjFtb97ifxLzmLqrl6zOUVP23r7iQ=
 github.com/colony-2/jobdb v0.0.86/go.mod h1:45c4NbbKzZt8uRHgWUktOoGhsTkO8ogELlfxdqXJ4Ek=
+github.com/colony-2/pulse-macvz v0.0.0-20261121020254-d16f346fc119 h1:BCW4uY7zswdLj4tFj8Lhx+Zg7PpjK3IlboYhQZm2f8o=
+github.com/colony-2/pulse-macvz v0.0.0-20261121020254-d16f346fc119/go.mod h1:5C7aW3rWt0t0SL2hrxIwz18547qvDvXHUbB3sSzOrrE=
 github.com/colony-2/pulse-provider-api v0.0.0-20261119212001-27abdc0b7a4a h1:JTEp2xMnOKGzRoRVCcmYyVVSEG+ePMgvoFspiLqFvaI=
 github.com/colony-2/pulse-provider-api v0.0.0-20261119212001-27abdc0b7a4a/go.mod h1:k+Xog7z+dE1wxvl9fN4rfsptevZ5ANIH37j0xKZ8YJo=
 github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261119212001-27abdc0b7a4a h1:hC904TmQlA2HQlQhc8Gnxjeq9+srZfOYqxCvhpzQQQ8=
 github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261119212001-27abdc0b7a4a/go.mod h1:x8K4KNcLx+E9nqyCUcaHRyrEVG841yZhAQll6Frq18I=
-github.com/colony-2/pulse-tart v0.0.0-20261120234840-fbe74e1b96ab h1:5i0m2QZf1YM7GdIq7Eov1hpjEfBXXH8kLzNr0QujaJw=
-github.com/colony-2/pulse-tart v0.0.0-20261120234840-fbe74e1b96ab/go.mod h1:3bupwrUxaiaP/Eg0hdRX9+fjP7SRwlBBeUYm+cy4XNI=
 github.com/containerd/stargz-snapshotter/estargz v0.16.3 h1:7evrXtoh1mSbGj/pfRccTampEyKpjpOnS3CyiV1Ebr8=
 github.com/containerd/stargz-snapshotter/estargz v0.16.3/go.mod h1:uyr4BfYfOj3G9WBVE8cOlQmXAbPN9VEQpBBeJIuOipU=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=

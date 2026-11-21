@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
+	pulsevm "github.com/colony-2/pulse-macvz"
 	api "github.com/colony-2/pulse-provider-api"
-	pulsevm "github.com/colony-2/pulse-tart"
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/placement"
 	"github.com/colony-2/pulse/internal/providerutil"
@@ -54,7 +54,7 @@ func macSettings(p config.Provider, baseDir string) (pulsevm.Config, pulsevm.VZC
 	}
 	c.OwnerID = options.OwnerID
 	if c.OwnerID == "" {
-		c.OwnerID = "server" // Match the default in the pulse-tart CLI.
+		c.OwnerID = "server" // Match the default in the pulse-macvz CLI.
 	}
 	c.BootstrapTimeout, err = duration(options.BootstrapTimeout)
 	if err != nil {

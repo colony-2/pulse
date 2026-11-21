@@ -4,7 +4,7 @@ defaults:
 providers:
   mac:
     type: vz
-    # No config is required: pulse-tart supplies its VM and Linux Docker defaults.
+    # No config is required: pulse-macvz supplies its VM and Linux Docker defaults.
     # config:
     #   vm_counts: {macos: 1, linux: 2, total: 2}
 targets:

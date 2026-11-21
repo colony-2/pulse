@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
+	pulsevm "github.com/colony-2/pulse-macvz"
 	api "github.com/colony-2/pulse-provider-api"
-	pulsevm "github.com/colony-2/pulse-tart"
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/providerutil"
 )

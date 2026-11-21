@@ -1,7 +1,7 @@
 # VZ provider
 
 Pulse uses Apple Virtualization.framework through the linked
-[`pulse-tart` Go library](https://github.com/colony-2/pulse-tart). The library
+[`pulse-macvz` Go library](https://github.com/colony-2/pulse-macvz). The library
 manages VM creation, guest bootstrap, lease delivery, capacity, recovery, and
 cleanup.
 
@@ -66,7 +66,7 @@ The provider accepts a strict `config` mapping.
 
 | Field | Meaning |
 | --- | --- |
-| `owner_id` | Stable pool identity. Defaults to `server`, as in the `pulse-tart` CLI. Set distinct IDs for separate pools in the same VZ home. |
+| `owner_id` | Stable pool identity. Defaults to `server`, as in the `pulse-macvz` CLI. Set distinct IDs for separate pools in the same VZ home. |
 | `bootstrap_timeout` | Preparation deadline; default `45m`. |
 | `vm_counts` | Optional `macos`, `linux`, and `total` job limits; omitted values use library conventions. |
 | `bases` | Optional replacement catalog; omitted uses the library’s default macOS and Linux bases. |
@@ -156,11 +156,13 @@ pulse vz setup
 pulse vz upgrade --c2j-version latest
 ```
 
-The commands default to the `server` pool, with macOS Docker opt-in. Settings
-saved in `~/.pulse/provider.json` override those defaults. On these subcommands,
-`--config` selects another provider JSON file. For a custom pool, pass the
-same `--owner`, `--vm-home`, and capacity settings used by Pulse.
-See the [upstream command guide](https://github.com/colony-2/pulse-tart/blob/fbe74e1b96ab69b41c6ce77c2646b1720679c0dd/docs/server-cli.md).
+The commands default to the `server` pool, with macOS Docker opt-in. They read
+saved settings from `~/.pulse/vz/provider.json`. Use `--config` to select
+another file. If only the former `~/.pulse/provider.json` exists, the commands
+load it with a warning and save to the new path after successful maintenance.
+For a custom pool, pass the same `--owner`, `--vm-home`, and capacity settings
+used by Pulse.
+See the [upstream command guide](https://github.com/colony-2/pulse-macvz/blob/d16f346fc119e73ec2b4ebd64a7c6100250dbf09/docs/server-cli.md).
 
 ### KVM in Linux guests
 
@@ -200,5 +202,5 @@ less memory than the VM reservation for worker overhead.
 
 Build contexts, copies, engine-owned volumes, and supported TCP services work
 without host bind mounts. Job workspace bind mounts are unsupported. See the
-[pulse-tart Docker contract](https://github.com/colony-2/pulse-tart/blob/fbe74e1b96ab69b41c6ce77c2646b1720679c0dd/docs/docker-library.md)
+[pulse-macvz Docker contract](https://github.com/colony-2/pulse-macvz/blob/d16f346fc119e73ec2b4ebd64a7c6100250dbf09/docs/docker-library.md)
 for the tested Docker/Compose behavior and VM lifecycle.
