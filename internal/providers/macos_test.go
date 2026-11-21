@@ -126,9 +126,12 @@ func (*macFake) GetCapabilities(context.Context) (api.Capabilities, error) {
 }
 
 func TestMacDefaultsComeFromLibrary(t *testing.T) {
-	c, _, err := macSettings("mac", config.Provider{Type: "vz"}, t.TempDir())
+	c, _, err := macSettings(config.Provider{Type: "vz"}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if c.OwnerID != "server" {
+		t.Fatalf("owner = %q, want server", c.OwnerID)
 	}
 	want, err := pulsevm.ResolveConfig(pulsevm.Config{OwnerID: c.OwnerID})
 	if err != nil {
@@ -156,7 +159,7 @@ func TestMacDockerDefaultsKeepOptIn(t *testing.T) {
 		if enabled {
 			options["docker"] = map[string]any{}
 		}
-		c, _, err := macSettings("mac", config.Provider{Type: "vz", Options: options}, t.TempDir())
+		c, _, err := macSettings(config.Provider{Type: "vz", Options: options}, t.TempDir())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -188,7 +191,7 @@ func TestMacVMCountOverrides(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			c, _, err := macSettings("mac", cfg.Providers["mac"], t.TempDir())
+			c, _, err := macSettings(cfg.Providers["mac"], t.TempDir())
 			if tc.invalid {
 				if err == nil {
 					t.Fatal("invalid override accepted")
@@ -311,14 +314,18 @@ func TestMacDockerSettingsAndCredentials(t *testing.T) {
 	}
 	base := pulsevm.DefaultLinuxBase()
 	p := config.Provider{Type: "vz", Options: map[string]any{
-		"bases":  []any{map[string]any{"name": "custom-linux", "os": "linux", "os_version": "24.04", "image": base.Image, "ssh_username": base.SSHUsername, "ssh_password_env": "ENGINE_PASSWORD", "capabilities": []string{"git"}}},
-		"slots":  []any{map[string]any{"name": "linux", "count": 0, "base": "custom-linux", "docker_profile": "large"}},
-		"docker": map[string]any{"ready_timeout": "20m", "profiles": []any{map[string]any{"name": "large", "ssh_password_env": "ENGINE_PASSWORD", "ssh_host_key_file": "host.pub", "cpu": 4, "memory_mib": 8192, "disk_gib": 64, "engine_version": "29.1.3"}}},
-		"vz":     map[string]any{"runner": "tools/runner", "home": "vm-home", "command_timeout": "2m", "ssh_timeout": "20s", "delivery_timeout": "1m", "docker_endpoint": map[string]any{"address": "192.168.64.1", "port_min": 45200, "port_max": 45210}},
+		"owner_id": "custom-pool",
+		"bases":    []any{map[string]any{"name": "custom-linux", "os": "linux", "os_version": "24.04", "image": base.Image, "ssh_username": base.SSHUsername, "ssh_password_env": "ENGINE_PASSWORD", "capabilities": []string{"git"}}},
+		"slots":    []any{map[string]any{"name": "linux", "count": 0, "base": "custom-linux", "docker_profile": "large"}},
+		"docker":   map[string]any{"ready_timeout": "20m", "profiles": []any{map[string]any{"name": "large", "ssh_password_env": "ENGINE_PASSWORD", "ssh_host_key_file": "host.pub", "cpu": 4, "memory_mib": 8192, "disk_gib": 64, "engine_version": "29.1.3"}}},
+		"vz":       map[string]any{"runner": "tools/runner", "home": "vm-home", "command_timeout": "2m", "ssh_timeout": "20s", "delivery_timeout": "1m", "docker_endpoint": map[string]any{"address": "192.168.64.1", "port_min": 45200, "port_max": 45210}},
 	}}
-	c, local, err := macSettings("mac", p, root)
+	c, local, err := macSettings(p, root)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if c.OwnerID != "custom-pool" {
+		t.Fatalf("owner = %q, want custom-pool", c.OwnerID)
 	}
 	engine := c.Docker.Profiles[0]
 	if len(c.Bases) != 1 || c.Bases[0].Name != "custom-linux" || c.Bases[0].OS != "linux" || c.Bases[0].SSHPassword != "engine-secret" || c.Slots[0].Count != 0 || c.Slots[0].DockerProfile != "large" {
@@ -333,7 +340,7 @@ func TestMacDockerSettingsAndCredentials(t *testing.T) {
 		t.Fatal("local engine transport settings not preserved")
 	}
 	t.Setenv("ENGINE_PASSWORD", "")
-	if _, _, err = macSettings("mac", p, root); err == nil {
+	if _, _, err = macSettings(p, root); err == nil {
 		t.Fatal("empty explicitly configured credential used default login")
 	}
 }

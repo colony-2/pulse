@@ -66,7 +66,7 @@ The provider accepts a strict `config` mapping.
 
 | Field | Meaning |
 | --- | --- |
-| `owner_id` | Stable ownership identity derived from the provider name by default. |
+| `owner_id` | Stable pool identity. Defaults to `server`, as in the `pulse-tart` CLI. Set distinct IDs for separate pools in the same VZ home. |
 | `bootstrap_timeout` | Preparation deadline; default `45m`. |
 | `vm_counts` | Optional `macos`, `linux`, and `total` job limits; omitted values use library conventions. |
 | `bases` | Optional replacement catalog; omitted uses the library’s default macOS and Linux bases. |
@@ -104,9 +104,13 @@ If you build Pulse directly with Go, sign it before running VZ.
 codesign --force --sign - --entitlements cmd/pulse/vz.entitlements ./pulse
 ```
 
-Keep the provider name or explicit `owner_id` and VZ home stable across
-restarts. Running VMs survive Pulse shutdown. The next runtime uses persisted
-VM properties to recover ownership and execution state.
+Keep the `owner_id` and VZ home stable across restarts. Running VMs survive
+Pulse shutdown. The next runtime uses persisted VM properties to recover
+ownership and execution state. To keep a pool created with the previous
+built-in `vz` default, set `config.owner_id` to
+`pulse-vz-9685c81b76accc50694909a`. For a custom provider that used the old
+default, use `pulse-vz-` followed by the first 23 hex digits of the SHA-256 hash
+of its provider name.
 To keep using an existing inventory from the former default `~/.pulse-vz`,
 set `config.vz.home` to the absolute path of that directory.
 
@@ -152,10 +156,10 @@ pulse vz setup
 pulse vz upgrade --c2j-version latest
 ```
 
-The commands use `~/.pulse/provider.json` for their saved settings. On these
-subcommands, `--config` selects another provider JSON file. Their defaults
-target the built-in `vz` pool, with macOS Docker opt-in. For a custom pool,
-pass the same `--owner`, `--vm-home`, and capacity settings used by Pulse.
+The commands default to the `server` pool, with macOS Docker opt-in. Settings
+saved in `~/.pulse/provider.json` override those defaults. On these subcommands,
+`--config` selects another provider JSON file. For a custom pool, pass the
+same `--owner`, `--vm-home`, and capacity settings used by Pulse.
 See the [upstream command guide](https://github.com/colony-2/pulse-tart/blob/fbe74e1b96ab69b41c6ce77c2646b1720679c0dd/docs/server-cli.md).
 
 ### KVM in Linux guests

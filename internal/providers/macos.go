@@ -2,7 +2,6 @@ package providers
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -24,12 +23,7 @@ type macRuntime interface {
 	Close() error
 }
 
-// DefaultVZOwnerID returns the stable ownership ID for a named Pulse provider.
-func DefaultVZOwnerID(name string) string {
-	return fmt.Sprintf("pulse-vz-%x", sha256.Sum256([]byte(name)))[:32]
-}
-
-func macSettings(name string, p config.Provider, baseDir string) (pulsevm.Config, pulsevm.VZConfig, error) {
+func macSettings(p config.Provider, baseDir string) (pulsevm.Config, pulsevm.VZConfig, error) {
 	var c pulsevm.Config
 	var local pulsevm.VZConfig
 	options, err := config.MacOSOptions(p)
@@ -60,7 +54,7 @@ func macSettings(name string, p config.Provider, baseDir string) (pulsevm.Config
 	}
 	c.OwnerID = options.OwnerID
 	if c.OwnerID == "" {
-		c.OwnerID = DefaultVZOwnerID(name)
+		c.OwnerID = "server" // Match the default in the pulse-tart CLI.
 	}
 	c.BootstrapTimeout, err = duration(options.BootstrapTimeout)
 	if err != nil {
@@ -172,7 +166,7 @@ func macSettings(name string, p config.Provider, baseDir string) (pulsevm.Config
 }
 
 func buildMac(ctx context.Context, name string, p config.Provider, cfg *config.Config) (api.Provider, func(), error) {
-	c, local, err := macSettings(name, p, cfg.BaseDir)
+	c, local, err := macSettings(p, cfg.BaseDir)
 	if err != nil {
 		return nil, nil, err
 	}

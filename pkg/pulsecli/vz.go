@@ -2,7 +2,6 @@ package pulsecli
 
 import (
 	providercli "github.com/colony-2/pulse-tart/cli"
-	"github.com/colony-2/pulse/internal/providers"
 	"github.com/spf13/cobra"
 )
 
@@ -10,7 +9,6 @@ func newVZCommand() *cobra.Command {
 	vzCmd := &cobra.Command{Use: "vz", Short: "Manage local VZ capacity"}
 	setup, upgrade := providercli.NewSetupCommand(), providercli.NewUpgradeCommand()
 	for _, cmd := range []*cobra.Command{setup, upgrade} {
-		setVZCommandDefault(cmd, "owner", providers.DefaultVZOwnerID(vzCmd.Name()))
 		setVZCommandDefault(cmd, "macos-docker-capacity", "0")
 	}
 	vzCmd.AddCommand(setup, upgrade)

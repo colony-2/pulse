@@ -1,10 +1,6 @@
 package pulsecli
 
-import (
-	"testing"
-
-	"github.com/colony-2/pulse/internal/providers"
-)
+import "testing"
 
 func TestVZManagementDefaults(t *testing.T) {
 	root := NewCommand("test")
@@ -14,7 +10,7 @@ func TestVZManagementDefaults(t *testing.T) {
 			t.Fatalf("find vz %s: %v", name, err)
 		}
 		for flagName, want := range map[string]string{
-			"owner":                 providers.DefaultVZOwnerID("vz"),
+			"owner":                 "server",
 			"macos-docker-capacity": "0",
 		} {
 			flag := cmd.Flags().Lookup(flagName)
