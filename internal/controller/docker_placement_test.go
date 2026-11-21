@@ -26,11 +26,11 @@ func (p *maintainedDocker) Maintain(ctx context.Context) error {
 	p.maintained = true
 	return errors.New("maintenance-test-deferred")
 }
-func (p *maintainedDocker) Submit(ctx context.Context, launches []api.Launch) ([]api.Submission, error) {
+func (p *maintainedDocker) Submit(ctx context.Context, launches []api.Launch, options api.SubmitOptions) ([]api.Submission, api.LogSubscription, error) {
 	if !p.maintained {
 		p.t.Error("maintenance did not precede wrapped submission")
 	}
-	return p.diagnosticProvider.Submit(ctx, launches)
+	return p.diagnosticProvider.Submit(ctx, launches, options)
 }
 
 func TestDockerPlacementAndMaintenance(t *testing.T) {

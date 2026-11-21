@@ -216,7 +216,7 @@ targets: [{instance_id: original, jobdb: %q, launch_services: [{name: docker, pr
 		t.Fatalf("historical public listing: %+v %v", page, err)
 	}
 	launch := api.Launch{LaunchID: id + "-new", Allocation: api.Allocation{Base: "ubuntu-26.04-" + strings.TrimPrefix(platform, "linux/")}, Job: api.JobRef{JobDB: target, InstanceID: "original", TenantID: "upgrade", JobID: "new"}, Lease: "synthetic-unused-lease"}
-	results, err := p.Submit(ctx, []api.Launch{launch})
+	results, _, err := p.Submit(ctx, []api.Launch{launch}, api.SubmitOptions{})
 	if err != nil || len(results) != 1 || results[0].Status != api.NoCapacity {
 		t.Fatal("historical occupied capacity lost", results, err)
 	}

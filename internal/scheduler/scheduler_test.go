@@ -17,20 +17,21 @@ type fake struct {
 	submit func([]compute.Launch) ([]compute.Submission, error)
 }
 
-func (f *fake) Submit(_ context.Context, ls []compute.Launch) ([]compute.Submission, error) {
+func (f *fake) Submit(_ context.Context, ls []compute.Launch, _ compute.SubmitOptions) ([]compute.Submission, compute.LogSubscription, error) {
 	ids := []string{f.name}
 	for _, l := range ls {
 		ids = append(ids, l.Job.JobID)
 	}
 	*f.calls = append(*f.calls, ids)
 	if f.submit != nil {
-		return f.submit(ls)
+		out, err := f.submit(ls)
+		return out, nil, err
 	}
 	out := []compute.Submission{}
 	for _, l := range ls {
 		out = append(out, compute.Submission{LaunchID: l.LaunchID, Status: compute.Accepted})
 	}
-	return out, nil
+	return out, nil, nil
 }
 func jobs(n int) []Job {
 	out := []Job{}
@@ -130,13 +131,13 @@ type blocking struct {
 	once    sync.Once
 }
 
-func (b *blocking) Submit(ctx context.Context, r []compute.Launch) ([]compute.Submission, error) {
+func (b *blocking) Submit(ctx context.Context, r []compute.Launch, _ compute.SubmitOptions) ([]compute.Submission, compute.LogSubscription, error) {
 	b.once.Do(func() { close(b.entered) })
 	select {
 	case <-b.release:
 	case <-ctx.Done():
 	}
-	return nil, errors.New("stop")
+	return nil, nil, errors.New("stop")
 }
 func TestInFlightExclusion(t *testing.T) {
 	s := New(time.Minute, time.Second)

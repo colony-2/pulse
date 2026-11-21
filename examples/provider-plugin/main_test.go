@@ -77,7 +77,7 @@ func TestIndependentExecutable(t *testing.T) {
 	if err != nil || !caps.BasesComplete || len(caps.Bases) != 1 || caps.Bases[0].Name != "ubuntu-26.04-arm64" {
 		t.Fatal(caps, err)
 	}
-	results, err := p.Submit(ctx, []api.Launch{l})
+	results, _, err := p.Submit(ctx, []api.Launch{l}, api.SubmitOptions{})
 	if err != nil || !reflect.DeepEqual(results, []api.Submission{{LaunchID: l.LaunchID, Status: api.Accepted}}) {
 		t.Fatal(results, err)
 	}

@@ -1,9 +1,9 @@
 github.com/bufbuild/protocompile v0.4.0 h1:LbFKd2XowZvQ/kajzguUp2DC9UEIQhIq77fZZlaQsNA=
 github.com/bufbuild/protocompile v0.4.0/go.mod h1:3v93+mbWn/v3xzN+31nwkJfrEpAUwp+BagBSZWx+TP8=
-github.com/colony-2/pulse-provider-api v0.0.0-20261105011626-401f11e595a8 h1:pxBcBhAe/+SuTorfX6L8ia4k/lYx6bqF+n5jYRcyo2U=
-github.com/colony-2/pulse-provider-api v0.0.0-20261105011626-401f11e595a8/go.mod h1:k+Xog7z+dE1wxvl9fN4rfsptevZ5ANIH37j0xKZ8YJo=
-github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261119212001-27abdc0b7a4a h1:hC904TmQlA2HQlQhc8Gnxjeq9+srZfOYqxCvhpzQQQ8=
-github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261119212001-27abdc0b7a4a/go.mod h1:x8K4KNcLx+E9nqyCUcaHRyrEVG841yZhAQll6Frq18I=
+github.com/colony-2/pulse-provider-api v0.0.0-20261120061856-2919f1ed5e42 h1:wDYUQN3kKS/sU2lobaNVMNcNJtX1Ipv/P0PWCoXzqtA=
+github.com/colony-2/pulse-provider-api v0.0.0-20261120061856-2919f1ed5e42/go.mod h1:k+Xog7z+dE1wxvl9fN4rfsptevZ5ANIH37j0xKZ8YJo=
+github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261120061856-2919f1ed5e42 h1:LSZYMahezkuDWArt6s9B4c8vNE5WRMBM6uz8xd/k4Es=
+github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261120061856-2919f1ed5e42/go.mod h1:x8K4KNcLx+E9nqyCUcaHRyrEVG841yZhAQll6Frq18I=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=

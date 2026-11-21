@@ -40,7 +40,15 @@ type Process struct{ *sdk.Process }
 var _ provider.Provider = (*Process)(nil)
 
 func (p *Process) SubmitWithDiagnostics(ctx context.Context, launches []provider.Launch) ([]provider.Submission, map[string]placement.SubmissionDetail, error) {
-	results, observations, err := p.SubmitDetailed(ctx, launches)
+	return submitWithDiagnostics(ctx, p, launches)
+}
+
+type detailedProvider interface {
+	SubmitDetailed(context.Context, []provider.Launch, provider.SubmitOptions) ([]provider.Submission, sdk.SubmissionObservations, provider.LogSubscription, error)
+}
+
+func submitWithDiagnostics(ctx context.Context, p detailedProvider, launches []provider.Launch) ([]provider.Submission, map[string]placement.SubmissionDetail, error) {
+	results, observations, _, err := p.SubmitDetailed(ctx, launches, provider.SubmitOptions{})
 	methodError := placement.Error(err)
 	if observations.MethodError.Present {
 		message := observations.MethodError.Text

@@ -11,12 +11,14 @@ var _ provider.Provider = (*Provider)(nil)
 
 // Implement:
 // GetCapabilities(context.Context) (provider.Capabilities, error)
-// Submit(context.Context, []provider.Launch) ([]provider.Submission, error)
+// Submit(context.Context, []provider.Launch, provider.SubmitOptions) ([]provider.Submission, provider.LogSubscription, error)
 // List(context.Context, provider.ListRequest) (provider.ListResponse, error)
 ```
 
 A launch includes allocation requirements (`Base`, `Capabilities`, CPU, memory,
 scratch), a typed `JobRef`, an opaque exported `Lease`, and optional deadlines.
+Pulse submits with empty `SubmitOptions`. Return a nil subscription when the
+caller supplies no listener.
 The provider owns executor startup, supplies the exact lease to c2j, and reports
 verified execution allocation facts. It must not claim replacement work. Keep
 credentials out of diagnostics, argv, the child environment, and instance lists.

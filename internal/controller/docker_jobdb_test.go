@@ -30,7 +30,7 @@ func TestDockerJobDBEndpoint(t *testing.T) {
 			var logs bytes.Buffer
 			p := dockerJobDBEndpoint(tt.kind, sink, tt.source, slog.New(slog.NewTextHandler(&logs, nil)))
 			ls := []provider.Launch{{LaunchID: "launch", Job: provider.JobRef{JobDB: tt.source, InstanceID: "db", TenantID: "c2", JobID: "job"}, Lease: "private-lease"}}
-			_, err := p.Submit(context.Background(), ls)
+			_, _, err := p.Submit(context.Background(), ls, provider.SubmitOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -45,7 +45,7 @@ func TestDockerJobDBEndpoint(t *testing.T) {
 			}
 			other := ls[0]
 			other.Job.JobDB = "http://other.example/c2"
-			_, err = p.Submit(context.Background(), []provider.Launch{other})
+			_, _, err = p.Submit(context.Background(), []provider.Launch{other}, provider.SubmitOptions{})
 			if err != nil || sink.requests[1].Job.JobDB != other.Job.JobDB {
 				t.Fatal("rewrote another target")
 			}

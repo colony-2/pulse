@@ -208,9 +208,9 @@ func (p *macProvider) List(ctx context.Context, q api.ListRequest) (api.ListResp
 func (p *macProvider) GetCapabilities(ctx context.Context) (api.Capabilities, error) {
 	return p.runtime.GetCapabilities(ctx)
 }
-func (p *macProvider) Submit(ctx context.Context, launches []api.Launch) ([]api.Submission, error) {
+func (p *macProvider) Submit(ctx context.Context, launches []api.Launch, _ api.SubmitOptions) ([]api.Submission, api.LogSubscription, error) {
 	out, _, err := p.SubmitWithDiagnostics(ctx, launches)
-	return out, err
+	return out, nil, err
 }
 
 func (p *macProvider) SubmitWithDiagnostics(ctx context.Context, launches []api.Launch) ([]api.Submission, map[string]placement.SubmissionDetail, error) {
@@ -236,7 +236,7 @@ func (p *macProvider) SubmitWithDiagnostics(ctx context.Context, launches []api.
 			out = append(out, result)
 			continue
 		}
-		responses, err := p.runtime.Submit(ctx, []api.Launch{launch})
+		responses, _, err := p.runtime.Submit(ctx, []api.Launch{launch}, api.SubmitOptions{})
 		detail := placement.SubmissionDetail{OriginalResults: []api.Submission{}, Error: placement.Error(err)}
 		for _, response := range responses {
 			if response.LaunchID == launch.LaunchID {

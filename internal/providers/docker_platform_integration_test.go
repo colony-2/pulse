@@ -78,7 +78,7 @@ targets: [{jobdb: 'http://localhost/platform-test', launch_services: [{name: doc
 		t.Fatal("failed execution advertised")
 	}
 	id := fmt.Sprintf("pulse-unsupported-%d", time.Now().UnixNano())
-	results, err := p.Submit(ctx, []api.Launch{{LaunchID: id, Allocation: api.Allocation{Base: base}, Job: api.JobRef{JobDB: "http://localhost/platform-test", InstanceID: "test", TenantID: "platform-test", JobID: "job"}, Lease: "synthetic-unused-lease"}})
+	results, _, err := p.Submit(ctx, []api.Launch{{LaunchID: id, Allocation: api.Allocation{Base: base}, Job: api.JobRef{JobDB: "http://localhost/platform-test", InstanceID: "test", TenantID: "platform-test", JobID: "job"}, Lease: "synthetic-unused-lease"}}, api.SubmitOptions{})
 	if err != nil || len(results) != 1 || results[0].Status != api.Unsupported {
 		t.Fatal("unsupported platform did not decline", results, err)
 	}

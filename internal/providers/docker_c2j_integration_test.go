@@ -36,7 +36,7 @@ const c2jIntegrationImage = "ghcr.io/colony-2/base2:latest"
 // harness or a binary copied out of the module cache. It deliberately runs in
 // ordinary go test ./..., on both Docker Desktop and local Linux daemons.
 func TestDockerC2JIntegration(t *testing.T) {
-	runDockerC2J(t, "linux/arm64", []string{"success and heartbeat", "peer connectivity", "host gateway connectivity", "localhost JobDB", "recipe failure", "recipe timeout", "lease import transport failure", "heartbeat transport failure"})
+	runDockerC2J(t, "linux/arm64", []string{"success and heartbeat", "peer connectivity", "host gateway connectivity", "localhost JobDB", "reverse provider", "recipe failure", "recipe timeout", "lease import transport failure", "heartbeat transport failure"})
 }
 
 func runDockerC2J(t *testing.T, platform string, scenarios []string) {
@@ -199,7 +199,11 @@ func runDockerC2J(t *testing.T, platform string, scenarios []string) {
 					}
 				}
 			})
-			out, err = cmd.CombinedOutput()
+			if scenario == "reverse provider" {
+				out, err = runReverseDockerOnce(t, ctx, jobDB, f.url+"/docker-test", socket)
+			} else {
+				out, err = cmd.CombinedOutput()
+			}
 			if err != nil {
 				t.Fatalf("Pulse: %v\n%s", err, out)
 			}
@@ -225,7 +229,7 @@ func runDockerC2J(t *testing.T, platform string, scenarios []string) {
 				t.Fatal("executor continued after losing authority")
 			}
 			switch scenario {
-			case "success and heartbeat", "peer connectivity", "host gateway connectivity", "localhost JobDB":
+			case "success and heartbeat", "peer connectivity", "host gateway connectivity", "localhost JobDB", "reverse provider":
 				minimumRenewals := int32(2) // Import and runner validation.
 				if scenario == "success and heartbeat" {
 					minimumRenewals = 3 // Also require a background renewal.

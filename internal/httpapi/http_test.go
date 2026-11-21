@@ -26,7 +26,7 @@ type fakeProvider struct {
 	list func(context.Context, compute.ListRequest) (compute.ListResponse, error)
 }
 
-func (p fakeProvider) Submit(context.Context, []compute.Launch) ([]compute.Submission, error) {
+func (p fakeProvider) Submit(context.Context, []compute.Launch, compute.SubmitOptions) ([]compute.Submission, compute.LogSubscription, error) {
 	panic("read-only endpoint submitted work")
 }
 func (p fakeProvider) List(ctx context.Context, q compute.ListRequest) (compute.ListResponse, error) {
@@ -188,9 +188,9 @@ type placementProvider struct {
 	submissions int
 }
 
-func (p *placementProvider) Submit(_ context.Context, ls []compute.Launch) ([]compute.Submission, error) {
+func (p *placementProvider) Submit(_ context.Context, ls []compute.Launch, _ compute.SubmitOptions) ([]compute.Submission, compute.LogSubscription, error) {
 	p.submissions++
-	return []compute.Submission{{LaunchID: ls[0].LaunchID, Status: compute.NoCapacity, Reason: "operator-only-reason-sentinel"}}, errors.New("operator-only-error-sentinel")
+	return []compute.Submission{{LaunchID: ls[0].LaunchID, Status: compute.NoCapacity, Reason: "operator-only-reason-sentinel"}}, nil, errors.New("operator-only-error-sentinel")
 }
 func TestPlacementErrorsStayInOperatorDiagnostics(t *testing.T) {
 	lists := 0

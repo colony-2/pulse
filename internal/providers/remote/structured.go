@@ -39,9 +39,9 @@ func (p *Structured) GetCapabilities(ctx context.Context) (provider.Capabilities
 	return *out, nil
 }
 
-func (p *Structured) Submit(ctx context.Context, launches []provider.Launch) ([]provider.Submission, error) {
+func (p *Structured) Submit(ctx context.Context, launches []provider.Launch, _ provider.SubmitOptions) ([]provider.Submission, provider.LogSubscription, error) {
 	if err := providerutil.Launches(launches); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	request := struct {
 		Items []provider.Launch `json:"items"`
@@ -51,7 +51,7 @@ func (p *Structured) Submit(ctx context.Context, launches []provider.Launch) ([]
 		Error   json.RawMessage   `json:"error"`
 	}
 	if _, err := p.client.call(ctx, http.MethodPost, "/v1/submit", request, &response); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var methodErr error
 	malformed := response.Results == nil
@@ -76,7 +76,7 @@ func (p *Structured) Submit(ctx context.Context, launches []provider.Launch) ([]
 	if malformed {
 		methodErr = errors.Join(methodErr, errors.New("invalid provider submission response"))
 	}
-	return results, methodErr
+	return results, nil, methodErr
 }
 
 func (p *Structured) List(ctx context.Context, q provider.ListRequest) (provider.ListResponse, error) {

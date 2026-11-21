@@ -56,7 +56,7 @@ func TestStructuredHTTPProvider(t *testing.T) {
 	if out, err := p.GetCapabilities(t.Context()); err != nil || !reflect.DeepEqual(out, capabilities) {
 		t.Fatal(out, err)
 	}
-	if out, err := p.Submit(t.Context(), []provider.Launch{launch}); err == nil || err.Error() != "inventory read failed" || !reflect.DeepEqual(out, []provider.Submission{{LaunchID: launch.LaunchID, Status: provider.Accepted}}) {
+	if out, _, err := p.Submit(t.Context(), []provider.Launch{launch}, provider.SubmitOptions{}); err == nil || err.Error() != "inventory read failed" || !reflect.DeepEqual(out, []provider.Submission{{LaunchID: launch.LaunchID, Status: provider.Accepted}}) {
 		t.Fatal(out, err)
 	}
 	if out, err := p.List(t.Context(), provider.ListRequest{LaunchID: launch.LaunchID, PageToken: "+/=&%", PageSize: 1}); err != nil || !reflect.DeepEqual(out, provider.ListResponse{Items: []provider.Instance{instance}, NextPageToken: "next"}) {
@@ -77,10 +77,10 @@ func TestStructuredHTTPSubmitDoesNotFollowRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := p.Submit(t.Context(), []provider.Launch{{
+	out, _, err := p.Submit(t.Context(), []provider.Launch{{
 		LaunchID: "launch", Lease: "opaque-lease", Allocation: provider.Allocation{Base: "*"},
 		Job: provider.JobRef{JobDB: "https://db.example/acme", InstanceID: "db", TenantID: "acme", JobID: "job"},
-	}})
+	}}, provider.SubmitOptions{})
 	if len(out) != 0 || err == nil || strings.Contains(err.Error(), "credential-in-response") || calls.Load() != 1 {
 		t.Fatal(out, err, calls.Load())
 	}

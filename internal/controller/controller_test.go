@@ -39,14 +39,14 @@ type accept struct {
 	requests   []compute.Launch
 }
 
-func (p *accept) Submit(_ context.Context, ls []compute.Launch) ([]compute.Submission, error) {
+func (p *accept) Submit(_ context.Context, ls []compute.Launch, _ compute.SubmitOptions) ([]compute.Submission, compute.LogSubscription, error) {
 	p.batchSizes = append(p.batchSizes, len(ls))
 	out := []compute.Submission{}
 	for _, l := range ls {
 		p.requests = append(p.requests, l)
 		out = append(out, compute.Submission{LaunchID: l.LaunchID, Status: compute.Accepted})
 	}
-	return out, nil
+	return out, nil, nil
 }
 func TestTenantIsolationPaginationAndLeaseOwnership(t *testing.T) {
 	p := &accept{}

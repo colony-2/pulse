@@ -34,7 +34,7 @@ func TestResolveAndDeliverLeaseWithoutMutatingAssignment(t *testing.T) {
 	p := &Provider{Native: b, Env: map[string]string{"LITERAL": "${no-expansion}"}}
 	l := assignment("a")
 	before := l
-	out, err := p.Submit(t.Context(), []provider.Launch{l})
+	out, _, err := p.Submit(t.Context(), []provider.Launch{l}, provider.SubmitOptions{})
 	if err != nil || len(out) != 1 || out[0].Status != provider.Accepted || len(b.launches) != 1 {
 		t.Fatal(out, err)
 	}
@@ -86,7 +86,7 @@ func TestMixedDeclinesAndUncertainty(t *testing.T) {
 	caps.Capabilities = []string{"docker"}
 	ok := assignment("ok")
 	ok.Base = "ubuntu*"
-	out, err := p.Submit(t.Context(), []provider.Launch{noArch, caps, ok})
+	out, _, err := p.Submit(t.Context(), []provider.Launch{noArch, caps, ok}, provider.SubmitOptions{})
 	if err == nil || len(out) != 3 || len(b.launches) != 1 || b.launches[0].LaunchID != "ok" || b.launches[0].Platform != "linux/amd64" {
 		t.Fatal(out, err)
 	}
@@ -98,11 +98,11 @@ func TestInvalidBatchHasNoNativeSideEffects(t *testing.T) {
 	b := &backend{}
 	p := &Provider{Native: b}
 	l := assignment("same")
-	if _, err := p.Submit(t.Context(), []provider.Launch{l, l}); err == nil || len(b.launches) != 0 {
+	if _, _, err := p.Submit(t.Context(), []provider.Launch{l, l}, provider.SubmitOptions{}); err == nil || len(b.launches) != 0 {
 		t.Fatal("duplicate batch processed")
 	}
 	l.Job.JobDB = "https://user:secret@db/tenant"
-	if _, err := p.Submit(t.Context(), []provider.Launch{l}); err == nil || len(b.launches) != 0 {
+	if _, _, err := p.Submit(t.Context(), []provider.Launch{l}, provider.SubmitOptions{}); err == nil || len(b.launches) != 0 {
 		t.Fatal("credential-bearing endpoint accepted")
 	}
 }
@@ -154,7 +154,7 @@ func TestCapabilitiesAndResolutionPreferNativePlatform(t *testing.T) {
 			}
 			l := assignment("native")
 			l.Base = bases.Default
-			if _, err = p.Submit(t.Context(), []provider.Launch{l}); err != nil {
+			if _, _, err = p.Submit(t.Context(), []provider.Launch{l}, provider.SubmitOptions{}); err != nil {
 				t.Fatal(err)
 			}
 			if len(b.launches) != 1 || b.launches[0].Platform != native || b.launches[0].Process.Env["C2J_EXECUTION_BASE"] != caps.Bases[0].Name {
@@ -162,7 +162,7 @@ func TestCapabilitiesAndResolutionPreferNativePlatform(t *testing.T) {
 			}
 			// An explicit request must still override the preference.
 			l.Base = caps.Bases[1].Name
-			if _, err = p.Submit(t.Context(), []provider.Launch{l}); err != nil {
+			if _, _, err = p.Submit(t.Context(), []provider.Launch{l}, provider.SubmitOptions{}); err != nil {
 				t.Fatal(err)
 			}
 			if b.launches[1].Platform != alternate {

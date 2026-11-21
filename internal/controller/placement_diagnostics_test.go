@@ -44,13 +44,13 @@ type diagnosticProvider struct {
 func (p *diagnosticProvider) GetCapabilities(context.Context) (api.Capabilities, error) {
 	return api.Capabilities{}, p.discoveryErr
 }
-func (p *diagnosticProvider) Submit(ctx context.Context, ls []api.Launch) ([]api.Submission, error) {
-	out, _ := p.accept.Submit(ctx, ls)
+func (p *diagnosticProvider) Submit(ctx context.Context, ls []api.Launch, _ api.SubmitOptions) ([]api.Submission, api.LogSubscription, error) {
+	out, _, _ := p.accept.Submit(ctx, ls, api.SubmitOptions{})
 	for i := range out {
 		out[i].Status = p.status
 		out[i].Reason = p.reason
 	}
-	return out, p.err
+	return out, nil, p.err
 }
 
 type launchDiagnostic struct {

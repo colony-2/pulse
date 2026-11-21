@@ -28,10 +28,10 @@ type macFake struct {
 	invalid   bool
 }
 
-func (f *macFake) Submit(_ context.Context, ls []api.Launch) ([]api.Submission, error) {
+func (f *macFake) Submit(_ context.Context, ls []api.Launch, _ api.SubmitOptions) ([]api.Submission, api.LogSubscription, error) {
 	f.calls = append(f.calls, ls...)
 	if f.invalid {
-		return nil, errors.New("uncertain")
+		return nil, nil, errors.New("uncertain")
 	}
 	status := api.Accepted
 	if len(f.outcomes) > 0 {
@@ -41,7 +41,7 @@ func (f *macFake) Submit(_ context.Context, ls []api.Launch) ([]api.Submission, 
 	if status != api.Accepted {
 		r.Reason = "test outcome"
 	}
-	return []api.Submission{r}, nil
+	return []api.Submission{r}, nil, nil
 }
 func (f *macFake) List(context.Context, api.ListRequest) (api.ListResponse, error) {
 	return api.ListResponse{Items: []api.Instance{}}, nil
@@ -72,7 +72,7 @@ func TestMacForwardsSelectorsAndAssignments(t *testing.T) {
 			p := &macProvider{runtime: f}
 			launch := macLaunch(tc.base)
 			launch.Capabilities = []string{"docker", "git"}
-			out, _ := p.Submit(t.Context(), []api.Launch{launch})
+			out, _, _ := p.Submit(t.Context(), []api.Launch{launch}, api.SubmitOptions{})
 			if len(out) != 1 || out[0].Status != tc.status || len(f.calls) != 1 {
 				t.Fatal(out, f.calls)
 			}
@@ -83,12 +83,12 @@ func TestMacForwardsSelectorsAndAssignments(t *testing.T) {
 	}
 	f := &macFake{}
 	p := &macProvider{runtime: f, envUnsupported: true}
-	out, err := p.Submit(t.Context(), []api.Launch{macLaunch("macos*")})
+	out, _, err := p.Submit(t.Context(), []api.Launch{macLaunch("macos*")}, api.SubmitOptions{})
 	if err != nil || out[0].Status != api.Unsupported || len(f.calls) != 0 {
 		t.Fatal("environment ignored", out, err)
 	}
 	launch := macLaunch("macos*")
-	if _, err = p.Submit(t.Context(), []api.Launch{launch, launch}); err == nil {
+	if _, _, err = p.Submit(t.Context(), []api.Launch{launch, launch}, api.SubmitOptions{}); err == nil {
 		t.Fatal("duplicate batch accepted")
 	}
 }
@@ -109,7 +109,7 @@ func TestMacMaintenanceOutlivesCallAndStopsOnClose(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("reconciliation did not start")
 	}
-	out, err := p.Submit(t.Context(), []api.Launch{macLaunch("macos*")})
+	out, _, err := p.Submit(t.Context(), []api.Launch{macLaunch("macos*")}, api.SubmitOptions{})
 	if err != nil || out[0].Status != api.NoCapacity || len(f.calls) != 0 {
 		t.Fatal("lease queued behind cold preparation", out, err)
 	}
@@ -382,9 +382,10 @@ type macDiagnosticRuntime struct {
 	submit func([]api.Launch) ([]api.Submission, error)
 }
 
-func (f *macDiagnosticRuntime) Submit(_ context.Context, ls []api.Launch) ([]api.Submission, error) {
+func (f *macDiagnosticRuntime) Submit(_ context.Context, ls []api.Launch, _ api.SubmitOptions) ([]api.Submission, api.LogSubscription, error) {
 	f.calls = append(f.calls, ls...)
-	return f.submit(ls)
+	out, err := f.submit(ls)
+	return out, nil, err
 }
 func TestMacDiagnosticErrorsAndOriginalReasons(t *testing.T) {
 	for _, malformed := range []bool{false, true} {

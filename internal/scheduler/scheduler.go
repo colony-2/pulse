@@ -240,7 +240,7 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 			}); ok {
 				submitted, details, submitErr = detailed.SubmitWithDiagnostics(c, launches)
 			} else {
-				submitted, submitErr = p.Provider.Submit(c, launches)
+				submitted, _, submitErr = p.Provider.Submit(c, launches, provider.SubmitOptions{})
 			}
 			cancel()
 			subs := map[string]provider.Submission{}

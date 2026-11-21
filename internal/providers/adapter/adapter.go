@@ -44,8 +44,9 @@ func (p *Provider) GetCapabilities(ctx context.Context) (provider.Capabilities, 
 func Metadata(l provider.Launch) map[string]string {
 	return map[string]string{"pulse_metadata_version": "1", "pulse_managed_by": "pulse", "pulse_jobdb_instance_id": l.Job.InstanceID, "pulse_tenant_id": l.Job.TenantID, "pulse_job_id": l.Job.JobID, "pulse_launch_id": l.LaunchID, "pulse_jobdb": l.Job.JobDB}
 }
-func (p *Provider) Submit(ctx context.Context, launches []provider.Launch) ([]provider.Submission, error) {
-	return p.submit(ctx, launches, nil)
+func (p *Provider) Submit(ctx context.Context, launches []provider.Launch, _ provider.SubmitOptions) ([]provider.Submission, provider.LogSubscription, error) {
+	out, err := p.submit(ctx, launches, nil)
+	return out, nil, err
 }
 
 func (p *Provider) SubmitWithDiagnostics(ctx context.Context, launches []provider.Launch) ([]provider.Submission, map[string]placement.SubmissionDetail, error) {

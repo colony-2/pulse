@@ -39,7 +39,7 @@ type dockerJobDBProvider struct {
 	log                 *slog.Logger
 }
 
-func (p *dockerJobDBProvider) Submit(ctx context.Context, launches []provider.Launch) ([]provider.Submission, error) {
+func (p *dockerJobDBProvider) Submit(ctx context.Context, launches []provider.Launch, options provider.SubmitOptions) ([]provider.Submission, provider.LogSubscription, error) {
 	adapted := append([]provider.Launch(nil), launches...)
 	changed := false
 	for i, launch := range launches {
@@ -51,5 +51,5 @@ func (p *dockerJobDBProvider) Submit(ctx context.Context, launches []provider.La
 	if changed {
 		p.log.Info("using host JobDB address for Docker workers", "controller_jobdb", p.source, "worker_jobdb", p.destination)
 	}
-	return p.Provider.Submit(ctx, adapted)
+	return p.Provider.Submit(ctx, adapted, options)
 }

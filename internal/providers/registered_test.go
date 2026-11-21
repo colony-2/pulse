@@ -19,13 +19,13 @@ var registrationSequence atomic.Int64
 
 type externalProvider struct{ received []provider.Launch }
 
-func (p *externalProvider) Submit(_ context.Context, ls []provider.Launch) ([]provider.Submission, error) {
+func (p *externalProvider) Submit(_ context.Context, ls []provider.Launch, _ provider.SubmitOptions) ([]provider.Submission, provider.LogSubscription, error) {
 	p.received = ls
 	out := make([]provider.Submission, len(ls))
 	for i, l := range ls {
 		out[i] = provider.Submission{LaunchID: l.LaunchID, Status: provider.Accepted}
 	}
-	return out, nil
+	return out, nil, nil
 }
 func (*externalProvider) List(context.Context, provider.ListRequest) (provider.ListResponse, error) {
 	return provider.ListResponse{Items: []provider.Instance{}}, nil
@@ -77,7 +77,7 @@ targets: [{jobdb: 'https://db/tenant', launch_services: [{name: custom, priority
 	}
 	launch := provider.Launch{LaunchID: "external", Allocation: cfg.Allocation, Job: provider.JobRef{JobDB: "https://db/tenant", InstanceID: "db", TenantID: "tenant", JobID: "job"}, Lease: "opaque"}
 	launch.Capabilities = []string{"custom.feature"}
-	out, err := instances["custom"].Submit(t.Context(), []provider.Launch{launch})
+	out, _, err := instances["custom"].Submit(t.Context(), []provider.Launch{launch}, provider.SubmitOptions{})
 	if err != nil || out[0].Status != provider.Accepted || p.received[0].Base != "custom-*" || p.received[0].Lease != "opaque" || p.received[0].Capabilities[0] != "custom.feature" {
 		t.Fatal("external assignment altered")
 	}

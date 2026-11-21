@@ -44,6 +44,9 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]provider.Provide
 	}
 	for name, p := range cfg.Providers {
 		switch p.Type {
+		case "reverse":
+			// The collector owns these providers for the controller's lifetime.
+			continue
 		case "vz":
 			instance, cleanup, err := buildMac(ctx, name, p, cfg)
 			if err != nil {

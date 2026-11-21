@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -101,6 +102,17 @@ func runPulse(parent context.Context, cfg *config.Config, once, check bool, out 
 		return e
 	}
 	defer closeProviders()
+	reverse, e := providers.StartReverse(ctx, cfg, check)
+	if e != nil {
+		return e
+	}
+	var reverseDone chan error
+	if reverse != nil {
+		defer reverse.Close()
+		maps.Copy(instances, reverse.Providers)
+		reverseDone = make(chan error, 1)
+		go func() { reverseDone <- reverse.Wait() }()
+	}
 	if check {
 		fmt.Fprintln(out, "configuration, listing backend, and providers are valid")
 		return nil
@@ -127,6 +139,9 @@ func runPulse(parent context.Context, cfg *config.Config, once, check bool, out 
 	go func() { controllerDone <- c.Run(ctx) }()
 	select {
 	case e = <-httpDone:
+		cancel()
+		<-controllerDone
+	case e = <-reverseDone:
 		cancel()
 		<-controllerDone
 	case e = <-controllerDone:

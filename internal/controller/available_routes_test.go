@@ -27,15 +27,15 @@ type routeProvider struct {
 	reject bool
 }
 
-func (p *routeProvider) Submit(ctx context.Context, launches []compute.Launch) ([]compute.Submission, error) {
-	out, err := p.accept.Submit(ctx, launches)
+func (p *routeProvider) Submit(ctx context.Context, launches []compute.Launch, _ compute.SubmitOptions) ([]compute.Submission, compute.LogSubscription, error) {
+	out, _, err := p.accept.Submit(ctx, launches, compute.SubmitOptions{})
 	if p.reject {
 		for i := range out {
 			out[i].Status = compute.NoCapacity
 			out[i].Reason = "no capacity"
 		}
 	}
-	return out, err
+	return out, nil, err
 }
 
 // Exercise discovery, admission, and exported capabilities through the real

@@ -3,8 +3,8 @@ module example.com/pulse-provider-fixture
 go 1.26.0
 
 require (
-	github.com/colony-2/pulse-provider-api v0.0.0-20261105011626-401f11e595a8
-	github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261119212001-27abdc0b7a4a
+	github.com/colony-2/pulse-provider-api v0.0.0-20261120061856-2919f1ed5e42
+	github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261120061856-2919f1ed5e42
 )
 
 require (

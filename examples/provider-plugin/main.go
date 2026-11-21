@@ -110,10 +110,10 @@ func (p *provider) GetCapabilities(ctx context.Context) (api.Capabilities, error
 	return out, err
 }
 
-func (p *provider) Submit(ctx context.Context, ls []api.Launch) ([]api.Submission, error) {
+func (p *provider) Submit(ctx context.Context, ls []api.Launch, _ api.SubmitOptions) ([]api.Submission, api.LogSubscription, error) {
 	var out []api.Submission
 	e := p.call(ctx, "/submit", ls, &out)
-	return out, e
+	return out, nil, e
 }
 func (p *provider) List(ctx context.Context, q api.ListRequest) (api.ListResponse, error) {
 	var out api.ListResponse

@@ -162,7 +162,7 @@ another file. If only the former `~/.pulse/provider.json` exists, the commands
 load it with a warning and save to the new path after successful maintenance.
 For a custom pool, pass the same `--owner`, `--vm-home`, and capacity settings
 used by Pulse.
-See the [upstream command guide](https://github.com/colony-2/pulse-macvz/blob/d16f346fc119e73ec2b4ebd64a7c6100250dbf09/docs/server-cli.md).
+See the [upstream command guide](https://github.com/colony-2/pulse-macvz/blob/9d3589b5bb37b84b2a096a2f95f5fe39813bde9b/docs/server-cli.md).
 
 ### KVM in Linux guests
 
@@ -202,5 +202,5 @@ less memory than the VM reservation for worker overhead.
 
 Build contexts, copies, engine-owned volumes, and supported TCP services work
 without host bind mounts. Job workspace bind mounts are unsupported. See the
-[pulse-macvz Docker contract](https://github.com/colony-2/pulse-macvz/blob/d16f346fc119e73ec2b4ebd64a7c6100250dbf09/docs/docker-library.md)
+[pulse-macvz Docker contract](https://github.com/colony-2/pulse-macvz/blob/9d3589b5bb37b84b2a096a2f95f5fe39813bde9b/docs/docker-library.md)
 for the tested Docker/Compose behavior and VM lifecycle.

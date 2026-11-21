@@ -83,16 +83,17 @@ type Config struct {
 	HTTP            struct {
 		Listen string `yaml:"listen"`
 	} `yaml:"http"`
-	PollInterval     string `yaml:"poll_interval"`
-	Cooldown         string `yaml:"cooldown"`
-	LeaseDuration    string `yaml:"lease_duration"`
-	CallTimeout      string `yaml:"call_timeout"`
-	BatchTimeout     string `yaml:"batch_timeout"`
-	ClaimTimeout     string `yaml:"claim_timeout"`
-	ClaimConcurrency int    `yaml:"claim_concurrency"`
-	BatchSize        int    `yaml:"batch_size"`
-	PerTenant        int    `yaml:"max_jobs_per_tenant"`
-	MaxPages         int    `yaml:"max_pages_per_tenant"`
+	Reverse          *ReverseConfig `yaml:"reverse,omitempty"`
+	PollInterval     string         `yaml:"poll_interval"`
+	Cooldown         string         `yaml:"cooldown"`
+	LeaseDuration    string         `yaml:"lease_duration"`
+	CallTimeout      string         `yaml:"call_timeout"`
+	BatchTimeout     string         `yaml:"batch_timeout"`
+	ClaimTimeout     string         `yaml:"claim_timeout"`
+	ClaimConcurrency int            `yaml:"claim_concurrency"`
+	BatchSize        int            `yaml:"batch_size"`
+	PerTenant        int            `yaml:"max_jobs_per_tenant"`
+	MaxPages         int            `yaml:"max_pages_per_tenant"`
 	Defaults         struct {
 		Base         string            `yaml:"base"`
 		Capabilities []string          `yaml:"capabilities"`
@@ -311,12 +312,15 @@ func parse(ctx context.Context, b []byte, overrides Overrides) (*Config, error) 
 	if err := c.configureProviders(overrides); err != nil {
 		return nil, err
 	}
+	if err := c.validateReverse(); err != nil {
+		return nil, err
+	}
 	for name, p := range c.Providers {
 		if name == "" {
 			return nil, fmt.Errorf("empty provider name")
 		}
 		switch p.Type {
-		case "remote", "docker", "cloudrun", "ecs", "azurejobs", "plugin", "vz":
+		case "remote", "docker", "cloudrun", "ecs", "azurejobs", "plugin", "vz", "reverse":
 		default:
 			if _, ok := providerregistry.Lookup(p.Type); !ok {
 				return nil, fmt.Errorf("unknown provider type %q", p.Type)
