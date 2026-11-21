@@ -1,0 +1,49 @@
+# Run separately from the seven mandatory verify-hook checks.
+id: pulse-docker-candidate-acceptance
+input_schema:
+  prompt: {type: string}
+  title: {type: string, default_value: Pulse candidate Docker live acceptance}
+  type: {type: string, default_value: build}
+sequence:
+- id: docker_acceptance
+  op: command_execution
+  const: true
+  execution_needs:
+    base: ubuntu-24.04-arm64
+    capabilities: [docker]
+    packages:
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#git
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#go_1_26
+    - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#gcc
+  inputs:
+    timeout: 60m
+    capture_diagnostics: always
+    env:
+      GOFLAGS: -buildvcs=false -p=2
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+      GOMAXPROCS: '2'
+    run: |
+      set -euo pipefail
+      test "$(uname -s)" = Linux
+      case "$(uname -m)" in aarch64|arm64) ;; *) exit 1 ;; esac
+      uname -sm
+      git rev-parse HEAD 'HEAD^{tree}'
+      git status --short
+      go version
+      c2j version
+      c2j self --json
+      printf 'allocation base=%s platform=%s capabilities=%s cpu=%s memory=%s storage=%s\n' "${C2J_EXECUTION_BASE:-unreported}" "${C2J_EXECUTION_PLATFORM:-unreported}" "${C2J_EXECUTION_CAPABILITIES:-unreported}" "${C2J_EXECUTION_CPU:-unreported}" "${C2J_EXECUTION_MEMORY:-unreported}" "${C2J_EXECUTION_EPHEMERAL_STORAGE:-unreported}"
+      docker version
+      set +e
+      go test -mod=readonly -count=1 -timeout=45m -run '^TestDocker(Integration|C2JIntegration|MultiPlatformIntegration|UpgradeIntegration)$' -v ./internal/providers
+      acceptance_exit=$?
+      docker image ls --digests --no-trunc --filter reference=ghcr.io/colony-2/base2:latest
+      printf 'Pulse live acceptance exit=%s\n' "$acceptance_exit"
+      exit "$acceptance_exit"
+outputs:
+  status: passed
+  summary: Four retained Pulse Docker live acceptance groups passed. See native command diagnostics for provenance and individual outcomes.
+  artifact_refs: ${{ sequence.docker_acceptance.outputs.diagnostics }}

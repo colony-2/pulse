@@ -38,7 +38,7 @@ python3 -m venv /tmp/pulse-protocol-venv
 Cloud adapter tests use HTTP doubles for native APIs and credential endpoints. Docker unit tests use a fake daemon API. On Linux and macOS, ordinary `go test ./...` also runs real Docker integration tests by default. To confirm container execution with uncached, verbose output:
 
 ```sh
-go test -race -count=1 -timeout=45m -run '^TestDocker(C2J|DependencyCache|NixFetchCache)?Integration$' -v ./internal/providers
+go test -race -count=1 -timeout=45m -run '^TestDocker(Integration|C2JIntegration|MultiPlatformIntegration|UpgradeIntegration)$' -v ./internal/providers
 ```
 
 These tests use Pulse's core socket/context discovery. No socket override, opt-in flag, or local c2j installation is required; missing or unusable Docker fails the suite on Linux and macOS.
@@ -63,33 +63,34 @@ its fixture, workers, database, and cache volumes; downloaded images remain cach
 
 Image preparation has a separate 30-minute timeout for downloading and unpacking the large default image; each supplied-lease scenario then gets its own eight-minute budget. The scenario loop stops after the first failure to avoid repeating expensive initialization on an unhealthy Docker VM. Fixture deletion gets a fresh two-minute deadline independent of log collection. Cache cleanup includes initializers that failed before a worker was created. CI pre-pulls the image in a separate step with visible progress, and the test still refreshes `latest` on every uncached run. For cold pulls, use `go test -race -count=1 -failfast -timeout=45m ./...` (also used by CI) to allow more than Go's default ten-minute package timeout and stop further tests within a failing package. CI also collects Docker and macOS VM diagnostics on failure. Plain `go test ./...` still includes these tests without opt-in; it can hit Go's own deadline on a slow first pull.
 
-`TestDockerIntegration` separately checks process output, finite stdin and EOF, environment delivery, working directory, tmpfs and resource configuration, nonzero exits, restart accounting, capacity reuse, and active-instance listing using Alpine. Resource assertions check either enforced limits or the startup warning and recorded fallback mode. Unit tests cover both modes, socket/context selection, probe failures, cleanup, and recovery across capability changes. A slow-cache regression delays initializer creation for 31 seconds over the real Unix-socket transport and submits through the scheduler with production timeout defaults. Cancellation coverage checks that initialization releases capacity before retry. Live cloud IAM, networking, image access, resource enforcement, and workload execution still require deployment acceptance checks; report which checks you actually ran.
+`TestDockerIntegration` checks default CLI initialization with an empty helper
+path. `TestDockerMultiPlatformIntegration` uses public capabilities and an
+independent execution probe. When an alternative architecture executes, a real
+supplied-lease job must complete there. A demonstrated exec-format failure must
+instead yield `unsupported` without a job worker; infrastructure errors fail.
+No emulation or Docker Desktop provisioning is performed by these tests.
 
-CI runs Go checks and real Docker jobs on Linux AMD64, Linux ARM64, and macOS Intel (using Colima for the CI daemon), cross-compiles all four release executables, tests npm installation, and smoke-tests both container architectures. See [the test workflow](.github/workflows/test.yaml).
+`TestDockerUpgradeIntegration` archives extraction-source Pulse
+`6c20e087383ac7c333f562aa373c873bd5423db6` into scratch and runs its unchanged
+backend to produce a held worker and warm cache pair. The candidate must recover
+its public identity and occupied capacity, avoid a duplicate launch, preserve cache
+identity and contents and an unrelated volume, and let the old worker complete.
+A shallow checkout fetches the exact historical object into scratch. No old
+backend, module replacement or workspace is used in the candidate.
 
-`TestDockerDependencyCacheIntegration` builds a test-only worker using the pinned
-c2j tool manager and copies it into a derived Colony base image. It exercises two
-concurrent cold workers, two offline warm workers after provider restart, scoped
-uv/pnpm versions, Nix tools and extension-output retention, generation changes,
-and automatic volume retirement. It removes its containers, volumes, and derived
-image. The upstream base image remains cached. First runs require Python/npm/Nix
-registry access. This test validates storage and the tool manager; it does not
-replace the supplied-lease test of the image's installed c2j binary or test the
-full extension compiler/replay lifecycle. The image's installed binary is tested
-separately from the pinned library, with compatibility results recorded above.
-Earlier base-image limitations involving `sed` and the native Python wheel loader
-are documented in the [cache design](PROPOSAL_DOCKER_DEPENDENCY_CACHES.md).
+Docker execution, cache and native-process unit coverage belongs to
+[`pulse-docker`](https://github.com/colony-2/pulse-docker), pinned in `go.mod`.
+Pulse retains configuration, construction, alias ownership, lifecycle,
+controller placement and supplied-lease CLI coverage. The native verification
+hook keeps seven mandatory checks and excludes exactly the four live Docker
+parents above; run those separately against an existing suitable daemon.
+Missing prerequisites are acceptance failures, not passing evidence.
 
-`TestDockerNixFetchCacheIntegration` runs separate Pulse workers against a local
-HTTPS fixture implementing the GitHub Enterprise endpoints used by Nix's real
-`github:` fetcher. Request counters and recorded Nix timestamps verify fresh
-cross-container reuse, unchanged timestamps on warm reads, TTL expiry, and warm
-execution with upstream unavailable. Concurrent cold, warm, and expired lookups
-report request counts. It also checks tenant/generation isolation, restart,
-source/metadata loss recovery, private home caches, and idle retirement. The
-fixture contains a tiny derivation built locally without nixpkgs or substituters;
-the test enables local builds only for that derivation. No public GitHub requests
-or production cache volumes are involved.
+CI runs Go checks and real Docker jobs on Linux AMD64, Linux ARM64, and macOS
+Intel (using Colima for the CI daemon), cross-compiles all four release
+executables, tests npm installation, and smoke-tests both container
+architectures. See [the test workflow](.github/workflows/test.yaml). Live cloud
+and macOS provider behavior still requires deployment acceptance.
 
 ## Build container images
 

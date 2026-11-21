@@ -1,9 +1,46 @@
 # c2j owns const workspaces, tools, process lifecycle and failure propagation.
 id: pulse-native-verify
+# Validate at the first pure node so the caller's explicit null settings remain
+# supported. Legacy artifact input schemas reject null before entering a hook.
 inputs:
-  candidate: ${{ inputs.candidate }}
-  base: ${{ inputs.base }}
+  api_version: ${{ inputs.?api_version.orValue('c2.build-hook/v1') }}
+  request: ${{ inputs.?request.orValue('') }}
+  target_directory: ${{ inputs.?target_directory.orValue('.') }}
+  candidate: ${{ inputs.?candidate.orValue('working-tree') }}
+  base: ${{ inputs.?base.orValue('') }}
+  documents: ${{ inputs.?documents.orValue({}) }}
+  settings: ${{ inputs.?settings.orValue(null) }}
 sequence:
+- id: input_contract
+  inputs:
+    api_version: ${{ inputs.api_version }}
+    request: ${{ inputs.request }}
+    target_directory: ${{ inputs.target_directory }}
+    candidate: ${{ inputs.candidate }}
+    base: ${{ inputs.base }}
+    documents: ${{ inputs.documents }}
+    settings: ${{ inputs.settings }}
+  sequence: []
+  outputs:
+    api_version: ${{ inputs.api_version }}
+    request: ${{ inputs.request }}
+    target_directory: ${{ inputs.target_directory }}
+    candidate: ${{ inputs.candidate }}
+    base: ${{ inputs.base }}
+    documents: ${{ inputs.documents }}
+    settings: ${{ inputs.settings }}
+  expect_outputs:
+    type: object
+    additionalProperties: false
+    required: [api_version, request, target_directory, candidate, base, documents, settings]
+    properties:
+      api_version: {type: string, enum: [c2.build-hook/v1]}
+      request: {type: string}
+      target_directory: {type: string}
+      candidate: {type: string}
+      base: {type: string}
+      documents: {type: object, additionalProperties: {type: object}}
+      settings: {type: [object, 'null']}
 - id: native_race
   op: command_execution
   const: true
@@ -35,7 +72,7 @@ sequence:
       go version
       gcc --version
       git --version
-      go test -mod=readonly -race -count=1 -timeout=45m -v -skip '^(TestDockerIntegration|TestDockerC2JIntegration|TestDockerMultiPlatformIntegration|TestDockerDependencyCacheIntegration|TestDockerNixFetchCacheIntegration)$' ./...
+      go test -mod=readonly -race -count=1 -timeout=45m -v -skip '^(TestDockerIntegration|TestDockerC2JIntegration|TestDockerMultiPlatformIntegration|TestDockerUpgradeIntegration)$' ./...
 - id: plugin_race
   op: command_execution
   const: true
@@ -237,7 +274,8 @@ sequence:
       vet, native_build, node_packaging, protocol, module_tidiness.
       See each task's native c2j execution log for commands, platform, tools and exits.
 
-      Held: five exact Docker daemon tests; real image/cache integration; QEMU,
+      Held: four exact Docker tests (CLI defaults, supplied leases, conditional
+      platforms and historical upgrade); real image/cache integration; QEMU,
       other platforms, live cloud/macOS providers, release packaging/smoke, signing,
       publication and deployment. Existing CI coverage is unchanged.
       EOF

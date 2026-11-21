@@ -13,6 +13,19 @@ var cpuPattern = regexp.MustCompile(`^([0-9]+(?:\.[0-9]+)?)(m?)$`)
 var bytesPattern = regexp.MustCompile(`^([0-9]+(?:\.[0-9]+)?)([kMGTPE]|[KMGTPE]i)$`)
 
 func Parse(value string, cpu bool) (int64, error) {
+	return parse(value, cpu, false)
+}
+
+// NonnegativeBytes parses an optional host charge. Resource requests still use
+// Parse, which requires positive values; an explicit zero disables the charge.
+func NonnegativeBytes(value string) (int64, error) {
+	if value == "0" {
+		return 0, nil
+	}
+	return parse(value, false, true)
+}
+
+func parse(value string, cpu, allowZero bool) (int64, error) {
 	if len(value) > 128 {
 		return 0, fmt.Errorf("quantity too long")
 	}
@@ -25,7 +38,7 @@ func Parse(value string, cpu bool) (int64, error) {
 		return 0, fmt.Errorf("invalid quantity %q", value)
 	}
 	n, ok := new(big.Rat).SetString(parts[1])
-	if !ok || n.Sign() <= 0 {
+	if !ok || n.Sign() < 0 || (n.Sign() == 0 && !allowZero) {
 		return 0, fmt.Errorf("quantity must be positive")
 	}
 	mult := big.NewInt(1)

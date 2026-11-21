@@ -24,3 +24,23 @@ func TestQuantities(t *testing.T) {
 		}
 	}
 }
+
+func TestNonnegativeBytes(t *testing.T) {
+	for _, value := range []string{"0", "0Ki", "0.0Mi", "0.000k"} {
+		got, err := NonnegativeBytes(value)
+		if err != nil || got != 0 {
+			t.Fatal(value, got, err)
+		}
+		if _, err := Parse(value, false); err == nil {
+			t.Fatal("positive requests accepted zero", value)
+		}
+	}
+	for _, value := range []string{"-1Mi", "1", "bad", "0.001Ki"} {
+		if _, err := NonnegativeBytes(value); err == nil {
+			t.Fatal("invalid overhead accepted", value)
+		}
+	}
+	if got, err := NonnegativeBytes("256Mi"); err != nil || got != 256<<20 {
+		t.Fatal(got, err)
+	}
+}

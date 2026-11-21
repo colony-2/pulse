@@ -1,5 +1,6 @@
 id: pulse-bounded-caller
 inputs:
+  overrides: ${{ inputs.overrides }}
   request: ${{ inputs.request }}
   target_directory: ${{ inputs.target_directory }}
 sequence:
@@ -13,13 +14,13 @@ sequence:
         summary: No repository verify hook is configured.
         artifact_refs: {}
   inputs:
-    api_version: c2.build-hook/v1
-    request: ${{ inputs.request }}
-    target_directory: ${{ inputs.target_directory }}
-    candidate: ${{ context.git.hash }}
-    base: ${{ context.git.execution.base_hash }}
-    documents: {}
-    settings: null
+    api_version: ${{ json_parse(inputs.overrides).?api_version.orValue('c2.build-hook/v1') }}
+    request: ${{ json_parse(inputs.overrides).?request.orValue(inputs.request) }}
+    target_directory: ${{ json_parse(inputs.overrides).?target_directory.orValue(inputs.target_directory) }}
+    candidate: ${{ json_parse(inputs.overrides).?candidate.orValue(context.git.hash) }}
+    base: ${{ json_parse(inputs.overrides).?base.orValue(context.git.execution.base_hash) }}
+    documents: ${{ json_parse(inputs.overrides).?documents.orValue({}) }}
+    settings: ${{ json_parse(inputs.overrides).?settings.orValue(null) }}
   expect_outputs:
     type: object
     additionalProperties: false
@@ -102,6 +103,7 @@ outputs:
   result: ${{ sequence.invoke_hook.outputs }}
   artifact_refs: ${{ sequence.invoke_hook.outputs.artifact_refs }}
 input_schema:
+  overrides: {type: string, default_value: '{}'}
   request:
     type: string
   target_directory:

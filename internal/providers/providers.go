@@ -9,13 +9,12 @@ import (
 	"maps"
 	"net/http"
 	"os"
-	"time"
 
+	docker "github.com/colony-2/pulse-docker"
 	provider "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/providers/adapter"
 	"github.com/colony-2/pulse/internal/providers/cloud"
-	"github.com/colony-2/pulse/internal/providers/docker"
 	pluginprovider "github.com/colony-2/pulse/internal/providers/plugin"
 	"github.com/colony-2/pulse/internal/providers/remote"
 	"github.com/colony-2/pulse/internal/quantity"
@@ -109,41 +108,13 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]provider.Provide
 			}
 			out[name] = &adapter.Provider{Native: c, Env: cfg.Defaults.Env, Targets: targets}
 		case "docker":
-			socket, e := docker.ResolveSocket(p.Socket)
+			dc, e := dockerSettings(p, cfg)
 			if e != nil {
 				return fail(e)
 			}
-			var cpu, mem int64
-			if p.Capacity.CPU != "" {
-				cpu, e = quantity.Parse(p.Capacity.CPU, true)
-				if e != nil {
-					return fail(e)
-				}
-			}
-			if p.Capacity.Memory != "" {
-				mem, e = quantity.Parse(p.Capacity.Memory, false)
-				if e != nil {
-					return fail(e)
-				}
-			}
-			overhead := int64(256 << 20)
-			if p.Overhead != "" {
-				overhead, e = quantity.Parse(p.Overhead, false)
-				if e != nil {
-					return fail(e)
-				}
-			}
-			dc := docker.Config{Socket: socket, LockDir: p.LockDir, ScratchPath: p.ScratchPath, RegistryAuth: os.Getenv(p.RegistryAuthEnv), CPUMillis: cpu, MemoryBytes: mem, Overhead: overhead, MaxContainers: p.Capacity.MaxContainers}
-			if p.DependencyCache != nil {
-				cache := p.DependencyCache
-				dc.DependencyCache = docker.CacheConfig{Disabled: cache.Enabled != nil && !*cache.Enabled, Namespace: cache.Namespace, Generation: cache.Generation}
-				dc.DependencyCache.MaxAge, e = time.ParseDuration(cache.MaxAge)
-				if e != nil {
-					return fail(e)
-				}
-			}
+			socket := dc.Socket
 			if prior, ok := locals[socket]; ok {
-				if prior.config != dc {
+				if !sameDockerSettings(prior.config, dc) {
 					return fail(fmt.Errorf("Docker aliases must share an identical budget/configuration"))
 				}
 				out[name] = out[prior.name]
@@ -153,7 +124,7 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]provider.Provide
 			if e != nil {
 				return fail(e)
 			}
-			out[name] = c.InstanceProvider(cfg.Defaults.Env, targets)
+			out[name] = c
 			locals[socket] = local{dc, name}
 			closers = append(closers, c.Close)
 		default:

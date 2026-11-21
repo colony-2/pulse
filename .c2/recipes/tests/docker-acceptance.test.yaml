@@ -1,0 +1,31 @@
+recipe: docker-acceptance.yaml
+cases:
+- id: submission-inputs
+  type: integration_case
+  inputs:
+    prompt: Run the retained live groups from the saved candidate.
+    title: Pulse candidate Docker live acceptance
+    type: build
+  mocks:
+    ops:
+    - match:
+        op: command_execution
+      behavior:
+        mode: return
+        outputs:
+          success: true
+          exit_code: 0
+          stdout: fixture only; no Docker acceptance executed
+          diagnostics:
+            _c2j/execution/docker_acceptance.log:
+              kind: value
+              format: text
+              value: fixture diagnostics
+  assertions:
+  - type: output_equals
+    path: status
+    value: passed
+  - type: cel_true
+    expr: size(calls) == 1 && size(outputs.artifact_refs) == 1
+  - type: cel_true
+    expr: calls[0].inputs.capture_diagnostics == 'always' && calls[0].inputs.timeout == '60m' && calls[0].inputs.run.contains('-timeout=45m')

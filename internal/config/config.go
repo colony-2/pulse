@@ -361,7 +361,7 @@ func parse(ctx context.Context, b []byte, overrides Overrides) (*Config, error) 
 			if p.Overhead == "" {
 				p.Overhead = "256Mi"
 			}
-			if _, err := quantity.Parse(p.Overhead, false); err != nil {
+			if _, err := quantity.NonnegativeBytes(p.Overhead); err != nil {
 				return nil, err
 			}
 			if p.Capacity.MaxContainers < 0 {

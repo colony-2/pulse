@@ -18,6 +18,10 @@ func TestDockerJobDBEndpoint(t *testing.T) {
 		{"docker", "https://localhost/c2", "https://host.docker.internal/c2"},
 		{"docker", "https://jobdb.example/c2", "https://jobdb.example/c2"},
 		{"docker", "http://localhost.example/c2", "http://localhost.example/c2"},
+		{"docker", "http://user:secret@localhost/c2", "http://user:secret@localhost/c2"},
+		{"docker", "http://localhost/c2?secret=query", "http://localhost/c2?secret=query"},
+		{"docker", "http://localhost/c2#fragment", "http://localhost/c2#fragment"},
+		{"docker", "://malformed", "://malformed"},
 		{"remote", "http://localhost/c2", "http://localhost/c2"},
 		{"cloudrun", "http://localhost/c2", "http://localhost/c2"},
 	} {

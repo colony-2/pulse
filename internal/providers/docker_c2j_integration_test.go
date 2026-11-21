@@ -27,7 +27,7 @@ import (
 	"github.com/colony-2/c2j/pkg/workflowctl"
 	"github.com/colony-2/jobdb/pkg/jobdb"
 	jobworkflow "github.com/colony-2/jobdb/pkg/workflow"
-	dockerprovider "github.com/colony-2/pulse/internal/providers/docker"
+	dockerprovider "github.com/colony-2/pulse-docker"
 )
 
 const c2jIntegrationImage = "ghcr.io/colony-2/base2:latest"
@@ -36,6 +36,12 @@ const c2jIntegrationImage = "ghcr.io/colony-2/base2:latest"
 // harness or a binary copied out of the module cache. It deliberately runs in
 // ordinary go test ./..., on both Docker Desktop and local Linux daemons.
 func TestDockerC2JIntegration(t *testing.T) {
+	runDockerC2J(t, "linux/arm64", []string{"success and heartbeat", "peer connectivity", "host gateway connectivity", "localhost JobDB", "recipe failure", "recipe timeout", "lease import transport failure", "heartbeat transport failure"})
+}
+
+func runDockerC2J(t *testing.T, platform string, scenarios []string) {
+	t.Helper()
+	arch := strings.TrimPrefix(platform, "linux/")
 	ops.Register(commandop.GetOp())
 	socket, err := dockerprovider.ResolveSocket("")
 	if err != nil {
@@ -47,7 +53,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 	pullCtx, stopPull := context.WithTimeout(t.Context(), 30*time.Minute)
 	started := time.Now()
 	t.Logf("pulling %s (image preparation timeout: 30m)", c2jIntegrationImage)
-	pullOutput, pullErr := exec.CommandContext(pullCtx, "docker", "--host", socket, "pull", "--platform", "linux/arm64", c2jIntegrationImage).CombinedOutput()
+	pullOutput, pullErr := exec.CommandContext(pullCtx, "docker", "--host", socket, "pull", "--platform", platform, c2jIntegrationImage).CombinedOutput()
 	pullContextErr := pullCtx.Err()
 	stopPull()
 	if pullErr != nil {
@@ -71,15 +77,15 @@ func TestDockerC2JIntegration(t *testing.T) {
 	// creation; containerd's platform-specific child ID may not be addressable.
 	imageID := docker(t, "image", "inspect", "--format", "{{.Id}}", c2jIntegrationImage)
 	t.Logf("executor image: %s", docker(t, "image", "inspect", "--format", "{{json .RepoDigests}}", c2jIntegrationImage))
-	t.Log(docker(t, "run", "--rm", "--platform", "linux/arm64", "--entrypoint", "c2j", c2jIntegrationImage, "version"))
+	t.Log(docker(t, "run", "--rm", "--platform", platform, "--entrypoint", "c2j", c2jIntegrationImage, "version"))
 	binary := filepath.Join(t.TempDir(), "pulse")
-	if out, err := exec.CommandContext(ctx, "go", "build", "-o", binary, "../../cmd/pulse").CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "../../scripts/build-pulse.sh", binary).CombinedOutput(); err != nil {
 		t.Fatalf("build Pulse: %v\n%s", err, out)
 	}
 
 	fixtureBinary := buildDockerJobDBFixture(t, ctx, docker)
 
-	for _, scenario := range []string{"success and heartbeat", "peer connectivity", "host gateway connectivity", "localhost JobDB", "recipe failure", "recipe timeout", "lease import transport failure", "heartbeat transport failure"} {
+	for _, scenario := range scenarios {
 		if !t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 			defer cancel()
@@ -114,7 +120,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 				run = pythonHTTPGet(f.url+"/gate") + "; " + pythonHTTPGet(f.url+"/forbidden")
 			}
 			run = "set -eu; " + run
-			rec, err := recipe.LoadRecipeFromString([]byte("id: docker-executor\nexecution:\n  base: 'ubuntu-26*arm64'\n" + extra + "op: command_execution\ninputs:\n  run: " + fmt.Sprintf("%q", run) + "\noutputs:\n  result: '${{ op.outputs.stdout }}'\n"))
+			rec, err := recipe.LoadRecipeFromString([]byte("id: docker-executor\nexecution:\n  base: 'ubuntu-26*" + arch + "'\n" + extra + "op: command_execution\ninputs:\n  run: " + fmt.Sprintf("%q", run) + "\noutputs:\n  result: '${{ op.outputs.stdout }}'\n"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -314,7 +320,7 @@ func TestDockerC2JIntegration(t *testing.T) {
 					t.Fatal("loopback JobDB endpoint was not adapted and logged", c.Config.Cmd, string(out))
 				}
 			}
-			if !c.HostConfig.AutoRemove || c.Config.Image != imageID || strings.Join(c.Config.Entrypoint, " ") != "c2j" || !strings.Contains(strings.Join(c.Config.Cmd, " "), "run with-lease") || len(c.HostConfig.Binds) != 0 || !strings.Contains(strings.Join(c.Config.Env, "\n"), "C2J_EXECUTION_IMAGE="+c2jIntegrationImage) || !strings.Contains(strings.Join(c.Config.Env, "\n"), "PULSE_EXECUTION_BASE=ubuntu-26.04-arm64") || !strings.Contains(strings.Join(c.Config.Env, "\n"), "C2J_EXECUTION_PLATFORM=linux/arm64") {
+			if !c.HostConfig.AutoRemove || c.Config.Image != imageID || strings.Join(c.Config.Entrypoint, " ") != "c2j" || !strings.Contains(strings.Join(c.Config.Cmd, " "), "run with-lease") || len(c.HostConfig.Binds) != 0 || !strings.Contains(strings.Join(c.Config.Env, "\n"), "C2J_EXECUTION_IMAGE="+c2jIntegrationImage) || !strings.Contains(strings.Join(c.Config.Env, "\n"), "PULSE_EXECUTION_BASE=ubuntu-26.04-"+arch) || !strings.Contains(strings.Join(c.Config.Env, "\n"), "C2J_EXECUTION_PLATFORM="+platform) {
 				t.Fatal("executor did not use the unmodified default image and direct c2j entrypoint")
 			}
 			if strings.Contains(strings.Join(c.Config.Env, "\n")+strings.Join(c.Config.Cmd, " "), "leaseToken") {

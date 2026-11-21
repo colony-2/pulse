@@ -20,8 +20,7 @@ cases:
             func TestDockerIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
             func TestDockerC2JIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
             func TestDockerMultiPlatformIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
-            func TestDockerDependencyCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
-            func TestDockerNixFetchCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerUpgradeIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
           examples/provider-plugin/go.mod: |
             module pluginfixture
 
@@ -102,8 +101,7 @@ cases:
             func TestDockerIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
             func TestDockerC2JIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
             func TestDockerMultiPlatformIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
-            func TestDockerDependencyCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
-            func TestDockerNixFetchCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerUpgradeIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
             func TestMandatoryFailure(t *testing.T) { t.Fatal("forced verification failure") }
           examples/provider-plugin/go.mod: |
             module pluginfixture
@@ -168,8 +166,7 @@ cases:
             func TestDockerIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
             func TestDockerC2JIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
             func TestDockerMultiPlatformIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
-            func TestDockerDependencyCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
-            func TestDockerNixFetchCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerUpgradeIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
           examples/provider-plugin/go.mod: |
             module pluginfixture
 
@@ -224,8 +221,7 @@ cases:
             func TestDockerIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
             func TestDockerC2JIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
             func TestDockerMultiPlatformIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
-            func TestDockerDependencyCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
-            func TestDockerNixFetchCacheIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
+            func TestDockerUpgradeIntegration(t *testing.T) { t.Fatal("real daemon test must be held") }
           examples/provider-plugin/go.mod: |
             module pluginfixture
 
@@ -309,3 +305,158 @@ cases:
           exit_code: 0
     - *id012
   assertions: *id014
+
+- id: inert-candidate-base
+  type: integration_case
+  runtime: *id011
+  inputs:
+    request: verify
+    target_directory: .
+    overrides: '{"candidate":"$(touch BAD); `touch BAD2`", "base":"$(touch BAD3)"}'
+  mocks: *id004
+  assertions:
+  - type: output_equals
+    path: result.status
+    value: passed
+  - *id006
+  - type: cel_true
+    expr: '!(''BAD'' in repositories.root.files) && !(''BAD2'' in repositories.root.files) && !(''BAD3'' in repositories.root.files)'
+
+- id: invalid-api-version-version
+  type: integration_case
+  runtime: *id011
+  inputs:
+    request: verify
+    target_directory: .
+    overrides: '{"api_version": "c2.build-hook/v99"}'
+  mocks: *id004
+  assertions:
+  - *id007
+  - *id006
+  - type: cel_true
+    expr: size(calls) == 1 && calls[0].node_path.endsWith('/collect_evidence')
+
+- id: invalid-api-version-type
+  type: integration_case
+  runtime: *id011
+  inputs:
+    request: verify
+    target_directory: .
+    overrides: '{"api_version": true}'
+  mocks: *id004
+  assertions:
+  - *id007
+  - *id006
+  - type: cel_true
+    expr: size(calls) == 1 && calls[0].node_path.endsWith('/collect_evidence')
+
+- id: invalid-request-type
+  type: integration_case
+  runtime: *id011
+  inputs:
+    request: verify
+    target_directory: .
+    overrides: '{"request": 1}'
+  mocks: *id004
+  assertions:
+  - *id007
+  - *id006
+  - type: cel_true
+    expr: size(calls) == 1 && calls[0].node_path.endsWith('/collect_evidence')
+
+- id: invalid-target-directory-type
+  type: integration_case
+  runtime: *id011
+  inputs:
+    request: verify
+    target_directory: .
+    overrides: '{"target_directory": []}'
+  mocks: *id004
+  assertions:
+  - *id007
+  - *id006
+  - type: cel_true
+    expr: size(calls) == 1 && calls[0].node_path.endsWith('/collect_evidence')
+
+- id: invalid-candidate-type
+  type: integration_case
+  runtime: *id011
+  inputs:
+    request: verify
+    target_directory: .
+    overrides: '{"candidate": false}'
+  mocks: *id004
+  assertions:
+  - *id007
+  - *id006
+  - type: cel_true
+    expr: size(calls) == 1 && calls[0].node_path.endsWith('/collect_evidence')
+
+- id: invalid-base-type
+  type: integration_case
+  runtime: *id011
+  inputs:
+    request: verify
+    target_directory: .
+    overrides: '{"base": 2}'
+  mocks: *id004
+  assertions:
+  - *id007
+  - *id006
+  - type: cel_true
+    expr: size(calls) == 1 && calls[0].node_path.endsWith('/collect_evidence')
+
+- id: invalid-documents-type
+  type: integration_case
+  runtime: *id011
+  inputs:
+    request: verify
+    target_directory: .
+    overrides: '{"documents": "wrong"}'
+  mocks: *id004
+  assertions:
+  - *id007
+  - *id006
+  - type: cel_true
+    expr: size(calls) == 1 && calls[0].node_path.endsWith('/collect_evidence')
+
+- id: invalid-settings-type
+  type: integration_case
+  runtime: *id011
+  inputs:
+    request: verify
+    target_directory: .
+    overrides: '{"settings": 3}'
+  mocks: *id004
+  assertions:
+  - *id007
+  - *id006
+  - type: cel_true
+    expr: size(calls) == 1 && calls[0].node_path.endsWith('/collect_evidence')
+
+- id: invalid-document-entry
+  type: integration_case
+  runtime: *id011
+  inputs:
+    request: verify
+    target_directory: .
+    overrides: '{"documents":{"review/test.md":3}}'
+  mocks: *id004
+  assertions:
+  - *id007
+  - *id006
+  - type: cel_true
+    expr: size(calls) == 1 && calls[0].node_path.endsWith('/collect_evidence')
+- id: artifact-inputs
+  type: integration_case
+  runtime: *id011
+  inputs:
+    request: verify
+    target_directory: .
+    overrides: '{"documents":{"review/test.md":{"kind":"attached","name":"test.md"}},"settings":{"kind":"attached","name":"settings.json"}}'
+  mocks: *id004
+  assertions:
+  - type: output_equals
+    path: result.status
+    value: passed
+  - *id006
