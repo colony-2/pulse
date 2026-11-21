@@ -24,6 +24,11 @@ type macRuntime interface {
 	Close() error
 }
 
+// DefaultVZOwnerID returns the stable ownership ID for a named Pulse provider.
+func DefaultVZOwnerID(name string) string {
+	return fmt.Sprintf("pulse-vz-%x", sha256.Sum256([]byte(name)))[:32]
+}
+
 func macSettings(name string, p config.Provider, baseDir string) (pulsevm.Config, pulsevm.VZConfig, error) {
 	var c pulsevm.Config
 	var local pulsevm.VZConfig
@@ -55,7 +60,7 @@ func macSettings(name string, p config.Provider, baseDir string) (pulsevm.Config
 	}
 	c.OwnerID = options.OwnerID
 	if c.OwnerID == "" {
-		c.OwnerID = fmt.Sprintf("pulse-vz-%x", sha256.Sum256([]byte(name)))[:32]
+		c.OwnerID = DefaultVZOwnerID(name)
 	}
 	c.BootstrapTimeout, err = duration(options.BootstrapTimeout)
 	if err != nil {
@@ -143,7 +148,27 @@ func macSettings(name string, p config.Provider, baseDir string) (pulsevm.Config
 	// Leave omitted catalogs, pools, counts and resource sizes to the library.
 	// Resolve here so startup reporting and maintenance use its effective values.
 	c, err = pulsevm.ResolveConfig(c)
-	return c, local, err
+	if err != nil || options.Slots != nil || options.Docker != nil {
+		return c, local, err
+	}
+
+	// Keep macOS Docker opt-in for Pulse's default slots. The library now enables
+	// it on conventional slots, but macOS companions require a configured endpoint.
+	linuxBases := make(map[string]bool)
+	for _, base := range c.Bases {
+		if base.OS == "linux" {
+			linuxBases[base.Name] = true
+		}
+	}
+	for i := range c.Slots {
+		if !linuxBases[c.Slots[i].Base] {
+			c.Slots[i].DockerProfile = ""
+		}
+	}
+	if len(linuxBases) == 0 {
+		c.Docker = nil
+	}
+	return c, local, nil
 }
 
 func buildMac(ctx context.Context, name string, p config.Provider, cfg *config.Config) (api.Provider, func(), error) {

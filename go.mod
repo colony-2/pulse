@@ -13,7 +13,7 @@ require (
 	github.com/colony-2/jobdb v0.0.86
 	github.com/colony-2/pulse-provider-api v0.0.0-20261119212001-27abdc0b7a4a
 	github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261119212001-27abdc0b7a4a
-	github.com/colony-2/pulse-tart v0.0.0-20261120202625-12dd1f4bffde
+	github.com/colony-2/pulse-tart v0.0.0-20261120234840-fbe74e1b96ab
 	github.com/distribution/reference v0.6.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
@@ -104,6 +104,7 @@ require (
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/term v0.47.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260630182238-925bb5da69e7 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260630182238-925bb5da69e7 // indirect

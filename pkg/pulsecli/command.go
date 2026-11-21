@@ -61,7 +61,7 @@ func NewCommand(version string) *cobra.Command {
 	root.Args, root.RunE = cobra.NoArgs, execute(false)
 	runCmd := &cobra.Command{Use: "run", Short: "Run jobs for the selected tenant", Args: cobra.NoArgs, RunE: execute(false)}
 	runCmd.Flags().BoolVar(&once, "once", false, "run one discovery/submission pass")
-	root.AddCommand(runCmd,
+	root.AddCommand(runCmd, newVZCommand(),
 		&cobra.Command{Use: "check", Short: "Validate settings and initialize providers without submitting jobs", Args: cobra.NoArgs, RunE: execute(true)},
 		&cobra.Command{Use: "version", Short: "Print pulse build information", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 			_, err := fmt.Fprintf(cmd.OutOrStdout(), "pulse version %s\n", version)

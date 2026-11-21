@@ -131,11 +131,39 @@ func TestMacDefaultsComeFromLibrary(t *testing.T) {
 		t.Fatal(err)
 	}
 	want, err := pulsevm.ResolveConfig(pulsevm.Config{OwnerID: c.OwnerID})
-	if err != nil || !reflect.DeepEqual(c, want) {
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range want.Slots {
+		if want.Slots[i].Base != pulsevm.DefaultLinuxBase().Name {
+			want.Slots[i].DockerProfile = ""
+		}
+	}
+	if !reflect.DeepEqual(c, want) {
 		t.Fatal("Pulse replaced library conventions", err)
 	}
 	if c.NeedsDockerEndpoint() || c.BootstrapTimeout == 0 {
 		t.Fatal("ordinary defaults need a Docker endpoint or lost preparation timeout")
+	}
+}
+
+func TestMacDockerDefaultsKeepOptIn(t *testing.T) {
+	base := pulsevm.DefaultBases()[0]
+	for _, enabled := range []bool{false, true} {
+		options := map[string]any{"bases": []any{map[string]any{
+			"name": "custom-macos", "image": base.Image, "os_version": base.OSVersion,
+		}}}
+		if enabled {
+			options["docker"] = map[string]any{}
+		}
+		c, _, err := macSettings("mac", config.Provider{Type: "vz", Options: options}, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.NeedsDockerEndpoint() != enabled || (c.Docker != nil) != enabled ||
+			slices.Contains(c.BaseCapabilities("custom-macos"), "docker") != enabled {
+			t.Fatalf("macOS-only Docker opt-in = %t, configuration = %+v", enabled, c)
+		}
 	}
 }
 
@@ -187,22 +215,31 @@ func TestVZLibraryConstructionAndCapabilities(t *testing.T) {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("VZ construction requires Apple Silicon")
 	}
-	host := t.TempDir()
-	runner := filepath.Join(host, "runner")
-	// Exercise Pulse's VZ build and discovery paths without starting VMs.
-	if err := os.WriteFile(runner, []byte(`#!/bin/sh
-[ "$#" = 2 ] && [ "$1" = __pulse-vm ] && [ "$2" = probe ] || exit 1
-echo '"pulse-vz/1"'
-`), 0700); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, enabled := range []bool{false, true} {
-		t.Run(fmt.Sprintf("docker=%v", enabled), func(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		macOSDocker, kvm bool
+	}{
+		{name: "defaults"},
+		{name: "macOS Docker", macOSDocker: true},
+		{name: "Linux KVM", kvm: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := filepath.Join(t.TempDir(), "runner")
+			// Answer the runner handshake without requiring a signed executable or VM.
+			if err := os.WriteFile(runner, []byte(fmt.Sprintf(`#!/bin/sh
+[ "$#" = 2 ] && [ "$1" = __pulse-vm ] || exit 1
+case "$2" in
+  probe) echo '"pulse-vz/1"' ;;
+  features) echo '{"protocol":"pulse-vz/1","nested_virtualization":%t}' ;;
+  *) exit 1 ;;
+esac
+`, tc.kvm)), 0700); err != nil {
+				t.Fatal(err)
+			}
 			home := t.TempDir()
 			options := map[string]any{"home": home, "runner": runner}
 			p := config.Provider{Type: "vz", Options: map[string]any{"vz": options}}
-			if enabled {
+			if tc.macOSDocker {
 				p.Options["docker"] = map[string]any{}
 				options["docker_endpoint"] = map[string]any{"address": "192.168.64.1", "port_min": 45100, "port_max": 45120}
 			}
@@ -222,9 +259,14 @@ echo '"pulse-vz/1"'
 				if b.Name != want[i].Name {
 					t.Fatal("library catalog order changed", caps)
 				}
+				linux := b.Name == pulsevm.DefaultLinuxBase().Name
 				docker := api.Allocation{Base: b.Name, Capabilities: []string{"docker"}}
-				if got := providerutil.Compatible(caps, docker); got != (enabled || b.Name == pulsevm.DefaultLinuxBase().Name) {
+				if got := providerutil.Compatible(caps, docker); got != (tc.macOSDocker || linux) {
 					t.Fatal("unexpected Docker capability", b)
+				}
+				kvm := api.Allocation{Base: b.Name, Capabilities: []string{"kvm"}}
+				if got := providerutil.Compatible(caps, kvm); got != (tc.kvm && linux) {
+					t.Fatal("unexpected KVM capability", b)
 				}
 				for _, capability := range want[i].Capabilities {
 					if !slices.Contains(b.Capabilities, capability) {

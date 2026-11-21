@@ -141,6 +141,31 @@ concrete base to c2j through `--execution-base`.
 The library resolves c2j during image preparation. Existing prepared images are
 reused; upgrading Pulse does not reinstall c2j in those images.
 
+### Prepare or upgrade a VZ pool
+
+Stop the Pulse controller for the pool before running maintenance. Use
+`pulse vz setup` to prepare missing capacity and `pulse vz upgrade` to wait
+for accepted jobs to finish and rebuild the prepared guest images and tools.
+
+```sh
+pulse vz setup
+pulse vz upgrade --c2j-version latest
+```
+
+The commands use `~/.pulse/provider.json` for their saved settings. On these
+subcommands, `--config` selects another provider JSON file. Their defaults
+target the built-in `vz` pool, with macOS Docker opt-in. For a custom pool,
+pass the same `--owner`, `--vm-home`, and capacity settings used by Pulse.
+See the [upstream command guide](https://github.com/colony-2/pulse-tart/blob/fbe74e1b96ab69b41c6ce77c2646b1720679c0dd/docs/server-cli.md).
+
+### KVM in Linux guests
+
+VZ automatically advertises `kvm` on Linux ARM64 bases when the runner detects
+nested virtualization support. This requires macOS 15 or later on supported
+Apple Silicon hardware. Jobs can request `kvm`, including alongside `docker`.
+For an external `config.vz.runner`, update the runner together with Pulse so
+it supports the new feature probe.
+
 ## Docker in VZ guests
 
 Linux Docker needs no profiles, slot definitions, or host endpoint. The
@@ -171,5 +196,5 @@ less memory than the VM reservation for worker overhead.
 
 Build contexts, copies, engine-owned volumes, and supported TCP services work
 without host bind mounts. Job workspace bind mounts are unsupported. See the
-[pulse-tart Docker contract](https://github.com/colony-2/pulse-tart/blob/12dd1f4bffdedd9ed71fecbb85c5aa3913d6082b/docs/docker-library.md)
+[pulse-tart Docker contract](https://github.com/colony-2/pulse-tart/blob/fbe74e1b96ab69b41c6ce77c2646b1720679c0dd/docs/docker-library.md)
 for the tested Docker/Compose behavior and VM lifecycle.
