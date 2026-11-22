@@ -1,6 +1,7 @@
-{
-  "packages": [
-    "nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#go_1_26",
-    "nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#uv"
-  ]
-}
+jobdb: http://db.lab.c2.run:9047/c2
+
+packages: 
+  - "nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#go_1_26"
+  - "nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#uv"
+  
+
