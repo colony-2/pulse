@@ -80,15 +80,18 @@ func (j Job) allocation(defaults provider.Allocation, snapshot *placement.Reques
 	}
 	r := v.Demand.Effective
 	a := defaults
-	*snapshot = placement.Allocation(defaults)
-	if r.Base != nil || r.Image != nil || r.Platform != nil {
-		snapshot.Base = placement.Unknown("effective base translation incomplete")
-		snapshot.Platform = placement.Unknown("effective base translation incomplete")
+	if r.Base != nil {
+		a.Base = *r.Base
+	}
+	a.Capabilities = append(append([]string(nil), defaults.Capabilities...), r.Capabilities...)
+	*snapshot = placement.Allocation(a)
+	if r.Image != nil || r.Platform != nil {
+		snapshot.Base = placement.Unknown("unsupported image or platform selector")
+		snapshot.Platform = placement.Unknown("unsupported image or platform selector")
 	}
 	if r.Platform != nil {
-		snapshot.Platform = placement.Known(strings.ToLower(*r.Platform))
+		snapshot.Platform = placement.Known(*r.Platform)
 	}
-	snapshot.Capabilities = placement.Known(append(append([]string{}, defaults.Capabilities...), r.Capabilities...))
 	// Valid leased quantities are positive. The provider's zero denotes an absent
 	// constraint, so no explicit-zero presence can be lost in this translation.
 	for _, field := range []struct {
@@ -114,37 +117,8 @@ func (j Job) allocation(defaults provider.Allocation, snapshot *placement.Reques
 			*field.fact = placement.Known(n)
 		}
 	}
-	a.Capabilities = append(append([]string(nil), defaults.Capabilities...), r.Capabilities...)
-	if r.Base != nil {
-		a.Base = *r.Base
-	} else if r.Image != nil {
-		platform := "linux/arm64"
-		if r.Platform != nil {
-			platform = strings.ToLower(*r.Platform)
-		} else if b, err := bases.Resolve(defaults.Base, nil); err == nil {
-			platform = b.Platform
-		}
-		var err error
-		a.Base, err = bases.OCI(*r.Image, platform)
-		if err != nil {
-			return a, err
-		}
-	} else if r.Platform != nil {
-		platform := strings.ToLower(*r.Platform)
-		selector := a.Base
-		// An explicit platform overrides the architecture in the built-in default.
-		if selector == bases.Default {
-			selector = "ubuntu-26*"
-		}
-		var err error
-		a.Base, err = bases.Constrain(selector, platform)
-		if err != nil {
-			return a, err
-		}
-	}
-	*snapshot = placement.Allocation(a)
-	if r.Platform != nil {
-		snapshot.Platform = placement.Known(strings.ToLower(*r.Platform))
+	if r.Image != nil || r.Platform != nil {
+		return a, bases.ErrUnsupportedSelector
 	}
 	return a, providerutil.Allocation(a)
 }

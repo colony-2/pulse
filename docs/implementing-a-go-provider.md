@@ -24,7 +24,7 @@ verified execution allocation facts. It must not claim replacement work. Keep
 credentials out of diagnostics, argv, the child environment, and instance lists.
 Use c2j v0.0.118 or later and report the concrete selected label with
 `C2J_EXECUTION_BASE` or `--execution-base`. Pulse's native adapters also retain
-`PULSE_EXECUTION_BASE` and concrete image/platform facts for legacy requests.
+`PULSE_EXECUTION_BASE` and report the image and platform resolved from the base.
 A selector is never an allocation fact: c2j compares each current request with
 the actual allocation, including after a job yields or changes requirements.
 
@@ -139,12 +139,13 @@ reports an error instead of inventing an endpoint. Instances never include lease
 
 Implement the required `GetCapabilities` method with an ordered list of concrete
 base labels and each base's complete set of optional capability names. Set
-`BasesComplete` only when the catalog is exhaustive. Dynamic image providers
-should return a partial catalog. Providers without discovery may return the zero
-value (unknown support); an empty complete catalog instead means no support.
+`BasesComplete` only when the catalog is exhaustive. Providers without
+discovery may return the zero value (unknown support). An empty complete catalog
+means no support.
 
-Pulse uses this API for startup diagnostics and for excluding proven base or
-capability mismatches after acquiring the job's current demand. Read-only
-discovery must not provision resources and must keep busy/warming bases listed.
-`Submit` must still validate every constraint and report concrete allocation
-facts. See the [shared API contract](https://github.com/colony-2/pulse-provider-api).
+Pulse uses this API for startup diagnostics and checks advertised bases against
+the job's listed and leased requirements. An advertised catalog is used for
+matching even when `BasesComplete` is false. Read-only discovery must keep busy
+and warming bases listed. `Submit` must still validate every constraint and
+report concrete allocation facts. See the
+[shared API contract](https://github.com/colony-2/pulse-provider-api).

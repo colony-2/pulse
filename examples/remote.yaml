@@ -7,8 +7,7 @@ claim_timeout: 5s
 batch_size: 100
 max_jobs_per_tenant: 100
 defaults:
-  image: registry.example/c2j-runner:1.0
-  platform: linux/amd64
+  base: ubuntu-26.04-amd64
   cpu: "1"
   memory: 1Gi
   scratch: 1Gi

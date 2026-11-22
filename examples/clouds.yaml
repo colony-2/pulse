@@ -7,12 +7,9 @@
 call_timeout: 2m
 batch_timeout: 10m
 defaults:
-  # Replace this illustrative digest and its storage bounds with your image.
-  image: registry.example/runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-  platform: linux/amd64
+  base: ubuntu-26.04-amd64
   cpu: "1"
   memory: 1Gi
-  scratch: 1Gi
   timeout: 1h
 providers:
   google:
@@ -30,8 +27,6 @@ providers:
     security_groups: [sg-example]
     public_ip: false
     supervisor_path: /usr/local/bin/pulse-exec
-    image_storage_bounds:
-      registry.example/runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: 2Gi
   azure:
     type: azurejobs
     region: eastus
@@ -39,8 +34,6 @@ providers:
     resource_group: resource-group
     environment_id: /subscriptions/subscription-id/resourceGroups/resource-group/providers/Microsoft.App/managedEnvironments/environment
     max_azure_cpu_millis: 2000
-    image_storage_bounds:
-      registry.example/runner@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: 2Gi
 targets:
   - instance_id: production
     jobdb: https://jobdb.example.com/acme

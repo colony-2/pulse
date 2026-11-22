@@ -50,7 +50,7 @@ func (p *accept) Submit(_ context.Context, ls []compute.Launch, _ compute.Submit
 }
 func TestTenantIsolationPaginationAndLeaseOwnership(t *testing.T) {
 	p := &accept{}
-	cfg := &config.Config{Call: time.Second, Batch: time.Second, Cool: time.Minute, BatchSize: 1, PerTenant: 10, MaxPages: 10, ExecutionTimeout: time.Hour, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Base: "oci:linux/arm64:registry.example/runner:1"}}
+	cfg := &config.Config{Call: time.Second, Batch: time.Second, Cool: time.Minute, BatchSize: 1, PerTenant: 10, MaxPages: 10, ExecutionTimeout: time.Hour, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Base: "ubuntu-26.04-arm64"}}
 	cfg.Defaults.Routes = []c2j.Route{{JobType: "recipe"}}
 	cfg.Targets = []config.Target{{Instance: "db", JobDB: "https://db/t", Tenant: "t", Services: []config.Service{{Name: "p", Priority: 1}}}}
 	cfg.Targets = append([]config.Target{{Instance: "db", JobDB: "https://db/bad", Tenant: "bad", Services: cfg.Targets[0].Services}}, cfg.Targets...)
@@ -115,7 +115,7 @@ func (p *accept) List(context.Context, compute.ListRequest) (compute.ListRespons
 
 func TestConfiguredBatchSizeBoundsClaimCount(t *testing.T) {
 	p := &accept{}
-	cfg := &config.Config{Call: time.Second, Batch: time.Second, Lease: time.Minute, Cool: time.Minute, BatchSize: 2, PerTenant: 7, MaxPages: 1, ExecutionTimeout: time.Hour, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Base: "oci:linux/amd64:docker.io/library/runner:1"}}
+	cfg := &config.Config{Call: time.Second, Batch: time.Second, Lease: time.Minute, Cool: time.Minute, BatchSize: 2, PerTenant: 7, MaxPages: 1, ExecutionTimeout: time.Hour, Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Base: "ubuntu-26.04-amd64"}}
 	cfg.Defaults.Routes = []c2j.Route{{JobType: "recipe"}}
 	cfg.Targets = []config.Target{{Instance: "db", JobDB: "https://db/t", Tenant: "t", Services: []config.Service{{Name: "p", Priority: 1}}}}
 	var claims atomic.Int32

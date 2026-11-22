@@ -88,4 +88,4 @@ For Google and Azure, existing `providers.<name>.token_env` remains an explicit 
 
 `pulse check` validates configuration and initializes providers, but cloud credentials are acquired lazily on submission. Use `run --once` with a runnable test job to verify authentication and launch permissions. Authentication failures before launching return `unavailable`; uncertain start responses retain the supplied job lease until executor renewal or expiry.
 
-The Pulse image is the controller. Executor images selected by `defaults.image` or job demand still need c2j and recipe dependencies. Running this controller image unchanged does not install those dependencies in arbitrary executor images.
+The Pulse image is the controller. The executor image resolved from the selected base needs c2j and the recipe's dependencies.

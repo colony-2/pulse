@@ -33,11 +33,10 @@ func (p *Provider) GetCapabilities(ctx context.Context) (provider.Capabilities, 
 	if len(p.Platforms) == 0 {
 		return provider.Capabilities{}, nil
 	}
-	out := provider.Capabilities{Bases: []provider.BaseCapabilities{}}
+	out := provider.Capabilities{Bases: []provider.BaseCapabilities{}, BasesComplete: true}
 	for _, b := range bases.Catalog(p.Platforms...) {
 		out.Bases = append(out.Bases, provider.BaseCapabilities{Name: b.Name, Capabilities: []string{}})
 	}
-	// The catalog is partial because legacy oci: image requests are dynamic.
 	return out, nil
 }
 

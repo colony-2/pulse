@@ -16,7 +16,7 @@ func pluginYAML(t *testing.T, block string) string {
 	if e != nil {
 		t.Fatal(e)
 	}
-	return "defaults:\n  platform: linux/amd64\nproviders:\n  custom:\n    type: plugin\n    plugin:\n      command: " + binary + "\n      args: [CANARY-ARG]\n      config:\n" + block + "\ntargets:\n  - instance_id: test\n    jobdb: https://example.com/tenant\n    launch_services:\n      - name: custom\n        priority: 1\n"
+	return "defaults:\n  base: ubuntu-26.04-amd64\nproviders:\n  custom:\n    type: plugin\n    plugin:\n      command: " + binary + "\n      args: [CANARY-ARG]\n      config:\n" + block + "\ntargets:\n  - instance_id: test\n    jobdb: https://example.com/tenant\n    launch_services:\n      - name: custom\n        priority: 1\n"
 }
 func TestPluginConfigurationIsolationAndSources(t *testing.T) {
 	data := pluginYAML(t, "        password: CANARY-CONFIG\n        count: 12\n        flag: true\n        string: '12'")

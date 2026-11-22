@@ -68,9 +68,9 @@ providers or attempts. Concrete labels select OS/release/architecture together.
 
 Jobs submitted by c2j v0.0.118 use demand schema v4 and require a compatible
 worker in the executor image, even when they omit `base`. Pulse still accepts
-legacy v3 demands. Native providers pass the concrete selected label as
-`C2J_EXECUTION_BASE`; c2j compares it with each execution request. Updating
-Pulse does not update c2j inside an image.
+v3 demands that omit image and platform requirements. Native providers pass the
+concrete selected label as `C2J_EXECUTION_BASE`, which c2j compares with each
+execution request. Updating Pulse does not update c2j inside an image.
 
 The default allows either architecture. Docker advertises and selects the
 daemon's native Linux architecture first, then verified emulated alternatives,
@@ -85,14 +85,10 @@ because they do not provision and verify those optional interfaces. Registered
 Go providers can implement them; see [Go providers](implementing-a-go-provider.md).
 VZ verifies its configured guest capabilities through the linked library. See [VZ configuration](macos-providers.md).
 
-Legacy `defaults.image` and `defaults.platform` are translated into an exact
-`oci:<platform>:<normalized-image>` base. `base` and `image` are mutually exclusive.
-When an explicit image has no platform, the default is `linux/arm64`. An explicit
-c2j image requirement overrides the default base; c2j still uses image/platform
-requirements in its execution schema. An explicit c2j platform overrides the
-architecture in the built-in default, or constrains a configured base without
-broadening it. `defaults.platform` remains a compatibility constraint for existing
-configuration. Unknown custom base names are passed to registered Go providers.
+Select a base with `defaults.base` or the job's `base` requirement. To select an
+architecture, use a base such as `ubuntu-26.04-amd64` or `ubuntu-26*arm64`.
+Replace legacy image and platform selectors in Pulse configuration and job
+requirements with a base offered by one of the target's providers.
 
 On Apple Silicon with macOS 14 or later, an omitted or empty provider map enables
 VZ alongside Docker. VZ defaults to two macOS and four Linux job VMs at 4 vCPU
@@ -307,8 +303,7 @@ For example, a shell can set the document directly using single quotes, which pr
 ```sh
 export PULSE_CONFIG='
 defaults:
-  image: registry.example/c2j-runner:1.0
-  platform: linux/amd64
+  base: ubuntu-26.04-amd64
   cpu: "1"
   memory: 1Gi
   scratch: 1Gi
@@ -352,16 +347,18 @@ labels and whether the catalog is complete, plus the VZ provider's configured sl
 A separate message explains whether VZ was enabled automatically.
 These describe configured support, not idle capacity or warmed images.
 
-Before each provider submission, Pulse refreshes its capabilities once per batch
-and filters the current leased demand. A complete catalog can rule out a base
-selector or a missing capability. For a partial catalog, an unlisted base remains
-unknown; an exact listed base still has a complete capability-name set. Failed
-or malformed discovery also means unknown, and does not discard work.
+Before claiming a lease, Pulse checks the listed job requirements against the
+target's launch services. One advertised base must match the selector and
+supply every requested capability, even when the provider marks its catalog
+partial. Pulse refreshes these catalogs each poll. Jobs skipped at this step
+remain available in JobDB without a Pulse cooldown.
 
-Native container adapters advertise their named bases as a partial catalog because
-they also accept dynamic legacy `oci:` image requests. Legacy remote/plugin
-transports expose unknown support because their protocol lacks discovery. Thus
-these providers may still receive a request they subsequently decline. Resource
-limits, deadlines, and current capacity are always checked at admission. When
-all providers are provably incompatible, Pulse releases the claimed lease with
-backoff. Accepted or uncertain submissions never trigger fallback.
+Unavailable, invalid, or unknown discovery leaves the provider eligible for
+placement. Pulse defers unreadable listed requirements to the lease snapshot.
+Jobs explicitly requesting an image, a platform, or an `oci:` selector are
+skipped before lease acquisition.
+
+Pulse refreshes capabilities per batch before submitting and checks the current
+leased demand again. Providers check resources, deadlines, and current capacity
+at admission. If all providers rule out the leased demand, Pulse releases the
+unused lease with backoff. Accepted or uncertain submissions retain the lease.

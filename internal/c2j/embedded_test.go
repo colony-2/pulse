@@ -100,7 +100,7 @@ func TestEmbeddedProjectionPaginationAndIsolation(t *testing.T) {
 			if j.Tenant != tenant || j.Repository != "github.com/acme/app" || j.Next.TaskType != "input:opaque" || !j.AvailableAt.Equal(now) || !j.CancelRequested || j.Execution.Status != "specified" || j.Execution.Source != "yield" || !reflect.DeepEqual(j.Execution.Demand, &current.Demand) || !reflect.DeepEqual(j.Execution.Initial, &demand) || !reflect.DeepEqual(execution.Inspect(j.Metadata, nil).Initial, &demand) {
 				t.Errorf("lost typed data: %+v", j)
 			}
-			a, err := j.Allocation(provider.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Base: "oci:linux/amd64:docker.io/library/alpine:3"})
+			a, err := j.Allocation(provider.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Base: "ubuntu-26.04-amd64"})
 			if err != nil || a.MemoryBytes != 16<<30 {
 				t.Error("list projection lost stored demand", a, err)
 			}

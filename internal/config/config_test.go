@@ -11,8 +11,7 @@ import (
 )
 
 const valid = `defaults:
-  image: alpine:3
-  platform: linux/arm64
+  base: ubuntu-26.04-arm64
   cpu: "1"
   memory: 1Gi
   scratch: 1Gi
@@ -129,15 +128,15 @@ func TestConfigurationSourceSelection(t *testing.T) {
 	if err := os.WriteFile("pulse.yaml", file, 0600); err != nil {
 		t.Fatal(err)
 	}
-	inline := strings.Replace(valid, "alpine:3", "alpine:env", 1)
+	inline := strings.Replace(valid, "ubuntu-26.04-arm64", "ubuntu-26.04-amd64", 1)
 	for _, tt := range []struct {
-		name, path, value, wantImage, wantError string
-		set                                     bool
+		name, path, value, wantBase, wantError string
+		set                                    bool
 	}{
-		{name: "default file", wantImage: "alpine:3"},
-		{name: "inline over default", set: true, value: inline, wantImage: "alpine:env"},
-		{name: "explicit file over inline", path: "pulse.yaml", set: true, value: inline, wantImage: "alpine:3"},
-		{name: "explicit file over invalid inline", path: "pulse.yaml", set: true, value: "[invalid", wantImage: "alpine:3"},
+		{name: "default file", wantBase: "ubuntu-26.04-arm64"},
+		{name: "inline over default", set: true, value: inline, wantBase: "ubuntu-26.04-amd64"},
+		{name: "explicit file over inline", path: "pulse.yaml", set: true, value: inline, wantBase: "ubuntu-26.04-arm64"},
+		{name: "explicit file over invalid inline", path: "pulse.yaml", set: true, value: "[invalid", wantBase: "ubuntu-26.04-arm64"},
 		{name: "missing explicit file", path: "missing.yaml", set: true, value: inline, wantError: "missing.yaml"},
 		{name: "empty inline", set: true, wantError: "PULSE_CONFIG"},
 		{name: "blank inline", set: true, value: " \n\t", wantError: "PULSE_CONFIG"},
@@ -165,8 +164,8 @@ func TestConfigurationSourceSelection(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if cfg.Defaults.Image != tt.wantImage {
-				t.Fatalf("got %q want %q", cfg.Defaults.Image, tt.wantImage)
+			if cfg.Allocation.Base != tt.wantBase {
+				t.Fatalf("got %q want %q", cfg.Allocation.Base, tt.wantBase)
 			}
 		})
 	}
@@ -327,8 +326,10 @@ func TestBaseSelectorsAndCapabilities(t *testing.T) {
 			t.Fatal(cfg, err)
 		}
 	}
-	if _, err := Parse([]byte("targets: [{jobdb: 'https://db/tenant'}]\ndefaults: {base: ubuntu*, image: alpine:3}")); err == nil {
-		t.Fatal("ambiguous base/image accepted")
+	for _, fields := range []string{"image: alpine:3", "platform: linux/amd64", "base: 'oci:linux/amd64:docker.io/library/alpine:3'"} {
+		if _, err := Parse([]byte("targets: [{jobdb: 'https://db/tenant'}]\ndefaults: {" + fields + "}")); err == nil {
+			t.Fatalf("unsupported execution selector accepted: %s", fields)
+		}
 	}
 	if _, err := Parse([]byte("targets: [{jobdb: 'https://db/tenant'}]\ndefaults: {capabilities: [INVALID]}")); err == nil {
 		t.Fatal("invalid c2j capability accepted")

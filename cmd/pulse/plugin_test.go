@@ -62,7 +62,7 @@ func TestCLIPluginLifecycle(t *testing.T) {
 		}
 	}))
 	defer native.Close()
-	cfg := map[string]any{"http": map[string]any{"listen": "127.0.0.1:0"}, "defaults": map[string]any{"platform": "linux/amd64"}, "providers": map[string]any{"custom": map[string]any{"type": "plugin", "plugin": map[string]any{"command": plugin, "config": map[string]any{"endpoint": native.URL, "token_file": "token"}}}}, "targets": []any{map[string]any{"instance_id": "test", "jobdb": db.URL + "/tenant", "launch_services": []any{map[string]any{"name": "custom", "priority": 1}}}}}
+	cfg := map[string]any{"http": map[string]any{"listen": "127.0.0.1:0"}, "defaults": map[string]any{"base": "ubuntu-26.04-amd64"}, "providers": map[string]any{"custom": map[string]any{"type": "plugin", "plugin": map[string]any{"command": plugin, "config": map[string]any{"endpoint": native.URL, "token_file": "token"}}}}, "targets": []any{map[string]any{"instance_id": "test", "jobdb": db.URL + "/tenant", "launch_services": []any{map[string]any{"name": "custom", "priority": 1}}}}}
 	data, _ := yaml.Marshal(cfg)
 	path := filepath.Join(dir, "pulse.yaml")
 	if e := os.WriteFile(path, data, 0600); e != nil {

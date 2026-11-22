@@ -45,7 +45,7 @@ func TestClaimExportSnapshotAndRelease(t *testing.T) {
 	if err != nil || claimed == nil {
 		t.Fatal(err)
 	}
-	a, err := claimed.Job.Allocation(provider.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Base: "oci:linux/amd64:docker.io/library/runner:1"})
+	a, err := claimed.Job.Allocation(provider.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Base: "ubuntu-26.04-amd64"})
 	if err != nil || a.MemoryBytes != 8<<30 || a.Base != base {
 		t.Fatal("did not use leased demand", a, err)
 	}

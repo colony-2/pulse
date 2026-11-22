@@ -97,8 +97,6 @@ type Config struct {
 	Defaults         struct {
 		Base         string            `yaml:"base"`
 		Capabilities []string          `yaml:"capabilities"`
-		Image        string            `yaml:"image,omitempty"`
-		Platform     string            `yaml:"platform"`
 		CPU          string            `yaml:"cpu"`
 		Memory       string            `yaml:"memory"`
 		Scratch      string            `yaml:"scratch"`
@@ -168,31 +166,8 @@ func parse(ctx context.Context, b []byte, overrides Overrides) (*Config, error) 
 			c.Targets[i].JobDB = uri
 		}
 	}
-	if c.Defaults.Base != "" && c.Defaults.Image != "" {
-		return nil, fmt.Errorf("defaults.base and legacy defaults.image are mutually exclusive")
-	}
-	if c.Defaults.Image != "" {
-		if c.Defaults.Platform == "" {
-			c.Defaults.Platform = "linux/arm64"
-		}
-		c.Defaults.Base, err = bases.OCI(c.Defaults.Image, strings.ToLower(c.Defaults.Platform))
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		if c.Defaults.Base == "" {
-			c.Defaults.Base = bases.Default
-		}
-		if c.Defaults.Platform != "" {
-			selector := c.Defaults.Base
-			if selector == bases.Default {
-				selector = "ubuntu-26*"
-			}
-			c.Defaults.Base, err = bases.Constrain(selector, strings.ToLower(c.Defaults.Platform))
-			if err != nil {
-				return nil, err
-			}
-		}
+	if c.Defaults.Base == "" {
+		c.Defaults.Base = bases.Default
 	}
 	for key := range c.Defaults.Env {
 		if strings.HasPrefix(key, "C2J_EXECUTION_") || key == "C2J_JOBDB" || strings.HasPrefix(key, "PULSE_") {

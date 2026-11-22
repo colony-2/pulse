@@ -149,7 +149,7 @@ func TestCapabilitiesAndResolutionPreferNativePlatform(t *testing.T) {
 			b := &backend{result: []compute.Submission{{LaunchID: "native", Status: compute.Accepted}}}
 			p := &Provider{Native: b, Platforms: []string{native, alternate}}
 			caps, err := p.GetCapabilities(t.Context())
-			if err != nil || caps.BasesComplete || len(caps.Bases) != 2 {
+			if err != nil || !caps.BasesComplete || len(caps.Bases) != 2 {
 				t.Fatal(caps, err)
 			}
 			l := assignment("native")

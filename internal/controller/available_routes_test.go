@@ -77,7 +77,7 @@ func TestAvailableRouteDiscoveryAndAdmission(t *testing.T) {
 			}
 
 			cfg := &config.Config{Call: time.Second, Batch: time.Second, Lease: time.Minute, Cool: time.Minute, BatchSize: 10, PerTenant: 10, MaxPages: 10, ExecutionTimeout: time.Hour,
-				Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Base: "oci:linux/arm64:docker.io/library/runner:1"}}
+				Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30, Base: "ubuntu-26.04-arm64"}}
 			cfg.Defaults.Routes = []c2j.Route{{JobType: "recipe"}}
 			wantRoute := jobRoute
 			if changed {

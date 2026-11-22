@@ -30,7 +30,7 @@ func TestPackageBearingDemandUsesC2JProjection(t *testing.T) {
 		t.Fatal(view)
 	}
 	job := Job{Tenant: "tenant", ID: "job", Execution: &view}
-	want := provider.Allocation{Base: "oci:linux/arm64:ghcr.io/colony-2/base2:latest", CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30}
+	want := provider.Allocation{Base: "ubuntu-26.04-arm64", CPUMillis: 1000, MemoryBytes: 1 << 30, ScratchBytes: 1 << 30}
 	got, err := job.Allocation(want)
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatal(got, err)
@@ -46,8 +46,8 @@ func TestDemandAndRoute(t *testing.T) {
 	if j.Next == nil || j.Next.TaskType != "input:with, spaces" {
 		t.Fatal("opaque route not preserved")
 	}
-	a, e := j.Allocation(provider.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Base: "oci:linux/amd64:docker.io/library/alpine:3"})
-	if e != nil || a.MemoryBytes != 4<<30 || a.Base != "oci:linux/amd64:docker.io/library/alpine:3" {
+	a, e := j.Allocation(provider.Allocation{CPUMillis: 1000, MemoryBytes: 1024, ScratchBytes: 1024, Base: "ubuntu-26.04-amd64"})
+	if e != nil || a.MemoryBytes != 4<<30 || a.Base != "ubuntu-26.04-amd64" {
 		t.Fatal(a, e)
 	}
 	j.Execution.Status = "unsupported"
@@ -69,7 +69,7 @@ func TestUnspecifiedJobResources(t *testing.T) {
 		if err := json.Unmarshal([]byte(raw), &job); err != nil {
 			t.Fatal(err)
 		}
-		a, err := job.Allocation(provider.Allocation{Base: "oci:linux/arm64:ghcr.io/colony-2/base2:latest"})
+		a, err := job.Allocation(provider.Allocation{Base: "ubuntu-26.04-arm64"})
 		if err != nil || a.CPUMillis != 0 || a.ScratchBytes != 0 {
 			t.Fatal(a, err)
 		}
@@ -106,7 +106,7 @@ func TestRecordedLegacyC2JListRejected(t *testing.T) {
 	if e != nil || len(page.Jobs) != 1 {
 		t.Fatal(page, e)
 	}
-	_, e = page.Jobs[0].Allocation(provider.Allocation{CPUMillis: 250, MemoryBytes: 1 << 20, ScratchBytes: 1 << 20, Base: "oci:linux/arm64:registry.example/runner:1"})
+	_, e = page.Jobs[0].Allocation(provider.Allocation{CPUMillis: 250, MemoryBytes: 1 << 20, ScratchBytes: 1 << 20, Base: "ubuntu-26.04-arm64"})
 	if e == nil || !strings.Contains(e.Error(), "unsupported execution schema version 1") {
 		t.Fatal("legacy demand accepted", e)
 	}
@@ -149,7 +149,6 @@ func TestRequestedPinnedImagePassesC2JCompatibility(t *testing.T) {
 }
 
 func TestCapabilitiesAndBaseDefaultFromClaimedDemand(t *testing.T) {
-	image, platform := "alpine:3", "linux/amd64"
 	ubuntu, macos, custom := "ubuntu-26*arm64", "macos*", "custom-runner"
 	for _, tt := range []struct {
 		req  execution.Requirements
@@ -159,8 +158,6 @@ func TestCapabilitiesAndBaseDefaultFromClaimedDemand(t *testing.T) {
 		{execution.Requirements{Base: &macos, Capabilities: []string{"git", "nix"}}, macos},
 		{execution.Requirements{Base: &custom}, custom},
 		{execution.Requirements{Capabilities: []string{"docker"}}, bases.Default},
-		{execution.Requirements{Platform: &platform}, "ubuntu-26.04-amd64"},
-		{execution.Requirements{Image: &image, Platform: &platform}, "oci:linux/amd64:docker.io/library/alpine:3"},
 	} {
 		demand, err := execution.Initial(nil, true, tt.req)
 		if err != nil {
@@ -204,7 +201,7 @@ func TestAllocationDiagnosticKnowledge(t *testing.T) {
 	for _, tc := range []struct{ name, base, platform string }{
 		{"wildcard", "ubuntu-26*", ""},
 		{"exact", "ubuntu-26.04-arm64", "linux/arm64"},
-		{"native", "oci:linux/amd64:docker.io/library/alpine:3", "linux/amd64"},
+		{"amd64", "ubuntu-26.04-amd64", "linux/amd64"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			j := Job{ID: "j", Tenant: "t", Execution: &View{Status: "unresolved"}}
@@ -229,8 +226,8 @@ func TestAllocationDiagnosticKnowledge(t *testing.T) {
 			}
 		})
 	}
-	platform := "linux/amd64"
-	demand, err := execution.Initial(nil, true, execution.Requirements{Platform: &platform})
+	base := "ubuntu-26.04-amd64"
+	demand, err := execution.Initial(nil, true, execution.Requirements{Base: &base})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +241,7 @@ func TestAllocationDiagnosticKnowledge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Platform.Value != platform {
+	if a.Base != base || d.Platform.Value != "linux/amd64" {
 		t.Fatal(d)
 	}
 	j.Execution = nil

@@ -44,7 +44,7 @@ pulse run --once
 pulse version
 ```
 
-Pulse discovers eligible c2j jobs across every repository in the tenant. Docker is the default provider, and jobs without an image/base request use the selector `ubuntu-26*`, resolving to a supported Ubuntu 26.04 base backed by `ghcr.io/colony-2/base2:latest`. Jobs without resource requirements have no CPU, memory, or scratch allocation, and Docker has no default container-count cap. Docker detects native and emulated execution support and prefers its daemon's native architecture on macOS and Linux. Explicit base selectors still constrain the architecture.
+Pulse discovers eligible c2j jobs across every repository in the tenant. Docker is the default provider, and jobs without a base request use the selector `ubuntu-26*`, resolving to a supported Ubuntu 26.04 base backed by `ghcr.io/colony-2/base2:latest`. Jobs without resource requirements have no CPU, memory, or scratch allocation, and Docker has no default container-count cap. Docker detects native and emulated execution support and prefers its daemon's native architecture on macOS and Linux. Explicit base selectors still constrain the architecture.
 
 For Colony base images, Docker automatically retains uv, pnpm, and Nix dependencies
 in tenant-scoped volumes across jobs and restarts. No Nix daemon or manual cache
@@ -70,7 +70,7 @@ docker run --rm --init \
 
 The file is read on the host. In a deployment console, set `PULSE_CONFIG` directly to the YAML contents. Keep credentials in separate secret/environment settings or use the hosting platform's identity. For repeatable deployments, select a release tag such as `:vX.Y.Z` or an image digest.
 
-The image is distroless, runs as UID/GID `65532:65532`, and contains Pulse, its execution supervisor, and CA certificates. It includes native cloud authentication and needs no shell, Node.js, Git, cloud CLI, or separate c2j executable. Configure `defaults.base` with an environment selector. Legacy `defaults.image` plus `defaults.platform` remain supported for explicit OCI images.
+The image is distroless, runs as UID/GID `65532:65532`, and contains Pulse, its execution supervisor, and CA certificates. It includes native cloud authentication and needs no shell, Node.js, Git, cloud CLI, or separate c2j executable. Select an executor environment with `defaults.base` or a job's `base` requirement.
 
 For mounted YAML, pass the file path explicitly:
 

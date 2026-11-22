@@ -37,12 +37,11 @@ platform. Preserve existing support for other native Linux platforms. This is a
 bounded discovery policy, not a claim to enumerate every possible architecture.
 
 There is no `platforms` setting in the initial implementation. Use `defaults.base`
-to select an execution environment; legacy
-`defaults.platform` remains a compatibility constraint. Neither restricts the
-provider's detected execution support.
+to select an execution environment. Docker detects its platform support
+independently of this selector.
 
-This intentionally expands admission on capable daemons. Jobs without an
-image/base request default to `ubuntu-26*`, preferring the daemon's native
+This intentionally expands admission on capable daemons. Jobs without a base
+request default to `ubuntu-26*`, preferring the daemon's native
 architecture before verified emulation.
 
 ## Execution capability validation
@@ -104,12 +103,12 @@ NativePlatform() string
 SupportedPlatforms() []string
 ```
 
-A job with an explicit platform must run on exactly that platform. Base selectors
-resolve only against environments whose platforms the provider can execute.
+Base selectors resolve only against environments whose platforms the provider
+can execute.
 The default selector `ubuntu-26*` permits either architecture and prefers the
 daemon's native platform. Explicit `ubuntu-26*arm64` requests remain ARM64.
 If no supported environment matches, the provider declines through the existing
-fallback flow. Legacy `defaults.platform` remains an explicit constraint.
+fallback flow.
 
 Both architectures can be submitted to the same provider. There is no
 architecture rewriting or automatic retry on another architecture. The native
@@ -216,8 +215,8 @@ comparison for aliases.
 
 ## Acceptance criteria
 
-- Legacy image/platform configuration remains supported. The new default base
-  selects ARM64, and explicit architecture constraints are never broadened.
+- The default base prefers the daemon's native architecture. A base selector
+  that specifies an architecture keeps that constraint.
 - Apple Silicon automatically discovers working amd64 execution and runs arm64
   and amd64 jobs concurrently.
 - Discovery depends on the selected daemon, including when the controller runs

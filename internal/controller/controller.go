@@ -60,6 +60,7 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 	targets = append(targets[offset:], targets[:offset]...)
 	var errs []error
 	preparation := map[string]placement.ProviderPreparation{}
+	catalogs := map[string]provider.Capabilities{}
 	for name, provider := range c.Providers {
 		preparation[name] = placement.UnknownProviderPreparation()
 		if maintenance, ok := provider.(interface{ Maintain(context.Context) error }); ok {
@@ -109,6 +110,9 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 				}
 				if j.ID == "" {
 					errs = append(errs, errors.New("missing job identity"))
+					continue
+				}
+				if !c.matchesListedDemand(ctx, j, services, catalogs) {
 					continue
 				}
 				id := compute.NewID()

@@ -168,7 +168,7 @@ func TestCLIThroughListingAndProviderProtocols(t *testing.T) {
 				"targets":   []any{map[string]any{"launch_services": []any{map[string]any{"name": "remote", "priority": 1}}}},
 			}
 			if isPlugin {
-				cfg["defaults"] = map[string]any{"platform": "linux/amd64"}
+				cfg["defaults"] = map[string]any{"base": "ubuntu-26.04-arm64"}
 				cfg["providers"] = map[string]any{"remote": map[string]any{"type": "plugin", "plugin": map[string]any{"command": pluginBinary, "pass_env": []string{"PULSE_TEST_PROVIDER_TOKEN"}, "config": map[string]any{"endpoint": server.URL, "token_env": "PULSE_TEST_PROVIDER_TOKEN"}}}}
 			}
 			if isHTTPPlugin {
@@ -239,7 +239,7 @@ func TestCLIHTTPAndShutdown(t *testing.T) {
 	defer provider.Close()
 	cfg := map[string]any{
 		"http":      map[string]any{"listen": "127.0.0.1:0"},
-		"defaults":  map[string]any{"image": "registry.example/runner:1", "platform": "linux/amd64", "cpu": "1", "memory": "1Gi", "scratch": "1Gi"},
+		"defaults":  map[string]any{"base": "ubuntu-26.04-amd64", "cpu": "1", "memory": "1Gi", "scratch": "1Gi"},
 		"providers": map[string]any{"pool": map[string]any{"type": "remote", "endpoint": provider.URL, "allow_http": true, "token_env": "PULSE_TEST_PROVIDER_TOKEN"}},
 		"targets":   []any{map[string]any{"instance_id": "test", "jobdb": db.URL + "/acme", "launch_services": []any{map[string]any{"name": "pool", "priority": 1}}}},
 	}

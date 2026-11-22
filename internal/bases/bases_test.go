@@ -1,6 +1,9 @@
 package bases
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestSelectorMatching(t *testing.T) {
 	for _, tt := range []struct {
@@ -48,19 +51,9 @@ func TestCatalogAndArchitectureConstraints(t *testing.T) {
 		}
 	}
 }
-func TestLegacyImageIdentityIsExact(t *testing.T) {
-	selector, err := OCI("alpine:3", "linux/amd64")
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := Resolve(selector, nil)
-	if err != nil || b.Image != "docker.io/library/alpine:3" || b.Platform != "linux/amd64" {
-		t.Fatal(b, err)
-	}
-	if _, err = Resolve(selector, []string{"linux/arm64"}); err == nil {
-		t.Fatal("platform constraint ignored")
-	}
-	if _, err = Resolve("oci:linux/amd64:alpine:*", nil); err == nil {
-		t.Fatal("legacy image glob accepted")
+func TestImageSelectorRejected(t *testing.T) {
+	selector := "oci:linux/amd64:docker.io/library/alpine:3"
+	if _, err := Resolve(selector, nil); !errors.Is(err, ErrUnsupportedSelector) {
+		t.Fatalf("expected unsupported selector, got %v", err)
 	}
 }

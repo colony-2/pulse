@@ -185,17 +185,7 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 			copy(ordered[index:end], rotated)
 		}
 		p := ordered[index]
-		call, cancel := context.WithTimeout(ctx, s.CallTimeout)
-		capabilities, discoveryErr := p.Provider.GetCapabilities(call)
-		cancel()
-		var validationErr error
-		if discoveryErr == nil {
-			validationErr = providerutil.Capabilities(capabilities)
-		}
-		if discoveryErr != nil || validationErr != nil {
-			// Failed/malformed discovery is unknown, never an empty catalog.
-			capabilities = provider.Capabilities{}
-		}
+		capabilities, discoveryErr, validationErr := providerutil.DiscoverCapabilities(ctx, p.Provider, s.CallTimeout)
 
 		next := []Job{}
 		launches := make([]provider.Launch, 0, len(pending))

@@ -5,9 +5,8 @@
 poll_interval: 5s
 cooldown: 60s
 defaults:
-  # This is the image launched for jobs; select your workload's executor image.
-  image: registry.example/c2j-runner:1.0
-  platform: linux/amd64
+  # Select an execution base for jobs that omit one.
+  base: ubuntu-26.04-amd64
   cpu: "1"
   memory: 1Gi
   scratch: 1Gi

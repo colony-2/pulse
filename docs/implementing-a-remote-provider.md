@@ -136,8 +136,7 @@ cooldown: 60s
 call_timeout: 10s
 batch_timeout: 1m
 defaults:
-  image: registry.example/runner:1.2
-  platform: linux/amd64
+  base: ubuntu-26.04-amd64
   cpu: "1"
   memory: 1Gi
   scratch: 1Gi

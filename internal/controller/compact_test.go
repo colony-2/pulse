@@ -27,11 +27,11 @@ import (
 // Use real HTTP discovery and leases, including a yield between the
 // two. No detail reads are permitted during the controller pass.
 func TestDiscoveryUsesLeasedDemand(t *testing.T) {
-	for _, mode := range []string{"changed demand", "absent demand", "unresolved overrides", "no metadata", "malformed demand", "unsupported demand", "malformed metadata", "unsupported metadata", "cancelled after discovery"} {
+	for _, mode := range []string{"changed demand", "absent demand", "unresolved overrides", "no metadata", "malformed demand", "unsupported demand", "unsupported selector", "malformed metadata", "unsupported metadata", "cancelled after discovery"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := celltest.Context(t.Context())
-			cpu, memory, image := "2", "2Gi", "registry.example/submitted:1"
-			initial, err := execution.Initial(nil, mode != "unresolved overrides", execution.Requirements{Resources: execution.Resources{CPU: &cpu, Memory: &memory}, Image: &image})
+			cpu, memory, base := "2", "2Gi", "ubuntu-26.04-arm64"
+			initial, err := execution.Initial(nil, mode != "unresolved overrides", execution.Requirements{Resources: execution.Resources{CPU: &cpu, Memory: &memory}, Base: &base})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -82,9 +82,12 @@ func TestDiscoveryUsesLeasedDemand(t *testing.T) {
 				}
 				var payload json.RawMessage
 				switch mode {
-				case "changed demand":
-					cpu, memory, image := "4", "8Gi", "registry.example/leased:2"
-					current, err := execution.Initial(nil, true, execution.Requirements{Resources: execution.Resources{CPU: &cpu, Memory: &memory}, Image: &image})
+				case "changed demand", "unsupported selector":
+					cpu, memory, base := "4", "8Gi", "ubuntu-26.04-amd64"
+					if mode == "unsupported selector" {
+						base = "oci:linux/amd64:docker.io/library/alpine:3"
+					}
+					current, err := execution.Initial(nil, true, execution.Requirements{Resources: execution.Resources{CPU: &cpu, Memory: &memory}, Base: &base})
 					if err != nil {
 						return page, err
 					}
@@ -114,7 +117,7 @@ func TestDiscoveryUsesLeasedDemand(t *testing.T) {
 				return client.Claim(ctx, uri, j, worker, duration, routes)
 			})
 			cfg := &config.Config{Call: time.Second, Batch: time.Second, Lease: time.Minute, Cool: time.Minute, BatchSize: 10, PerTenant: 10, MaxPages: 1,
-				Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, Base: "oci:linux/amd64:registry.example/default:1"}}
+				Allocation: compute.Allocation{CPUMillis: 1000, MemoryBytes: 1 << 30, Base: "ubuntu-26*"}}
 			cfg.Defaults.Routes = []c2j.Route{{JobType: "recipe"}}
 			cfg.Targets = []config.Target{{Instance: "db", JobDB: uri, Tenant: "tenant", Services: []config.Service{{Name: "p", Priority: 1}}}}
 			provider := &accept{}
@@ -154,17 +157,17 @@ func TestDiscoveryUsesLeasedDemand(t *testing.T) {
 			if len(provider.requests) != 1 {
 				t.Fatal("missing launch")
 			}
-			wantCPU, wantMemory, wantImage := int64(2000), int64(2<<30), image
+			wantCPU, wantMemory, wantBase := int64(2000), int64(2<<30), base
 
 			if mode == "changed demand" {
-				wantCPU, wantMemory, wantImage = 4000, 8<<30, "registry.example/leased:2"
+				wantCPU, wantMemory, wantBase = 4000, 8<<30, "ubuntu-26.04-amd64"
 
 			} else if mode == "no metadata" {
-				wantCPU, wantMemory, wantImage = 1000, 1<<30, "registry.example/default:1"
+				wantCPU, wantMemory, wantBase = 1000, 1<<30, "ubuntu-26*"
 
 			}
 			request := provider.requests[0]
-			if request.CPUMillis != wantCPU || request.MemoryBytes != wantMemory || request.Base != "oci:linux/amd64:"+wantImage {
+			if request.CPUMillis != wantCPU || request.MemoryBytes != wantMemory || request.Base != wantBase {
 				t.Fatal("provider request or executor environment did not use loaded demand")
 			}
 			if request.Lease == "" || strings.Contains(logs.String(), string(request.Lease)) {

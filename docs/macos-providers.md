@@ -134,9 +134,8 @@ launch attempt for that assignment.
 Default guests are macOS ARM64 and Ubuntu 24.04 ARM64; Linux includes Docker.
 Scratch reservations, positive infrastructure timeouts, start-before deadlines, and `defaults.env` are not
 supported and are declined. Use c2j recipe timeouts. Capabilities and resource
-requirements are passed to the library for admission and verification. The
-legacy c2j image/platform compatibility path remains container-oriented: use
-`defaults.base` for VZ and omit legacy image/platform requests.
+requirements are passed to the library for admission and verification. Use
+`defaults.base` or a job's `base` requirement to select the guest environment.
 Supply a JobDB URL reachable from the VM; Docker's loopback-host rewrite does not
 apply to VZ.
 

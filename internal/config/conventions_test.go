@@ -76,11 +76,11 @@ func TestTenantTargetsAndDefaultOverrides(t *testing.T) {
 			t.Fatalf("invalid targets accepted: %s", data)
 		}
 	}
-	cfg, err := Parse([]byte("targets: [{jobdb: 'https://db.example/t'}]\ndefaults: {image: 'alpine:3', platform: linux/amd64, cpu: '2', memory: 2Gi, scratch: 3Gi}"))
+	cfg, err := Parse([]byte("targets: [{jobdb: 'https://db.example/t'}]\ndefaults: {base: ubuntu-26.04-amd64, cpu: '2', memory: 2Gi, scratch: 3Gi}"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Allocation.Base != "oci:linux/amd64:docker.io/library/alpine:3" || cfg.Allocation.CPUMillis != 2000 || cfg.Allocation.MemoryBytes != 2<<30 || cfg.Allocation.ScratchBytes != 3<<30 {
+	if cfg.Allocation.Base != "ubuntu-26.04-amd64" || cfg.Allocation.CPUMillis != 2000 || cfg.Allocation.MemoryBytes != 2<<30 || cfg.Allocation.ScratchBytes != 3<<30 {
 		t.Fatalf("ignored overrides: %+v", cfg.Allocation)
 	}
 }
