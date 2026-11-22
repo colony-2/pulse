@@ -116,6 +116,14 @@ type Config struct {
 	Lease                                                  time.Duration       `yaml:"-"`
 }
 
+// LaunchLogDirectory resolves the configured archive path relative to the config source.
+func (c *Config) LaunchLogDirectory() string {
+	if c.LogDirectory == "" || filepath.IsAbs(c.LogDirectory) {
+		return c.LogDirectory
+	}
+	return filepath.Join(c.BaseDir, c.LogDirectory)
+}
+
 func Load(path string) (*Config, error) {
 	b, e := os.ReadFile(path)
 	if e != nil {

@@ -70,8 +70,8 @@ github.com/colony-2/c2j v0.0.129-0.20261115173350-cd211e6aead8 h1:521aimHIkwtPi4
 github.com/colony-2/c2j v0.0.129-0.20261115173350-cd211e6aead8/go.mod h1:k/Q5SSmosfn3af5oRvsa+4t8tIeK3OWmo+FDH+Ywyaw=
 github.com/colony-2/jobdb v0.0.86 h1:R1sl0miyVd9Y6XJjFtb97ifxLzmLqrl6zOUVP23r7iQ=
 github.com/colony-2/jobdb v0.0.86/go.mod h1:45c4NbbKzZt8uRHgWUktOoGhsTkO8ogELlfxdqXJ4Ek=
-github.com/colony-2/pulse-docker v0.0.0-20261122011005-5deb4b8b5a1e h1:dVsWmVCphaUZsEwaM0sBVyoQzvOC36LKdx4v0lyiMZA=
-github.com/colony-2/pulse-docker v0.0.0-20261122011005-5deb4b8b5a1e/go.mod h1:KVCFxXMKTelu1rmetgowXh7L/bbJtIg3aqKU0dxyhYg=
+github.com/colony-2/pulse-docker v0.0.0-20261122071840-cdb3fd229c5c h1:yltKIPlPekSetnGVfnF1AnWGHDFUjgj7LiHZdQoDIco=
+github.com/colony-2/pulse-docker v0.0.0-20261122071840-cdb3fd229c5c/go.mod h1:D6IUnTLqSa8u/x4dGvkiCE0Fpm7Ij8hr14D9Lh9ZQCA=
 github.com/colony-2/pulse-macvz v0.0.0-20261122042502-fcfcf56a4783 h1:pU7zbmIcqJ1284HOoovAEmRdHgfl648LxlWz1nUw2LM=
 github.com/colony-2/pulse-macvz v0.0.0-20261122042502-fcfcf56a4783/go.mod h1:5Q+LsrGou3XBgjI38JOl+9LiNIaizhS+tbPC+L0znOk=
 github.com/colony-2/pulse-provider-api v0.0.0-20261121205737-bd1a5c559150 h1:2GXzv4MwSZ+vpahbr0YKDrgqWFJnL6mgf0z0VDZ+eXo=

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -36,7 +37,7 @@ const c2jIntegrationImage = "ghcr.io/colony-2/base2:latest"
 // harness or a binary copied out of the module cache. It deliberately runs in
 // ordinary go test ./..., on both Docker Desktop and local Linux daemons.
 func TestDockerC2JIntegration(t *testing.T) {
-	runDockerC2J(t, "linux/arm64", []string{"success and heartbeat", "peer connectivity", "host gateway connectivity", "localhost JobDB", "reverse provider", "recipe failure", "recipe timeout", "lease import transport failure", "heartbeat transport failure"})
+	runDockerC2J(t, "linux/arm64", []string{"success and heartbeat", "peer connectivity", "host gateway connectivity", "localhost JobDB", "retained logs", "reverse provider", "recipe failure", "recipe timeout", "lease import transport failure", "heartbeat transport failure"})
 }
 
 func runDockerC2J(t *testing.T, platform string, scenarios []string) {
@@ -164,6 +165,7 @@ func runDockerC2J(t *testing.T, platform string, scenarios []string) {
 			endpoint, _ := url.Parse(jobDB)
 			cmd.Env = append(cmd.Env, "NO_PROXY="+os.Getenv("NO_PROXY")+","+os.Getenv("no_proxy")+","+endpoint.Hostname())
 			var out []byte
+			var logHandler http.Handler
 			// Register before launch so an uncertain/failed submission is cleaned up too.
 			t.Cleanup(func() {
 				cleanup, stop := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -199,9 +201,12 @@ func runDockerC2J(t *testing.T, platform string, scenarios []string) {
 					}
 				}
 			})
-			if scenario == "reverse provider" {
+			switch scenario {
+			case "reverse provider":
 				out, err = runReverseDockerOnce(t, ctx, jobDB, f.url+"/docker-test", socket)
-			} else {
+			case "retained logs":
+				out, logHandler, err = runDockerRetainedOnce(t, ctx, jobDB, socket)
+			default:
 				out, err = cmd.CombinedOutput()
 			}
 			if err != nil {
@@ -212,6 +217,10 @@ func runDockerC2J(t *testing.T, platform string, scenarios []string) {
 				t.Fatalf("expected one launched c2j container, got %v\nPulse: %s", ids, out)
 			}
 			id := ids[0]
+			var launchID string
+			if logHandler != nil {
+				launchID = docker(t, "inspect", "--format", `{{index .Config.Labels "pulse_launch_id"}}`, id)
+			}
 			observation := observeDocker(t, ctx, socket, id)
 			f.control(t, "observed")
 			code, logs := observation.finish(t, ctx)
@@ -229,7 +238,7 @@ func runDockerC2J(t *testing.T, platform string, scenarios []string) {
 				t.Fatal("executor continued after losing authority")
 			}
 			switch scenario {
-			case "success and heartbeat", "peer connectivity", "host gateway connectivity", "localhost JobDB", "reverse provider":
+			case "success and heartbeat", "peer connectivity", "host gateway connectivity", "localhost JobDB", "retained logs", "reverse provider":
 				minimumRenewals := int32(2) // Import and runner validation.
 				if scenario == "success and heartbeat" {
 					minimumRenewals = 3 // Also require a background renewal.
@@ -268,6 +277,10 @@ func runDockerC2J(t *testing.T, platform string, scenarios []string) {
 				}
 				if artifacts == 0 {
 					t.Fatal("executor did not persist execution artifacts")
+				}
+				if logHandler != nil {
+					waitForDockerRetainedLogs(t, ctx, logHandler, launchID)
+					break
 				}
 				// A subsequent controller pass must not claim or launch the
 				// completed job again, even after the original Pulse process exits.

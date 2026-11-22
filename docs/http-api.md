@@ -35,6 +35,9 @@ Provider names are configuration keys, such as `runner_pool_a`, rather than prov
 Set `log_directory` to save live provider output as local JSON Lines files.
 A relative directory resolves against the Pulse configuration directory.
 Use a separate directory for each controller.
+The local Docker provider stores its native archive under the `docker`
+subdirectory. Docker retains closed output for seven days by default, with a
+1 GiB archive budget per daemon.
 
 ```yaml
 log_directory: ./launch-logs

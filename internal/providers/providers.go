@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	docker "github.com/colony-2/pulse-docker"
 	provider "github.com/colony-2/pulse-provider-api"
@@ -123,7 +124,15 @@ func Build(ctx context.Context, cfg *config.Config) (map[string]provider.Provide
 				out[name] = out[prior.name]
 				continue
 			}
-			c, e := docker.New(ctx, dc)
+			options := docker.Options{}
+			if directory := cfg.LaunchLogDirectory(); directory != "" {
+				options.Logging = &docker.LoggingConfig{
+					Directory: filepath.Join(directory, "docker"),
+					Owner:     "pulse",
+					Compress:  true,
+				}
+			}
+			c, e := docker.NewWithOptions(ctx, dc, options)
 			if e != nil {
 				return fail(e)
 			}

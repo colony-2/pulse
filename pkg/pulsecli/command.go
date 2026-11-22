@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -123,10 +122,7 @@ func runPulse(parent context.Context, cfg *config.Config, once, check bool, out 
 	}
 	sched := scheduler.New(cfg.Cool, cfg.Call)
 	sched.ClaimConcurrency, sched.ClaimTimeout = cfg.ClaimConcurrency, cfg.Claim
-	if directory := cfg.LogDirectory; directory != "" {
-		if !filepath.IsAbs(directory) {
-			directory = filepath.Join(cfg.BaseDir, directory)
-		}
+	if directory := cfg.LaunchLogDirectory(); directory != "" {
 		sched.Logs, e = launchlogs.Open(ctx, directory, slog.Default())
 		if e != nil {
 			return fmt.Errorf("open launch log directory: %w", e)
