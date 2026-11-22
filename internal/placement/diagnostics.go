@@ -3,6 +3,7 @@
 package placement
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"time"
@@ -10,6 +11,10 @@ import (
 	api "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/bases"
 )
+
+type DiagnosticSubmitter interface {
+	SubmitWithDiagnostics(context.Context, []api.Launch, api.SubmitOptions) ([]api.Submission, map[string]SubmissionDetail, []api.LogSubscription, error)
+}
 
 type Fact struct {
 	State       string `json:"state"`

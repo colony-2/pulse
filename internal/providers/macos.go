@@ -208,17 +208,39 @@ func (p *macProvider) List(ctx context.Context, q api.ListRequest) (api.ListResp
 func (p *macProvider) GetCapabilities(ctx context.Context) (api.Capabilities, error) {
 	return p.runtime.GetCapabilities(ctx)
 }
-func (p *macProvider) Submit(ctx context.Context, launches []api.Launch, _ api.SubmitOptions) ([]api.Submission, api.LogSubscription, error) {
-	out, _, err := p.SubmitWithDiagnostics(ctx, launches)
-	return out, nil, err
+func (p *macProvider) GetLaunchLog(ctx context.Context, request api.LaunchLogRequest) (api.LaunchLogResponse, error) {
+	if logs, ok := p.runtime.(api.ProviderWithLaunchLogs); ok {
+		return logs.GetLaunchLog(ctx, request)
+	}
+	return api.LaunchLogResponse{}, api.ErrLaunchLogUnsupported
 }
 
-func (p *macProvider) SubmitWithDiagnostics(ctx context.Context, launches []api.Launch) ([]api.Submission, map[string]placement.SubmissionDetail, error) {
+func (p *macProvider) Submit(ctx context.Context, launches []api.Launch, options api.SubmitOptions) ([]api.Submission, api.LogSubscription, error) {
+	if options.Listener != nil && options.Listener.OnLog != nil && len(launches) > 1 {
+		listener := *options.Listener
+		onLog := listener.OnLog
+		var mu sync.Mutex
+		listener.OnLog = func(ctx context.Context, record api.LaunchLog) error {
+			mu.Lock()
+			defer mu.Unlock()
+			if ctx.Err() != nil {
+				return api.ErrStopListening
+			}
+			return onLog(ctx, record)
+		}
+		options.Listener = &listener
+	}
+	out, _, subscriptions, err := p.SubmitWithDiagnostics(ctx, launches, options)
+	return out, providerutil.JoinLogSubscriptions(options, subscriptions), err
+}
+
+func (p *macProvider) SubmitWithDiagnostics(ctx context.Context, launches []api.Launch, options api.SubmitOptions) ([]api.Submission, map[string]placement.SubmissionDetail, []api.LogSubscription, error) {
 	details := map[string]placement.SubmissionDetail{}
 	var errs []error
 	if err := providerutil.Launches(launches); err != nil {
-		return nil, details, err
+		return nil, details, nil, err
 	}
+	var subscriptions []api.LogSubscription
 	out := make([]api.Submission, 0, len(launches))
 	// Reconcile can spend minutes cloning a cold image under the library's
 	// state lock. Decline before dispatch instead of queuing a claimed lease.
@@ -226,7 +248,7 @@ func (p *macProvider) SubmitWithDiagnostics(ctx context.Context, launches []api.
 		for _, launch := range launches {
 			out = append(out, api.Submission{LaunchID: launch.LaunchID, Status: api.NoCapacity, Reason: "macOS slots are being reconciled"})
 		}
-		return out, details, errors.Join(errs...)
+		return out, details, nil, nil
 	}
 	defer p.activity.RUnlock()
 	for _, launch := range launches {
@@ -236,7 +258,10 @@ func (p *macProvider) SubmitWithDiagnostics(ctx context.Context, launches []api.
 			out = append(out, result)
 			continue
 		}
-		responses, _, err := p.runtime.Submit(ctx, []api.Launch{launch}, api.SubmitOptions{})
+		responses, sub, err := p.runtime.Submit(ctx, []api.Launch{launch}, options)
+		if sub != nil {
+			subscriptions = append(subscriptions, sub)
+		}
 		detail := placement.SubmissionDetail{OriginalResults: []api.Submission{}, Error: placement.Error(err)}
 		for _, response := range responses {
 			if response.LaunchID == launch.LaunchID {
@@ -252,11 +277,11 @@ func (p *macProvider) SubmitWithDiagnostics(ctx context.Context, launches []api.
 			detail.NormalizationError = &result.Reason
 			details[launch.LaunchID] = detail
 			out = append(out, result)
-			return out, details, errors.Join(errs...)
+			return out, details, subscriptions, errors.Join(errs...)
 		}
 		out = append(out, responses[0])
 	}
-	return out, details, errors.Join(errs...)
+	return out, details, subscriptions, errors.Join(errs...)
 }
 
 // Start warming only when the controller starts work, never during pulse check.

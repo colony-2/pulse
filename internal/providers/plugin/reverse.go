@@ -47,6 +47,17 @@ func (p *Reverse) List(ctx context.Context, request api.ListRequest) (api.ListRe
 	return current.List(ctx, request)
 }
 
+func (p *Reverse) GetLaunchLog(ctx context.Context, request api.LaunchLogRequest) (api.LaunchLogResponse, error) {
+	current, err := p.current()
+	if err != nil {
+		return api.LaunchLogResponse{}, err
+	}
+	if logs, ok := current.(api.ProviderWithLaunchLogs); ok {
+		return logs.GetLaunchLog(ctx, request)
+	}
+	return api.LaunchLogResponse{}, api.ErrLaunchLogUnsupported
+}
+
 func (p *Reverse) Submit(ctx context.Context, launches []api.Launch, options api.SubmitOptions) ([]api.Submission, api.LogSubscription, error) {
 	current, err := p.current()
 	if err != nil {
@@ -55,16 +66,20 @@ func (p *Reverse) Submit(ctx context.Context, launches []api.Launch, options api
 	return current.Submit(ctx, launches, options)
 }
 
-func (p *Reverse) SubmitWithDiagnostics(ctx context.Context, launches []api.Launch) ([]api.Submission, map[string]placement.SubmissionDetail, error) {
+func (p *Reverse) SubmitWithDiagnostics(ctx context.Context, launches []api.Launch, options api.SubmitOptions) ([]api.Submission, map[string]placement.SubmissionDetail, []api.LogSubscription, error) {
 	current, err := p.current()
 	if err != nil {
-		return disconnected(launches), nil, nil
+		return disconnected(launches), nil, nil, nil
 	}
 	if detailed, ok := current.(detailedProvider); ok {
-		return submitWithDiagnostics(ctx, detailed, launches)
+		return submitWithDiagnostics(ctx, detailed, launches, options)
 	}
-	results, _, err := current.Submit(ctx, launches, api.SubmitOptions{})
-	return results, nil, err
+	results, sub, err := current.Submit(ctx, launches, options)
+	var subscriptions []api.LogSubscription
+	if sub != nil {
+		subscriptions = append(subscriptions, sub)
+	}
+	return results, nil, subscriptions, err
 }
 
 func disconnected(launches []api.Launch) []api.Submission {

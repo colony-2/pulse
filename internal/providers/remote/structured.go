@@ -2,12 +2,17 @@ package remote
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 
 	provider "github.com/colony-2/pulse-provider-api"
+	"github.com/colony-2/pulse/internal/launchlogs"
 	"github.com/colony-2/pulse/internal/providerutil"
 )
 
@@ -97,6 +102,48 @@ func (p *Structured) List(ctx context.Context, q provider.ListRequest) (provider
 			return provider.ListResponse{}, fmt.Errorf("invalid provider instance")
 		}
 		seen[item.ID] = true
+	}
+	return out, nil
+}
+
+func (p *Structured) GetLaunchLog(ctx context.Context, q provider.LaunchLogRequest) (provider.LaunchLogResponse, error) {
+	q, err := providerutil.NormalizeLogRequest(q)
+	if err != nil {
+		return provider.LaunchLogResponse{}, err
+	}
+	query := url.Values{"page_size": {strconv.Itoa(q.PageSize)}}
+	if q.PageToken != "" {
+		query.Set("page_token", base64.RawURLEncoding.EncodeToString([]byte(q.PageToken)))
+	}
+	// Dot-segment IDs are valid in the provider API. Escape the whole segment
+	// so a proxy cannot interpret a dot or dot-dot as a different resource.
+	path := "/v1/launches/" + strings.ReplaceAll(url.PathEscape(q.LaunchID), ".", "%2E") + "/logs?" + query.Encode()
+	var page launchlogs.Page
+	status, err := p.client.call(ctx, http.MethodGet, path, nil, &page)
+	if err != nil {
+		switch status {
+		case http.StatusBadRequest:
+			err = provider.ErrLaunchLogInvalidRequest
+			if q.PageToken != "" {
+				err = provider.ErrLaunchLogCursor
+			}
+		case http.StatusNotFound:
+			err = provider.ErrLaunchLogNotFound
+		case http.StatusMethodNotAllowed, http.StatusNotImplemented:
+			err = provider.ErrLaunchLogUnsupported
+		}
+		return provider.LaunchLogResponse{}, err
+	}
+	if len(page.NextPageToken) > base64.RawURLEncoding.EncodedLen(providerutil.MaxLogPageToken) {
+		return provider.LaunchLogResponse{}, fmt.Errorf("invalid provider launch log cursor")
+	}
+	token, err := base64.RawURLEncoding.Strict().DecodeString(page.NextPageToken)
+	if err != nil {
+		return provider.LaunchLogResponse{}, fmt.Errorf("invalid provider launch log cursor")
+	}
+	out := page.Response(string(token))
+	if err := providerutil.ValidateLogPage(q, out); err != nil {
+		return provider.LaunchLogResponse{}, err
 	}
 	return out, nil
 }

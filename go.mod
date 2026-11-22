@@ -12,9 +12,9 @@ require (
 	github.com/colony-2/c2j v0.0.129-0.20261115173350-cd211e6aead8
 	github.com/colony-2/jobdb v0.0.86
 	github.com/colony-2/pulse-docker v0.0.0-20261122011005-5deb4b8b5a1e
-	github.com/colony-2/pulse-macvz v0.0.0-20261121031427-9d3589b5bb37
-	github.com/colony-2/pulse-provider-api v0.0.0-20261120061856-2919f1ed5e42
-	github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261120061856-2919f1ed5e42
+	github.com/colony-2/pulse-macvz v0.0.0-20261122042502-fcfcf56a4783
+	github.com/colony-2/pulse-provider-api v0.0.0-20261121205737-bd1a5c559150
+	github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261121205737-bd1a5c559150
 	github.com/distribution/reference v0.6.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0
@@ -47,6 +47,7 @@ require (
 	github.com/aws/smithy-go v1.28.1 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
+	github.com/cenkalti/backoff/v7 v7.0.3 // indirect
 	github.com/containerd/stargz-snapshotter/estargz v0.16.3 // indirect
 	github.com/docker/cli v28.2.2+incompatible // indirect
 	github.com/docker/distribution v2.8.3+incompatible // indirect
@@ -111,6 +112,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260630182238-925bb5da69e7 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/macaroon.v2 v2.1.0 // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gorm.io/gorm v1.31.1 // indirect
 	k8s.io/apimachinery v0.35.0 // indirect
 	modernc.org/libc v1.72.3 // indirect

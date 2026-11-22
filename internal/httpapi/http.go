@@ -58,7 +58,8 @@ func write(w http.ResponseWriter, status int, value any) {
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		write(w, 200, map[string]any{"endpoints": []string{"/status", "/providers/health", "/config", "/instances", "/providers/{provider}/instances", "/scheduler/cooldowns", "/scheduler/round-robin"}})
+		endpoints := []string{"/status", "/providers/health", "/config", "/instances", "/providers/{provider}/instances", launchLogPath, "/scheduler/cooldowns", "/scheduler/round-robin"}
+		write(w, 200, map[string]any{"endpoints": endpoints})
 	})
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		status := a.Controller.Status()
@@ -97,6 +98,7 @@ func (a *API) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /providers/{provider}/instances", a.provider)
 	mux.HandleFunc("GET /instances", a.instances)
+	mux.HandleFunc("GET "+launchLogPath, a.launchLog)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		if r.Method != "GET" && r.Method != "HEAD" {

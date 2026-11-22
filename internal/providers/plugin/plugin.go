@@ -39,16 +39,16 @@ type Process struct{ *sdk.Process }
 
 var _ provider.Provider = (*Process)(nil)
 
-func (p *Process) SubmitWithDiagnostics(ctx context.Context, launches []provider.Launch) ([]provider.Submission, map[string]placement.SubmissionDetail, error) {
-	return submitWithDiagnostics(ctx, p, launches)
+func (p *Process) SubmitWithDiagnostics(ctx context.Context, launches []provider.Launch, options provider.SubmitOptions) ([]provider.Submission, map[string]placement.SubmissionDetail, []provider.LogSubscription, error) {
+	return submitWithDiagnostics(ctx, p, launches, options)
 }
 
 type detailedProvider interface {
 	SubmitDetailed(context.Context, []provider.Launch, provider.SubmitOptions) ([]provider.Submission, sdk.SubmissionObservations, provider.LogSubscription, error)
 }
 
-func submitWithDiagnostics(ctx context.Context, p detailedProvider, launches []provider.Launch) ([]provider.Submission, map[string]placement.SubmissionDetail, error) {
-	results, observations, _, err := p.SubmitDetailed(ctx, launches, provider.SubmitOptions{})
+func submitWithDiagnostics(ctx context.Context, p detailedProvider, launches []provider.Launch, options provider.SubmitOptions) ([]provider.Submission, map[string]placement.SubmissionDetail, []provider.LogSubscription, error) {
+	results, observations, sub, err := p.SubmitDetailed(ctx, launches, options)
 	methodError := placement.Error(err)
 	if observations.MethodError.Present {
 		message := observations.MethodError.Text
@@ -79,5 +79,9 @@ func submitWithDiagnostics(ctx context.Context, p detailedProvider, launches []p
 		}
 		details[launch.LaunchID] = detail
 	}
-	return results, details, err
+	var subscriptions []provider.LogSubscription
+	if sub != nil {
+		subscriptions = append(subscriptions, sub)
+	}
+	return results, details, subscriptions, err
 }

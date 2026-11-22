@@ -9,6 +9,7 @@ import (
 	jobremote "github.com/colony-2/jobdb/pkg/jobdb/runtime/remote"
 	"github.com/colony-2/jobdb/pkg/jobdb/runtime/toy"
 	provider "github.com/colony-2/pulse-provider-api"
+	"github.com/colony-2/pulse/internal/launchlogs"
 	"gopkg.in/yaml.v3"
 	"net/http"
 	"net/http/httptest"
@@ -41,6 +42,7 @@ func TestCLIPluginLifecycle(t *testing.T) {
 	defer db.Close()
 	var submissions atomic.Int32
 	var initializations atomic.Int32
+	output := []byte{0, 0xff, '\n'}
 	native := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer CANARY-CREDENTIAL" {
 			t.Error("missing selected credential")
@@ -53,6 +55,20 @@ func TestCLIPluginLifecycle(t *testing.T) {
 			json.NewEncoder(w).Encode(provider.Capabilities{})
 		case "/list":
 			json.NewEncoder(w).Encode(provider.ListResponse{Items: []provider.Instance{}})
+		case "/logs":
+			var q struct {
+				LaunchID string
+				PageSize int
+			}
+			if err := json.NewDecoder(r.Body).Decode(&q); err != nil || q.LaunchID != "fixture" || q.PageSize != 100 {
+				t.Errorf("incorrect log request: %+v %v", q, err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"Records":       []provider.LaunchLogRecord{{Sequence: 1, Timestamp: time.Now(), Source: provider.LogSourceStdout, Data: output}},
+				"NextPageToken": []byte{0xff, 0}, "Finalized": true,
+			})
 		case "/submit":
 			submissions.Add(1)
 			t.Error("empty JobDB submitted workload")
@@ -146,6 +162,20 @@ func TestCLIPluginLifecycle(t *testing.T) {
 		if path == "/providers/health" && !strings.Contains(b.String(), "ready") {
 			t.Fatal("missing plugin health")
 		}
+	}
+	req, e := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/providers/custom/launches/fixture/logs", nil)
+	if e != nil {
+		t.Fatal(e)
+	}
+	response, e := http.DefaultClient.Do(req)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var page launchlogs.Page
+	e = json.NewDecoder(response.Body).Decode(&page)
+	response.Body.Close()
+	if e != nil || response.StatusCode != http.StatusOK || len(page.Records) != 1 || !bytes.Equal(page.Records[0].Data, output) || !page.Finalized {
+		t.Fatalf("local plugin log response: HTTP %d, %+v, %v", response.StatusCode, page, e)
 	}
 	_ = cmd.Process.Signal(syscall.SIGTERM)
 	if e = cmd.Wait(); e != nil {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	provider "github.com/colony-2/pulse-provider-api"
+	"github.com/colony-2/pulse/internal/launchlogs"
 	"github.com/colony-2/pulse/internal/placement"
 	"github.com/colony-2/pulse/internal/providerutil"
 	"github.com/colony-2/pulse/pkg/compute"
@@ -68,6 +69,7 @@ type Scheduler struct {
 	ClaimConcurrency int
 	ClaimTimeout     time.Duration
 	Now              func() time.Time
+	Logs             *launchlogs.Store
 }
 
 func New(cooldown, callTimeout time.Duration) *Scheduler {
@@ -229,14 +231,26 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 			var submitted []provider.Submission
 			var submitErr error
 			var details map[string]placement.SubmissionDetail
-			if detailed, ok := p.Provider.(interface {
-				SubmitWithDiagnostics(context.Context, []provider.Launch) ([]provider.Submission, map[string]placement.SubmissionDetail, error)
-			}); ok {
-				submitted, details, submitErr = detailed.SubmitWithDiagnostics(c, launches)
+			var subscriptions []provider.LogSubscription
+			var logs *launchlogs.Batch
+			options := provider.SubmitOptions{}
+			if s.Logs != nil {
+				logs = s.Logs.Begin(p.Name, launches)
+				options = logs.Options()
+			}
+			if detailed, ok := p.Provider.(placement.DiagnosticSubmitter); ok {
+				submitted, details, subscriptions, submitErr = detailed.SubmitWithDiagnostics(c, launches, options)
 			} else {
-				submitted, _, submitErr = p.Provider.Submit(c, launches, provider.SubmitOptions{})
+				var sub provider.LogSubscription
+				submitted, sub, submitErr = p.Provider.Submit(c, launches, options)
+				if sub != nil {
+					subscriptions = append(subscriptions, sub)
+				}
 			}
 			cancel()
+			if logs != nil {
+				logs.Track(subscriptions)
+			}
 			subs := map[string]provider.Submission{}
 			dups := map[string]bool{}
 			for _, r := range submitted {

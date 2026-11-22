@@ -85,6 +85,7 @@ type Config struct {
 	HTTP            struct {
 		Listen string `yaml:"listen"`
 	} `yaml:"http"`
+	LogDirectory     string         `yaml:"log_directory,omitempty"`
 	Reverse          *ReverseConfig `yaml:"reverse,omitempty"`
 	PollInterval     string         `yaml:"poll_interval"`
 	Cooldown         string         `yaml:"cooldown"`

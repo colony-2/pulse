@@ -92,6 +92,12 @@ func (p *provider) call(ctx context.Context, path string, in, out any) error {
 		return errors.New("native transport failed")
 	}
 	defer response.Body.Close()
+	if path == "/logs" && response.StatusCode == http.StatusNotFound {
+		return api.ErrLaunchLogNotFound
+	}
+	if path == "/logs" && response.StatusCode == http.StatusNotImplemented {
+		return api.ErrLaunchLogUnsupported
+	}
 	if response.StatusCode != http.StatusOK {
 		return errors.New("native operation failed")
 	}
@@ -119,6 +125,22 @@ func (p *provider) List(ctx context.Context, q api.ListRequest) (api.ListRespons
 	var out api.ListResponse
 	e := p.call(ctx, "/list", q, &out)
 	return out, e
+}
+func (p *provider) GetLaunchLog(ctx context.Context, q api.LaunchLogRequest) (api.LaunchLogResponse, error) {
+	request := struct {
+		LaunchID  string
+		PageSize  int
+		PageToken []byte
+	}{q.LaunchID, q.PageSize, []byte(q.PageToken)}
+	var response struct {
+		api.LaunchLogResponse
+		NextPageToken []byte
+	}
+	if err := p.call(ctx, "/logs", request, &response); err != nil {
+		return api.LaunchLogResponse{}, err
+	}
+	response.LaunchLogResponse.NextPageToken = string(response.NextPageToken)
+	return response.LaunchLogResponse, nil
 }
 func main() {
 	if len(os.Args) > 1 {

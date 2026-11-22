@@ -17,8 +17,17 @@ var _ provider.Provider = (*Provider)(nil)
 
 A launch includes allocation requirements (`Base`, `Capabilities`, CPU, memory,
 scratch), a typed `JobRef`, an opaque exported `Lease`, and optional deadlines.
-Pulse submits with empty `SubmitOptions`. Return a nil subscription when the
-caller supplies no listener.
+When `log_directory` is configured, Pulse requests a live observer through
+`SubmitOptions.Listener`. Deliver bounded, sequenced records and return a
+subscription. Use the listener's context for observation so it can continue
+after the admission call returns. Return a nil subscription when the caller
+supplies no listener.
+
+Implement `ProviderWithLaunchLogs.GetLaunchLog` to expose retained output
+through Pulse's REST API. The method is optional and reads
+from the provider's archive. See the
+[provider log contract](https://github.com/colony-2/pulse-provider-api/blob/bd1a5c5591509104a3727d14bd57c30d58c7eefe/launch_log_read.go)
+and [Pulse log configuration](http-api.md#launch-logs).
 The provider owns executor startup, supplies the exact lease to c2j, and reports
 verified execution allocation facts. It must not claim replacement work. Keep
 credentials out of diagnostics, argv, the child environment, and instance lists.

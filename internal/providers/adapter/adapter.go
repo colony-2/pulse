@@ -48,10 +48,10 @@ func (p *Provider) Submit(ctx context.Context, launches []provider.Launch, _ pro
 	return out, nil, err
 }
 
-func (p *Provider) SubmitWithDiagnostics(ctx context.Context, launches []provider.Launch) ([]provider.Submission, map[string]placement.SubmissionDetail, error) {
+func (p *Provider) SubmitWithDiagnostics(ctx context.Context, launches []provider.Launch, _ provider.SubmitOptions) ([]provider.Submission, map[string]placement.SubmissionDetail, []provider.LogSubscription, error) {
 	details := map[string]placement.SubmissionDetail{}
 	out, err := p.submit(ctx, launches, details)
-	return out, details, err
+	return out, details, nil, err
 }
 
 func (p *Provider) submit(ctx context.Context, launches []provider.Launch, details map[string]placement.SubmissionDetail) ([]provider.Submission, error) {

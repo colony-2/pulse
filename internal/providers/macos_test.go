@@ -286,7 +286,7 @@ esac
 				t.Fatal(page, err)
 			}
 			launch := macLaunch(want[0].Name)
-			results, details, err := mac.SubmitWithDiagnostics(t.Context(), []api.Launch{launch})
+			results, details, _, err := mac.SubmitWithDiagnostics(t.Context(), []api.Launch{launch}, api.SubmitOptions{})
 			if err != nil || len(results) != 1 || results[0].Status != api.NoCapacity || results[0].Reason == "" {
 				t.Fatal("expected the unprepared pool to decline the launch", results, err)
 			}
@@ -400,7 +400,7 @@ func TestMacDiagnosticErrorsAndOriginalReasons(t *testing.T) {
 			p := &macProvider{runtime: runtime}
 			first, second := macLaunch("macos*"), macLaunch("macos*")
 			second.LaunchID = "second"
-			out, details, err := p.SubmitWithDiagnostics(t.Context(), []api.Launch{first, second})
+			out, details, _, err := p.SubmitWithDiagnostics(t.Context(), []api.Launch{first, second}, api.SubmitOptions{})
 			if err == nil || !strings.Contains(err.Error(), "raw runtime error: test") {
 				t.Fatal(err)
 			}
@@ -425,7 +425,7 @@ func TestMacReconciliationDiagnosticReason(t *testing.T) {
 	p := &macProvider{runtime: runtime}
 	p.activity.Lock()
 	defer p.activity.Unlock()
-	out, details, err := p.SubmitWithDiagnostics(t.Context(), []api.Launch{macLaunch("macos*")})
+	out, details, _, err := p.SubmitWithDiagnostics(t.Context(), []api.Launch{macLaunch("macos*")}, api.SubmitOptions{})
 	if err != nil || len(runtime.calls) != 0 || len(details) != 0 || out[0].Status != api.NoCapacity || out[0].Reason != "macOS slots are being reconciled" {
 		t.Fatal(out, details, err)
 	}

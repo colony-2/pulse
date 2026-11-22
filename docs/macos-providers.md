@@ -144,6 +144,10 @@ concrete base to c2j through `--execution-base`.
 The library resolves c2j during image preparation. Existing prepared images are
 reused; upgrading Pulse does not reinstall c2j in those images.
 
+VZ retains launch output in its host archive and exposes it through
+[Pulse's log endpoint](http-api.md#launch-logs). Upgrade prepared guest images
+that predate output capture. See the [MacVZ logging documentation](https://github.com/colony-2/pulse-macvz/blob/fcfcf56a47830f573e8045e54ae36e29892351fd/README.md#per-launch-logs).
+
 ### Prepare or upgrade a VZ pool
 
 Stop the Pulse controller for the pool before running maintenance. Use

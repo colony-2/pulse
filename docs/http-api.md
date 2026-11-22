@@ -1,6 +1,8 @@
 # Pulse HTTP API
 
-Pulse's continuous controller serves public, read-only diagnostics. It does not require authentication. All endpoints accept `GET` and `HEAD`; other methods return `405`. Responses are JSON with `Cache-Control: no-store`. `Access-Control-Allow-Origin: *` allows browser reads without credentials.
+Pulse's continuous controller serves public, read-only diagnostics and launch
+logs. All endpoints accept `GET` and `HEAD`. Other methods return `405`.
+JSON responses carry `Cache-Control: no-store`.
 
 ## Listen address
 
@@ -22,10 +24,52 @@ For local access only, use `127.0.0.1:8080`. Publish the container port with `-p
 | `/config` | Parsed configuration including defaults, with secrets redacted. |
 | `/instances` | Active instances from all configured providers. |
 | `/providers/{provider}/instances` | One page from the named configured provider. |
+| `/providers/{provider}/launches/{launch_id}/logs` | Page of launch output. |
 | `/scheduler/cooldowns` | Current cooldown entries and in-flight submission attempts. |
 | `/scheduler/round-robin` | Priority tiers, batch counters, and next starting services. |
 
 Provider names are configuration keys, such as `runner_pool_a`, rather than provider types such as `remote`.
+
+### Launch logs
+
+Set `log_directory` to save live provider output as local JSON Lines files.
+A relative directory resolves against the Pulse configuration directory.
+Use a separate directory for each controller.
+
+```yaml
+log_directory: ./launch-logs
+```
+
+```sh
+curl 'http://127.0.0.1:8080/providers/mac01/launches/LAUNCH_ID/logs?page_size=100'
+```
+
+Use the service name and `launch_id` from Pulse's launch result. Anyone who can
+reach the HTTP API can read launch logs.
+
+Pulse reads provider-retained logs when available. It falls back to a local
+capture for a launch when the provider reports missing or unsupported logs,
+or its SDK connection is unavailable. Save the returned `next_page_token`
+to continue from the same source. A request with no token starts at the oldest
+retained record. `page_size` accepts 1–100 and defaults to 100.
+
+Each record contains `sequence`, `timestamp`, `source`, and base64-encoded
+`data` so arbitrary output bytes survive transport. Sources include `launch`,
+`stdout`, `stderr`, and `combined`. Decode each record's `data` to reconstruct
+the output. Drain pages while `has_more` is true. When caught up, poll with
+the latest token until `finalized` is true. `incomplete` indicates known
+capture or retention gaps. The optional `estimated_total_size_bytes` estimates
+retained payload bytes. These fields describe capture progress.
+
+Local copies persist across Pulse restarts, are capped at 16 MiB of serialized
+records per launch, and remain on disk until removed. The first line of each
+`<launch_id>.jsonl` file contains archive metadata. A live capture ends when
+Pulse exits. Providers that implement retained reads can serve their archives
+independently of live capture.
+
+The route returns `400` for an invalid request or cursor, `404` for a missing
+log, and `501` when the provider lacks retained logs and local capture is
+unconfigured.
 
 ### Status
 

@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/controller"
 	"github.com/colony-2/pulse/internal/httpapi"
+	"github.com/colony-2/pulse/internal/launchlogs"
 	"github.com/colony-2/pulse/internal/providers"
 	"github.com/colony-2/pulse/internal/scheduler"
 	"github.com/spf13/cobra"
@@ -121,6 +123,16 @@ func runPulse(parent context.Context, cfg *config.Config, once, check bool, out 
 	}
 	sched := scheduler.New(cfg.Cool, cfg.Call)
 	sched.ClaimConcurrency, sched.ClaimTimeout = cfg.ClaimConcurrency, cfg.Claim
+	if directory := cfg.LogDirectory; directory != "" {
+		if !filepath.IsAbs(directory) {
+			directory = filepath.Join(cfg.BaseDir, directory)
+		}
+		sched.Logs, e = launchlogs.Open(ctx, directory, slog.Default())
+		if e != nil {
+			return fmt.Errorf("open launch log directory: %w", e)
+		}
+		defer sched.Logs.Close()
+	}
 	c := &controller.Controller{Config: cfg, Lister: lister, Claimer: lister, Scheduler: sched, Providers: instances, Log: slog.New(slog.NewJSONHandler(os.Stderr, nil))}
 	if once {
 		return c.Once(ctx)

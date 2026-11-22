@@ -11,7 +11,7 @@ constructs the c2j invocation.
 ## Local executable
 
 On Linux, build the executable with the standalone
-[`pulse-provider-api/plugin` SDK](https://github.com/colony-2/pulse-provider-api/tree/2919f1ed5e42893f759af0fdd930c1a66824887b/plugin)
+[`pulse-provider-api/plugin` SDK](https://github.com/colony-2/pulse-provider-api/tree/bd1a5c5591509104a3727d14bd57c30d58c7eefe/plugin)
 and install it at an absolute, operator-controlled path.
 
 ```yaml
@@ -78,6 +78,12 @@ three replacement attempts, with exponential delay and jitter. After five
 healthy minutes the restart budget resets. Restarting does not replay
 submissions. `GET /providers/health` shows local plugin lifecycle and protocol.
 Pulse redacts executable arguments and plugin configuration in `GET /config`.
+
+Local and reverse SDK transports forward live log subscriptions and
+`ProviderWithLaunchLogs.GetLaunchLog` reads. A provider must implement the
+corresponding log source for either operation to return output. The retained
+read RPC is optional within protocol 3. Rebuild providers with the latest SDK
+to expose it. See [Pulse log configuration](http-api.md#launch-logs).
 
 ## Reverse connection
 
@@ -150,6 +156,12 @@ The HTTP service uses these JSON operations relative to the configured URL.
 | `GET /v1/capabilities` | Returns `provider.Capabilities`, including the ordered `bases` and `bases_complete`. |
 | `POST /v1/submit` | Accepts `{"items":[...]}` with `provider.Launch` objects. Returns `{"results":[...]}` with `provider.Submission` objects. |
 | `GET /v1/launches` | Accepts `page_size`, optional `page_token`, and optional exact `launch_id` as query parameters. Returns `provider.ListResponse`. Use `"items":[]` for an empty page. |
+| `GET /v1/launches/{launch_id}/logs` | Optional retained log page with `page_size` and optional `page_token`. |
+
+The optional log operation uses the [Pulse log page schema](http-api.md#launch-logs).
+The service encodes raw checkpoints as unpadded base64url in query tokens and
+`next_page_token` without a source prefix. Return `404` for a missing log,
+`400` for an invalid request or checkpoint, and `501` for unsupported retrieval.
 
 For example, a submission response can include definite per-launch results and a
 method error together.

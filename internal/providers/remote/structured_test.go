@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	provider "github.com/colony-2/pulse-provider-api"
+	"github.com/colony-2/pulse/internal/launchlogs"
 )
 
 func TestStructuredHTTPProvider(t *testing.T) {
@@ -43,6 +45,13 @@ func TestStructuredHTTPProvider(t *testing.T) {
 				t.Error("listing parameters changed", q)
 			}
 			json.NewEncoder(w).Encode(provider.ListResponse{Items: []provider.Instance{instance}, NextPageToken: "next"})
+		case "GET /compute/v1/launches/launch/logs":
+			q := r.URL.Query()
+			if q.Get("page_size") != "2" || q.Get("page_token") != base64.RawURLEncoding.EncodeToString([]byte("\x00\xff")) {
+				t.Error("log query changed", q)
+			}
+			json.NewEncoder(w).Encode(launchlogs.Page{Records: []launchlogs.Record{{Sequence: 2, Timestamp: deadline,
+				Source: provider.LogSourceStderr, Data: []byte{0xff, 0}}}, NextPageToken: "bmV4dA", Finalized: true})
 		default:
 			t.Error("unexpected provider request", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -60,6 +69,11 @@ func TestStructuredHTTPProvider(t *testing.T) {
 		t.Fatal(out, err)
 	}
 	if out, err := p.List(t.Context(), provider.ListRequest{LaunchID: launch.LaunchID, PageToken: "+/=&%", PageSize: 1}); err != nil || !reflect.DeepEqual(out, provider.ListResponse{Items: []provider.Instance{instance}, NextPageToken: "next"}) {
+		t.Fatal(out, err)
+	}
+	out, err := p.GetLaunchLog(t.Context(), provider.LaunchLogRequest{LaunchID: launch.LaunchID, PageToken: "\x00\xff", PageSize: 2})
+	want := provider.LaunchLogResponse{Records: []provider.LaunchLogRecord{{Sequence: 2, Timestamp: deadline, Source: provider.LogSourceStderr, Data: []byte{0xff, 0}}}, NextPageToken: "next", Finalized: true}
+	if err != nil || !reflect.DeepEqual(out, want) {
 		t.Fatal(out, err)
 	}
 }
