@@ -36,6 +36,7 @@ func NewCommand(version string) *cobra.Command {
 	flags := root.PersistentFlags()
 	flags.StringVar(&path, "config", "", "optional configuration file (overrides PULSE_CONFIG and pulse.yaml)")
 	flags.StringVar(&jobdb, "jobdb", "", "JobDB tenant URI (defaults to C2J_JOBDB or .c2/config.yaml)")
+	exclude := flags.StringArray("exclude", nil, "exclude matching execution bases from all providers (repeatable)")
 	docker := flags.Bool("docker", true, "enable the default Docker provider (set false to disable)")
 	vz := flags.Bool("vz", false, "enable the default VZ provider (automatic on supported Apple Silicon, set false to disable)")
 	dockerConfig := flags.String("docker-config", "", "inline YAML settings for the default Docker provider")
@@ -49,9 +50,10 @@ func NewCommand(version string) *cobra.Command {
 				return fmt.Errorf("--jobdb requires a nonempty tenant URI")
 			}
 			cfg, err := config.LoadWithOverrides(cmd.Context(), path, config.Overrides{
-				JobDB:  jobdb,
-				Docker: defaultProviderOverride(cmd, "docker", docker, dockerConfig),
-				VZ:     defaultProviderOverride(cmd, "vz", vz, vzConfig),
+				JobDB:        jobdb,
+				ExcludeBases: *exclude,
+				Docker:       defaultProviderOverride(cmd, "docker", docker, dockerConfig),
+				VZ:           defaultProviderOverride(cmd, "vz", vz, vzConfig),
 			})
 			if err != nil {
 				return err

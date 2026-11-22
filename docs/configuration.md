@@ -90,6 +90,19 @@ architecture, use a base such as `ubuntu-26.04-amd64` or `ubuntu-26*arm64`.
 Replace legacy image and platform selectors in Pulse configuration and job
 requirements with a base offered by one of the target's providers.
 
+Use repeatable `--exclude` flags to remove matching bases from every provider's
+catalog for this Pulse process.
+
+```sh
+pulse run --exclude 'ubuntu*amd64' --exclude 'macos*17*arm64'
+```
+
+Patterns use the same case-sensitive matching as job base selectors. Pulse
+skips listed jobs with no eligible base before claiming a lease. If a job
+wildcard could still select an excluded base, Pulse submits the first matching
+allowed base in provider order. For a wildcard that overlaps an exclusion,
+Pulse waits until a provider advertises an allowed base.
+
 On Apple Silicon with macOS 14 or later, an omitted or empty provider map enables
 VZ alongside Docker. VZ defaults to two macOS and four Linux job VMs at 4 vCPU
 and 8 GiB each. Linux VMs include Docker. Set `vm_counts` to override the per-OS

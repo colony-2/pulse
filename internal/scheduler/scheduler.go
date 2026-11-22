@@ -101,7 +101,7 @@ func (s *Scheduler) order(scope string, services []Service) ([]Service, error) {
 }
 
 // Run performs one bounded batch attempt. Unknown outcomes never fall through.
-func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, jobs []Job) ([]Result, error) {
+func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, jobs []Job, excludeBases ...string) ([]Result, error) {
 	if s.ClaimConcurrency < 1 || s.ClaimConcurrency > provider.MaxBatch || s.ClaimTimeout <= 0 {
 		return nil, errors.New("invalid claim limits")
 	}
@@ -186,6 +186,7 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 		}
 		p := ordered[index]
 		capabilities, discoveryErr, validationErr := providerutil.DiscoverCapabilities(ctx, p.Provider, s.CallTimeout)
+		catalog := providerutil.FilterBases(capabilities, excludeBases)
 
 		next := []Job{}
 		launches := make([]provider.Launch, 0, len(pending))
@@ -206,7 +207,8 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 			d := diagnostics[j.Key]
 			a := &d.Attempts[len(d.Attempts)-1]
 			a.Compatibility = "not_excluded"
-			if !providerutil.Compatible(capabilities, j.Request.Allocation) {
+			base, compatible := catalog.SelectBase(j.Request.Allocation)
+			if !compatible {
 				results[j.Key] = Result{Key: j.Key, Service: p.Name, Submission: provider.Submission{LaunchID: j.Request.LaunchID, Status: provider.Unsupported, Reason: "provider capabilities do not match requested base or capabilities"}}
 				a.Compatibility = "excluded_by_controller"
 				a.Result = results[j.Key].Submission
@@ -216,7 +218,9 @@ func (s *Scheduler) Run(ctx context.Context, scope string, services []Service, j
 			}
 			a.SubmitCalled = true
 			diagnostics[j.Key] = d
-			launches = append(launches, j.Request)
+			launch := j.Request
+			launch.Base = base
+			launches = append(launches, launch)
 			launchJobs[j.Request.LaunchID] = j
 		}
 

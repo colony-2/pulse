@@ -55,19 +55,40 @@ func TestCLIThroughListingAndProviderProtocols(t *testing.T) {
 	}
 	metadata, _ := json.Marshal(map[string]any{"execution": initial, "repo": "https://github.com/acme/first.git"})
 	metadata2, _ := json.Marshal(map[string]any{"execution": initial, "repo": "https://github.com/acme/second.git"})
-	for _, source := range []string{"file", "environment", "plugin-file", "plugin-environment", "http-plugin-file", "http-plugin-environment"} {
+	for _, source := range []string{"file", "environment", "plugin-file", "plugin-environment", "http-plugin-file", "http-plugin-environment", "http-plugin-exclude-environment"} {
 		t.Run(source, func(t *testing.T) {
 			isPlugin := strings.HasPrefix(source, "plugin-")
 			isHTTPPlugin := strings.HasPrefix(source, "http-plugin-")
 			if isPlugin && runtime.GOOS != "linux" {
 				t.Skip("the shared process SDK supports Linux")
 			}
+			exclude := source == "http-plugin-exclude-environment"
+			firstMetadata, secondMetadata := metadata, metadata2
+			wantBase, wantSubmitted := base, 2
+			catalog := provider.Capabilities{BasesComplete: true, Bases: []provider.BaseCapabilities{{Name: "ubuntu-26.04-arm64"}}}
+			if exclude {
+				withBase := func(base string) []byte {
+					demand, err := execution.Initial(&job.Execution.Demand.Effective, true, execution.Requirements{Base: &base})
+					if err != nil {
+						t.Fatal(err)
+					}
+					data, err := json.Marshal(map[string]any{"execution": demand})
+					if err != nil {
+						t.Fatal(err)
+					}
+					return data
+				}
+				firstMetadata, secondMetadata = withBase("ubuntu*"), withBase("macos*")
+				wantBase, wantSubmitted = "ubuntu-26.04-arm64", 1
+				catalog.Bases = append([]provider.BaseCapabilities{{Name: "ubuntu-26.04-amd64"}, {Name: "macos-17.0-arm64"}}, catalog.Bases...)
+			}
 			backend := toy.New()
-			_, err := celltest.Submit(backend, celltest.Context(t.Context()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "first", CellRepo: "github.com/acme/first", TenantId: job.TenantID, JobID: job.JobID, JobType: "recipe", Metadata: metadata, Data: jobdb.NewTaskDataOrPanic(1)}})
+			_, err := celltest.Submit(backend, celltest.Context(t.Context()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "first", CellRepo: "github.com/acme/first", TenantId: job.TenantID, JobID: job.JobID, JobType: "recipe", Metadata: firstMetadata, Data: jobdb.NewTaskDataOrPanic(1)}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := celltest.Submit(backend, celltest.Context(t.Context()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "second", CellRepo: "github.com/acme/second", TenantId: job.TenantID, JobID: "second-job", JobType: "recipe", Metadata: metadata2, Data: jobdb.NewTaskDataOrPanic(1)}}); err != nil {
+			second, err := celltest.Submit(backend, celltest.Context(t.Context()), jobdb.SubmitJobRequest{Job: jobdb.SubmitJob{Cell: "second", CellRepo: "github.com/acme/second", TenantId: job.TenantID, JobID: "second-job", JobType: "recipe", Metadata: secondMetadata, Data: jobdb.NewTaskDataOrPanic(1)}})
+			if err != nil {
 				t.Fatal(err)
 			}
 			db := httptest.NewServer(celltest.Handler(jobremote.NewServer(leasedListRuntime{Runtime: backend, list: func(ctx context.Context, req jobdb.ListJobsRequest) (jobdb.ListJobsResponse, error) {
@@ -89,7 +110,7 @@ func TestCLIThroughListingAndProviderProtocols(t *testing.T) {
 					return
 				}
 				if (isPlugin && r.URL.Path == "/capabilities") || (isHTTPPlugin && r.URL.Path == "/v1/capabilities") {
-					json.NewEncoder(w).Encode(provider.Capabilities{BasesComplete: true, Bases: []provider.BaseCapabilities{{Name: "ubuntu-26.04-arm64", Capabilities: []string{}}}})
+					json.NewEncoder(w).Encode(catalog)
 					return
 				}
 				checkLease := func(lease, jobID string) {
@@ -128,7 +149,7 @@ func TestCLIThroughListingAndProviderProtocols(t *testing.T) {
 					}
 					for _, item := range in.Items {
 						checkLease(string(item.Lease), item.Job.JobID)
-						if item.Base != base || item.CPUMillis != 1000 || item.TimeoutSeconds != 0 || item.Job.JobDB != db.URL+"/acme" || item.Job.TenantID != "acme" || item.Job.InstanceID == "" {
+						if item.Base != wantBase || item.CPUMillis != 1000 || item.TimeoutSeconds != 0 || item.Job.JobDB != db.URL+"/acme" || item.Job.TenantID != "acme" || item.Job.InstanceID == "" {
 							t.Error("incorrect structured assignment", item)
 						}
 						results = append(results, map[string]any{"launch_id": item.LaunchID, "status": "accepted"})
@@ -176,6 +197,9 @@ func TestCLIThroughListingAndProviderProtocols(t *testing.T) {
 			}
 			data, _ := yaml.Marshal(cfg)
 			cmd := exec.Command(binary, "run", "--once")
+			if exclude {
+				cmd.Args = append(cmd.Args, "--exclude", "ubuntu*amd64", "--exclude", "macos*17*arm64")
+			}
 			cmd.Dir = t.TempDir()
 			cmd.Env = []string{"PATH=" + t.TempDir(), "PULSE_TEST_PROVIDER_TOKEN=test-token", "C2J_JOBDB=" + db.URL + "/acme"}
 			if strings.HasSuffix(source, "file") {
@@ -192,10 +216,27 @@ func TestCLIThroughListingAndProviderProtocols(t *testing.T) {
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if submitted != 2 {
-				t.Fatalf("submitted %d", submitted)
+			if submitted != wantSubmitted {
+				t.Fatalf("submitted %d, want %d", submitted, wantSubmitted)
+			}
+			if exclude {
+				info, err := backend.GetJob(celltest.Context(t.Context()), second.JobKey)
+				if err != nil || info.Status != jobdb.JobStatusReady {
+					t.Fatalf("excluded job was not left ready: %v, %v", info.Status, err)
+				}
 			}
 		})
+	}
+}
+
+func TestCLIRejectsInvalidBaseExclusions(t *testing.T) {
+	t.Setenv("PULSE_CONFIG", "{}")
+	for _, pattern := range []string{"", "ubuntu *", "oci:linux/amd64:alpine"} {
+		cmd := newRootCmd()
+		cmd.SetArgs([]string{"--jobdb=https://example.com/tenant", "--exclude", pattern, "check"})
+		if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "invalid --exclude pattern") {
+			t.Errorf("accepted invalid exclusion %q: %v", pattern, err)
+		}
 	}
 }
 

@@ -24,8 +24,9 @@ func logProviders(ctx context.Context, log *slog.Logger, cfg *config.Config, ins
 			log.Warn("provider capability discovery failed", "provider", name)
 			attrs = append(attrs, "bases_known", false)
 		} else {
-			labels := make([]string, 0, len(capabilities.Bases))
-			for _, base := range capabilities.Bases {
+			catalog := providerutil.FilterBases(capabilities, cfg.ExcludeBases)
+			labels := make([]string, 0, len(catalog.Bases))
+			for _, base := range catalog.Bases {
 				labels = append(labels, base.Name)
 			}
 			attrs = append(attrs, "bases", labels, "bases_complete", capabilities.BasesComplete)

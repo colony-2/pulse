@@ -26,6 +26,27 @@ func TestSelectorMatching(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectorOverlap(t *testing.T) {
+	for _, tt := range []struct {
+		a, b string
+		want bool
+	}{
+		{"ubuntu*", "ubuntu*amd64", true},
+		{"ubuntu*arm64", "ubuntu*amd64", false},
+		{"ubuntu*", "macos*17*arm64", false},
+		{"macos*arm64", "macos*17*arm64", true},
+		{"macos*17*arm64", "macos-17.0-arm64", true},
+		{"macos*17*arm", "macos-17.0-arm64", false},
+		{"ubuntu-26*arm64", "*26*64", true},
+		{"*", "ubuntu-26.04-amd64", true},
+	} {
+		if Overlap(tt.a, tt.b) != tt.want || Overlap(tt.b, tt.a) != tt.want {
+			t.Errorf("Overlap(%q, %q), want %v in both directions", tt.a, tt.b, tt.want)
+		}
+	}
+}
+
 func TestCatalogAndArchitectureConstraints(t *testing.T) {
 	for _, tt := range []struct{ selector, platform, want string }{
 		{Default, "", "ubuntu-26.04-arm64"},

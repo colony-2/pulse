@@ -23,12 +23,13 @@ func (p *describedProvider) GetCapabilities(context.Context) (api.Capabilities, 
 }
 func TestCapabilityFiltering(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		caps   api.Capabilities
-		err    error
-		base   string
-		needs  []string
-		submit bool
+		name    string
+		caps    api.Capabilities
+		err     error
+		base    string
+		needs   []string
+		exclude []string
+		submit  bool
 	}{
 		{name: "matching complete catalog", caps: api.Capabilities{BasesComplete: true, Bases: []api.BaseCapabilities{{Name: "ubuntu-26.04-amd64"}}}, base: "ubuntu-26*", submit: true},
 		{name: "wrong base", caps: api.Capabilities{BasesComplete: true, Bases: []api.BaseCapabilities{{Name: "macos-15-arm64"}}}, base: "ubuntu*"},
@@ -40,6 +41,9 @@ func TestCapabilityFiltering(t *testing.T) {
 		{name: "partial wildcard missing capability", caps: api.Capabilities{Bases: []api.BaseCapabilities{{Name: "ubuntu-26.04-amd64"}}}, base: "ubuntu*", needs: []string{"docker"}},
 		{name: "split capabilities cannot satisfy one launch", caps: api.Capabilities{Bases: []api.BaseCapabilities{{Name: "ubuntu-26.04-amd64", Capabilities: []string{"docker"}}, {Name: "ubuntu-26.04-arm64", Capabilities: []string{"kvm"}}}}, base: "ubuntu*", needs: []string{"docker", "kvm"}},
 		{name: "failed discovery discards result", caps: api.Capabilities{BasesComplete: true}, err: errors.New("offline"), base: "ubuntu*", submit: true},
+		{name: "unknown catalog cannot narrow overlapping wildcard", base: "ubuntu*", exclude: []string{"ubuntu*amd64"}},
+		{name: "unknown catalog allows disjoint wildcard", base: "ubuntu*arm64", exclude: []string{"ubuntu*amd64"}, submit: true},
+		{name: "unknown catalog cannot allow excluded exact base", base: "ubuntu-26.04-amd64", exclude: []string{"ubuntu*amd64"}},
 		{name: "malformed catalog is unknown", caps: api.Capabilities{BasesComplete: true, Bases: []api.BaseCapabilities{{Name: "macos*"}}}, base: "ubuntu*", submit: true},
 		{name: "duplicate catalog is unknown", caps: api.Capabilities{BasesComplete: true, Bases: []api.BaseCapabilities{{Name: "macos-15"}, {Name: "macos-15"}}}, base: "ubuntu*", submit: true},
 	} {
@@ -55,7 +59,7 @@ func TestCapabilityFiltering(t *testing.T) {
 					return l, func(context.Context) error { released++; return nil }, nil
 				}
 			}
-			out, err := New(time.Minute, time.Second).Run(t.Context(), "scope", []Service{{Name: "p", Priority: 1, Provider: p}}, js)
+			out, err := New(time.Minute, time.Second).Run(t.Context(), "scope", []Service{{Name: "p", Priority: 1, Provider: p}}, js, tc.exclude...)
 			if err != nil || len(out) != 2 || (len(calls) > 0) != tc.submit || p.discoveries != 1 {
 				t.Fatal(out, err, calls, p.discoveries)
 			}
@@ -98,6 +102,26 @@ func TestCapabilitiesUseLeasedDemandAndRefresh(t *testing.T) {
 	}
 	if !reflect.DeepEqual(calls, [][]string{{"vz", "a"}, {"docker", "a"}}) {
 		t.Fatal("stale discovery or priority ignored", calls)
+	}
+}
+
+func TestBaseExclusionsApplyToLeasedDemand(t *testing.T) {
+	calls := [][]string{}
+	p := &describedProvider{
+		fake:         &fake{calls: &calls, name: "docker"},
+		capabilities: api.Capabilities{Bases: []api.BaseCapabilities{{Name: "ubuntu-26.04-amd64"}}},
+	}
+	js := jobs(1)
+	js[0].Request.Base = "ubuntu-26.04-arm64"
+	released := false
+	js[0].Prepare = func(_ context.Context, l api.Launch) (api.Launch, func(context.Context) error, error) {
+		l.Base = "ubuntu*amd64"
+		return l, func(context.Context) error { released = true; return nil }, nil
+	}
+	s := New(time.Minute, time.Second)
+	out, err := s.Run(t.Context(), "scope", []Service{{Name: "docker", Priority: 1, Provider: p}}, js, "ubuntu*amd64")
+	if err != nil || len(out) != 1 || out[0].Submission.Status != api.Unsupported || !released || len(calls) != 0 {
+		t.Fatalf("excluded leased demand reached submission: results=%v release=%v submits=%v error=%v", out, released, calls, err)
 	}
 }
 

@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -78,8 +79,9 @@ type DependencyCache struct {
 	MaxAge     string `yaml:"max_age"`
 }
 type Config struct {
-	BaseDir         string `yaml:"-"`
-	VZAutoDiscovery string `yaml:"-"`
+	BaseDir         string   `yaml:"-"`
+	VZAutoDiscovery string   `yaml:"-"`
+	ExcludeBases    []string `yaml:"-"`
 	HTTP            struct {
 		Listen string `yaml:"listen"`
 	} `yaml:"http"`
@@ -145,6 +147,12 @@ func parse(ctx context.Context, b []byte, overrides Overrides) (*Config, error) 
 	if e := d.Decode(&extra); e != io.EOF {
 		return nil, fmt.Errorf("configuration must contain one YAML document")
 	}
+	for _, pattern := range overrides.ExcludeBases {
+		if err := bases.Validate(pattern); err != nil {
+			return nil, fmt.Errorf("invalid --exclude pattern %q: %w", pattern, err)
+		}
+	}
+	c.ExcludeBases = slices.Clone(overrides.ExcludeBases)
 	if jobdb := strings.TrimSpace(overrides.JobDB); jobdb != "" {
 		if len(c.Targets) > 1 {
 			return nil, fmt.Errorf("--jobdb cannot override multiple configured targets")

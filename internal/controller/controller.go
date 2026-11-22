@@ -9,6 +9,7 @@ import (
 	"github.com/colony-2/pulse/internal/c2j"
 	"github.com/colony-2/pulse/internal/config"
 	"github.com/colony-2/pulse/internal/placement"
+	"github.com/colony-2/pulse/internal/providerutil"
 	"github.com/colony-2/pulse/internal/scheduler"
 	"github.com/colony-2/pulse/pkg/compute"
 	"log/slog"
@@ -60,7 +61,7 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 	targets = append(targets[offset:], targets[:offset]...)
 	var errs []error
 	preparation := map[string]placement.ProviderPreparation{}
-	catalogs := map[string]provider.Capabilities{}
+	catalogs := map[string]providerutil.BaseCatalog{}
 	for name, provider := range c.Providers {
 		preparation[name] = placement.UnknownProviderPreparation()
 		if maintenance, ok := provider.(interface{ Maintain(context.Context) error }); ok {
@@ -184,7 +185,7 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 		for start := 0; start < len(jobs); start += c.Config.BatchSize {
 			end := min(start+c.Config.BatchSize, len(jobs))
 			attempt, cancel := context.WithTimeout(ctx, c.Config.Batch)
-			results, e := c.Scheduler.Run(attempt, string(scopeKey), services, jobs[start:end])
+			results, e := c.Scheduler.Run(attempt, string(scopeKey), services, jobs[start:end], c.Config.ExcludeBases...)
 			cancel()
 			if e != nil {
 				errs = append(errs, e)

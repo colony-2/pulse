@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	provider "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/bases"
 	"github.com/colony-2/pulse/internal/c2j"
 	"github.com/colony-2/pulse/internal/providerutil"
@@ -13,7 +12,7 @@ import (
 
 // The listing is a snapshot. A skipped job can match on a later poll, and a
 // claimed job still goes through placement using its leased requirements.
-func (c *Controller) matchesListedDemand(ctx context.Context, j c2j.Job, services []scheduler.Service, catalogs map[string]provider.Capabilities) bool {
+func (c *Controller) matchesListedDemand(ctx context.Context, j c2j.Job, services []scheduler.Service, catalogs map[string]providerutil.BaseCatalog) bool {
 	allocation, err := j.Allocation(c.Config.Allocation)
 	if errors.Is(err, bases.ErrUnsupportedSelector) {
 		return false
@@ -27,10 +26,11 @@ func (c *Controller) matchesListedDemand(ctx context.Context, j c2j.Job, service
 		}
 		catalog, ok := catalogs[service.Name]
 		if !ok {
-			catalog, _, _ = providerutil.DiscoverCapabilities(ctx, service.Provider, c.Config.Call)
+			discovered, _, _ := providerutil.DiscoverCapabilities(ctx, service.Provider, c.Config.Call)
+			catalog = providerutil.FilterBases(discovered, c.Config.ExcludeBases)
 			catalogs[service.Name] = catalog
 		}
-		if providerutil.Compatible(catalog, allocation) {
+		if _, ok := catalog.SelectBase(allocation); ok {
 			return true
 		}
 	}

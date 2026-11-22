@@ -23,8 +23,9 @@ func LoadOptions(ctx context.Context, path, jobdb string) (*Config, error) {
 
 // Overrides supplies command-line values after selecting the Pulse configuration.
 type Overrides struct {
-	JobDB      string
-	Docker, VZ DefaultProviderOverride
+	JobDB        string
+	ExcludeBases []string
+	Docker, VZ   DefaultProviderOverride
 }
 
 // LoadWithOverrides applies overrides to the selected configuration.

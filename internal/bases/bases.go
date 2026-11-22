@@ -61,6 +61,24 @@ func Match(selector, name string) bool {
 	return execution.MatchBase(selector, name)
 }
 
+// Overlap reports whether two valid selectors can match the same base name.
+func Overlap(a, b string) bool {
+	aPrefix, _, aWildcard := strings.Cut(a, "*")
+	bPrefix, _, bWildcard := strings.Cut(b, "*")
+	if !aWildcard {
+		return Match(b, a)
+	}
+	if !bWildcard {
+		return Match(a, b)
+	}
+	// Stars can absorb both selectors' interior literals. Only the anchored
+	// prefixes and suffixes have to agree.
+	aSuffix := a[strings.LastIndexByte(a, '*')+1:]
+	bSuffix := b[strings.LastIndexByte(b, '*')+1:]
+	return (strings.HasPrefix(aPrefix, bPrefix) || strings.HasPrefix(bPrefix, aPrefix)) &&
+		(strings.HasSuffix(aSuffix, bSuffix) || strings.HasSuffix(bSuffix, aSuffix))
+}
+
 func Resolve(selector string, platforms []string) (Base, error) {
 	if err := Validate(selector); err != nil {
 		return Base{}, err
