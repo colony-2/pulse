@@ -13,11 +13,9 @@ import (
 	"time"
 
 	provider "github.com/colony-2/pulse-provider-api"
-	sdk "github.com/colony-2/pulse-provider-api/plugin"
 	"github.com/colony-2/pulse/internal/controller"
 	"github.com/colony-2/pulse/internal/providerutil"
 	"github.com/colony-2/pulse/internal/scheduler"
-	"github.com/colony-2/pulse/pkg/providerplugin"
 )
 
 type API struct {
@@ -25,7 +23,7 @@ type API struct {
 	Version    string
 	StartedAt  time.Time
 	config     map[string]any
-	// Bound concurrent public listing requests independently of the poll loop.
+	// Bound concurrent public provider reads independently of the poll loop.
 	slots chan struct{}
 }
 
@@ -58,7 +56,7 @@ func write(w http.ResponseWriter, status int, value any) {
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		endpoints := []string{"/status", "/providers/health", "/config", "/instances", "/providers/{provider}/instances", launchLogPath, "/scheduler/cooldowns", "/scheduler/round-robin"}
+		endpoints := []string{"/status", "/providers", "/providers/health", "/providers/{provider}/capabilities", "/config", "/instances", "/providers/{provider}/instances", launchLogPath, "/scheduler/cooldowns", "/scheduler/round-robin"}
 		write(w, 200, map[string]any{"endpoints": endpoints})
 	})
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
@@ -72,23 +70,9 @@ func (a *API) Handler() http.Handler {
 		}
 		write(w, 200, map[string]any{"status": state, "version": a.Version, "started_at": a.StartedAt, "uptime_seconds": time.Since(a.StartedAt).Seconds(), "providers": len(a.Controller.Providers), "poll": status})
 	})
-	mux.HandleFunc("GET /providers/health", func(w http.ResponseWriter, r *http.Request) {
-		items := []sdk.Health{}
-		for _, p := range a.Controller.Providers {
-			switch h := p.(type) {
-			case interface{ Health() sdk.Health }:
-				items = append(items, h.Health())
-			case interface{ Health() providerplugin.Health }:
-				v := h.Health()
-				items = append(items, sdk.Health{
-					Name: v.Name, Implementation: v.Implementation, Version: v.Version, Protocol: v.Protocol,
-					State: v.State, RestartCount: v.Restarts, Generation: uint64(v.Generation), LastFailure: v.LastFailure,
-				})
-			}
-		}
-		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
-		write(w, 200, map[string]any{"items": items})
-	})
+	mux.HandleFunc("GET /providers", a.providers)
+	mux.HandleFunc("GET /providers/health", a.providersHealth)
+	mux.HandleFunc("GET /providers/{provider}/capabilities", a.providerCapabilities)
 	mux.HandleFunc("GET /config", func(w http.ResponseWriter, r *http.Request) { write(w, 200, a.config) })
 	mux.HandleFunc("GET /scheduler/cooldowns", func(w http.ResponseWriter, r *http.Request) {
 		write(w, 200, map[string]any{"items": a.Controller.Scheduler.Cooldowns()})

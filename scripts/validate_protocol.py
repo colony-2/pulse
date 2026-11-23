@@ -84,7 +84,7 @@ for path in controller["paths"].values():
 
 doc = Path("docs/http-api.md").read_text()
 examples = re.findall(r"<!-- schema: (\w+) -->\s*```json\n(.*?)\n```", doc, re.DOTALL)
-assert len(examples) == doc.count("```json") == 6
+assert len(examples) == doc.count("```json") == 7
 for name, example in examples:
     check(name, json.loads(example), contract=controller)
 

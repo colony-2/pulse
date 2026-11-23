@@ -31,6 +31,19 @@ func (p *Reverse) current() (api.Provider, error) {
 	return nil, sdk.ErrUnavailable
 }
 
+func (p *Reverse) Health() sdk.Health {
+	current, err := p.current()
+	if err != nil {
+		return sdk.Health{Name: p.name, State: "unavailable"}
+	}
+	if h, ok := current.(interface{ Health() sdk.Health }); ok {
+		health := h.Health()
+		health.Name = p.name
+		return health
+	}
+	return sdk.Health{Name: p.name, State: "ready"}
+}
+
 func (p *Reverse) GetCapabilities(ctx context.Context) (api.Capabilities, error) {
 	current, err := p.current()
 	if err != nil {

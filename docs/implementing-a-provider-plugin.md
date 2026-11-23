@@ -76,7 +76,8 @@ image, platform, and process fields.
 Pulse uses `call_timeout` to bound business calls. On failure, it can make up to
 three replacement attempts, with exponential delay and jitter. After five
 healthy minutes the restart budget resets. Restarting does not replay
-submissions. `GET /providers/health` shows local plugin lifecycle and protocol.
+submissions. `GET /providers/health` shows local plugin lifecycle and reverse
+connection health. `GET /providers` also lists advertised bases and capabilities.
 Pulse redacts executable arguments and plugin configuration in `GET /config`.
 
 Local and reverse SDK transports forward live log subscriptions and

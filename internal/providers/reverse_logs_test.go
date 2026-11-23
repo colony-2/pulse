@@ -175,6 +175,19 @@ targets:
 		t.Fatal(err)
 	}
 	handler := httpAPI.Handler()
+	readHealth := func() sdk.Health {
+		t.Helper()
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/providers/health", nil))
+		var health struct{ Items []sdk.Health }
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &health) != nil || len(health.Items) != 1 {
+			t.Fatalf("reverse health HTTP %d: %s", w.Code, w.Body)
+		}
+		return health.Items[0]
+	}
+	if health := readHealth(); health.Name != "worker" || health.State != "ready" || health.Implementation != "test-logs" || health.Generation == 0 {
+		t.Fatalf("unexpected connected provider health: %+v", health)
+	}
 	read := func(id, token string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, "/providers/worker/launches/"+id+"/logs?page_size=1", nil)
 		if token != "" {
@@ -234,5 +247,17 @@ targets:
 	}
 	if end := parse(read("live", live.NextPageToken)); len(end.Records) != 0 || end.NextPageToken != live.NextPageToken {
 		t.Fatal("file cursor did not retain its position", end)
+	}
+	stopProvider()
+	for {
+		health := readHealth()
+		if health.Name == "worker" && health.State == "unavailable" && health.Generation == 0 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("reverse provider health did not reflect disconnect: %+v", health)
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }

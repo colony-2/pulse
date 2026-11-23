@@ -1,7 +1,7 @@
 openapi: 3.1.1
 info:
   title: Pulse Controller HTTP API
-  version: 1.0.0
+  version: 1.1.0
   description: |
     Public read-only diagnostics and launch logs served by a running Pulse controller.
     Requests use GET or HEAD. HEAD uses the same parameters and status codes as GET
@@ -59,16 +59,37 @@ paths:
       operationId: headConfiguration
       responses:
         '200': { description: Configuration headers. }
+  /providers:
+    get:
+      operationId: listProviders
+      summary: List configured providers and their supported execution bases
+      description: |
+        Lists providers by name, including disconnected reverse providers.
+        Each item reports its capability discovery result and health when available.
+        A discovery failure affects that item and the list still returns 200.
+      responses:
+        '200':
+          description: Configured provider inventory.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderList'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    head:
+      operationId: headProviders
+      responses:
+        '200': { description: Provider inventory headers. }
+        '429': { description: Concurrent request limit reached. }
   /providers/health:
     get:
       operationId: getProviderHealth
       summary: Get provider health snapshots where available
       description: |
-        Known limitation. Reverse-provider health reporting is currently unimplemented.
-        The endpoint includes providers that expose a health method, such as local provider
-        plugins. Connected reverse providers are omitted, so an all-reverse deployment
-        can return an empty items array. To check whether a specific reverse provider
-        answers, call its instances endpoint. A 200 there also covers an idle provider.
+        Reports health for local plugins and configured reverse providers. A reverse
+        provider with a live session reports its current SDK health, including its
+        generation. An absent session reports unavailable with empty implementation
+        and version, and zero protocol and generation. Historical reverse session
+        health after disconnect is tracked in pulse-provider-api issue #1.
       responses:
         '200':
           description: Available health snapshots, sorted by provider name.
@@ -80,9 +101,41 @@ paths:
                 items: []
     head:
       operationId: headProviderHealth
-      description: Returns headers for the same limited health view as GET.
+      description: Returns health headers for the same providers as GET.
       responses:
         '200': { description: Provider health headers. }
+  /providers/{provider}/capabilities:
+    parameters:
+      - $ref: '#/components/parameters/ProviderName'
+    get:
+      operationId: getProviderCapabilities
+      summary: Get one provider's bases, capabilities, and health
+      description: |
+        Returns the same live provider details as the inventory endpoint. The
+        discovery field describes the result of the capability query.
+      responses:
+        '200':
+          description: Configured provider details, including the discovery outcome.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderDetails'
+              example:
+                name: docker
+                type: docker
+                discovery: known
+                bases:
+                  - name: ubuntu-26.04-arm64
+                    capabilities: []
+                bases_complete: false
+        '404': { $ref: '#/components/responses/UnknownProvider' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    head:
+      operationId: headProviderCapabilities
+      responses:
+        '200': { description: Provider details headers. }
+        '404': { description: Unknown provider. }
+        '429': { description: Concurrent request limit reached. }
   /instances:
     parameters:
       - $ref: '#/components/parameters/LaunchFilter'
@@ -414,6 +467,47 @@ components:
                   properties:
                     name: { type: string }
                     priority: { type: integer, minimum: 1 }
+    ProviderList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderDetails'
+    ProviderDetails:
+      type: object
+      required: [name, type, discovery, bases, bases_complete]
+      properties:
+        name: { type: string, description: Configured provider service name. }
+        type: { type: string, description: Configured provider type. }
+        discovery:
+          type: string
+          enum: [known, unknown, unavailable, timeout, invalid, error]
+          description: |
+            Known means the provider returned an advertised catalog. Unknown covers
+            providers with no catalog information. Unavailable covers disconnected
+            sessions and provider transport failures. Timeout covers an expired
+            deadline. Invalid covers a malformed catalog. Error covers other read failures.
+        bases:
+          type: array
+          description: Advertised bases in provider order after applying Pulse exclusions.
+          items:
+            $ref: '#/components/schemas/BaseCapabilities'
+        bases_complete:
+          type: boolean
+          description: Whether the provider marked its advertised catalog exhaustive. Meaningful when discovery is known.
+        health:
+          $ref: '#/components/schemas/ProviderHealth'
+    BaseCapabilities:
+      type: object
+      required: [name, capabilities]
+      properties:
+        name: { type: string, description: Concrete execution base name. }
+        capabilities:
+          type: array
+          description: Optional capabilities supported together on this base.
+          items: { type: string }
     ProviderHealthList:
       type: object
       required: [items]

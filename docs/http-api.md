@@ -24,7 +24,9 @@ For local access only, use `127.0.0.1:8080`. Publish the container port with `-p
 | --- | --- |
 | `/` | Endpoint index. |
 | `/status` | Controller version, uptime, and polling status. |
-| `/providers/health` | Health snapshots where supported. Reverse-provider health is currently unimplemented. |
+| `/providers` | Configured providers, advertised bases, capabilities, discovery status, and available health. |
+| `/providers/{provider}/capabilities` | Base catalog, discovery status, and available health for one provider. |
+| `/providers/health` | Health snapshots for local plugins and reverse providers. |
 | `/config` | Parsed configuration including defaults, with secrets redacted. |
 | `/instances` | Active instances from all configured providers. |
 | `/providers/{provider}/instances` | One page from the named configured provider. |
@@ -36,12 +38,58 @@ Provider names are configuration keys, such as `runner_pool_a`, rather than prov
 
 ### Provider health
 
-`GET /providers/health` lists providers with a health method, such as local
-provider plugins. Reverse providers are currently omitted, so a controller
-with only reverse providers can return `{"items":[]}` even while they are
-connected. Query `/providers/{provider}/instances` to check whether a specific
-reverse provider answers. An idle provider can return an empty page with
-HTTP `200`.
+`GET /providers/health` publishes local plugin health and current reverse
+session health. A configured reverse provider without a current session reports
+`state: unavailable`, with empty implementation and version and zero protocol
+and generation. Last-known reverse session details and disconnect reasons are
+tracked in [pulse-provider-api issue #1](https://github.com/colony-2/pulse-provider-api/issues/1).
+
+### Provider capabilities
+
+```sh
+curl 'http://localhost:8080/providers'
+curl 'http://localhost:8080/providers/mac01/capabilities'
+```
+
+The inventory lists configured providers by name, including disconnected
+reverse providers. The per-provider route returns one object with the same
+fields. Both report the service name and type, discovery status, advertised base
+catalog, and health where supported.
+
+<!-- schema: ProviderDetails -->
+```json
+{
+  "name": "mac01",
+  "type": "reverse",
+  "discovery": "known",
+  "bases": [
+    {"name": "ubuntu-24.04-arm64", "capabilities": ["docker", "kvm"]},
+    {"name": "macos-15-arm64", "capabilities": []}
+  ],
+  "bases_complete": true,
+  "health": {
+    "name": "mac01",
+    "implementation": "pulse-macvz",
+    "version": "example",
+    "protocol": 3,
+    "state": "ready",
+    "restart_count": 0,
+    "generation": 1
+  }
+}
+```
+
+Base order matches the provider catalog after Pulse applies base exclusions.
+`bases_complete` carries the provider's original completeness flag. Each
+base lists the capabilities it can supply. Busy providers can continue to
+advertise the same catalog.
+
+Discovery is `known` for a returned catalog, including a complete empty
+catalog. `unknown` means the provider supplied no catalog information.
+`unavailable`, `timeout`, `invalid`, and `error` describe a failed read.
+An empty list can also mean Pulse excluded every advertised base. Use
+`discovery` and `bases_complete` alongside the list to interpret it.
+HTTP `200` includes the discovery result for each configured provider.
 
 ### Launch logs
 
