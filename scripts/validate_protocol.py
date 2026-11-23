@@ -11,8 +11,8 @@ spec = yaml.safe_load(Path("api/provider.openapi.yaml").read_text())
 validate(spec)
 
 
-def check(name, value, valid=True):
-    schema = {"$ref": f"#/components/schemas/{name}", "components": spec["components"]}
+def check(name, value, valid=True, *, contract=spec):
+    schema = {"$ref": f"#/components/schemas/{name}", "components": contract["components"]}
     errors = list(Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(value))
     assert bool(errors) != valid, (name, [error.message for error in errors])
 
@@ -71,4 +71,21 @@ check("ListResponse", {"items": []})
 check("ListResponse", {"items": [{"id":"native", "launch_id":"test", "state":"succeeded", "metadata":{"key":"value"}, "refs":[]}]}, False)
 check("SubmissionResult", {"launch_id": "test", "status": "unknown", "reason": "Connection lost."})
 check("SubmissionResult", {"launch_id": "test", "status": "prepared"}, False)
-print("OpenAPI schema, specification/documentation examples, and negative cases passed.")
+
+controller = yaml.safe_load(Path("api/pulse.openapi.yaml").read_text())
+validate(controller)
+for path in controller["paths"].values():
+    assert path["get"]["responses"].keys() == path["head"]["responses"].keys()
+    assert all("content" not in response for response in path["head"]["responses"].values())
+    for response in path["get"]["responses"].values():
+        media = response.get("content", {}).get("application/json", {})
+        if "example" in media:
+            check(media["schema"]["$ref"].split("/")[-1], media["example"], contract=controller)
+
+doc = Path("docs/http-api.md").read_text()
+examples = re.findall(r"<!-- schema: (\w+) -->\s*```json\n(.*?)\n```", doc, re.DOTALL)
+assert len(examples) == doc.count("```json") == 6
+for name, example in examples:
+    check(name, json.loads(example), contract=controller)
+
+print("Provider and controller OpenAPI specifications, examples, and negative cases passed.")

@@ -4,6 +4,9 @@ Pulse's continuous controller serves public, read-only diagnostics and launch
 logs. All endpoints accept `GET` and `HEAD`. Other methods return `405`.
 JSON responses carry `Cache-Control: no-store`.
 
+The [controller OpenAPI specification](../api/pulse.openapi.yaml) describes the
+routes, parameters, and response schemas.
+
 ## Listen address
 
 The default is `:8080`, listening on all interfaces. `PORT` changes the default port; an explicit setting takes precedence:
@@ -21,6 +24,7 @@ For local access only, use `127.0.0.1:8080`. Publish the container port with `-p
 | --- | --- |
 | `/` | Endpoint index. |
 | `/status` | Controller version, uptime, and polling status. |
+| `/providers/health` | Health snapshots where supported. Reverse-provider health is currently unimplemented. |
 | `/config` | Parsed configuration including defaults, with secrets redacted. |
 | `/instances` | Active instances from all configured providers. |
 | `/providers/{provider}/instances` | One page from the named configured provider. |
@@ -29,6 +33,15 @@ For local access only, use `127.0.0.1:8080`. Publish the container port with `-p
 | `/scheduler/round-robin` | Priority tiers, batch counters, and next starting services. |
 
 Provider names are configuration keys, such as `runner_pool_a`, rather than provider types such as `remote`.
+
+### Provider health
+
+`GET /providers/health` lists providers with a health method, such as local
+provider plugins. Reverse providers are currently omitted, so a controller
+with only reverse providers can return `{"items":[]}` even while they are
+connected. Query `/providers/{provider}/instances` to check whether a specific
+reverse provider answers. An idle provider can return an empty page with
+HTTP `200`.
 
 ### Launch logs
 
@@ -82,6 +95,7 @@ curl http://localhost:8080/status
 
 Example response:
 
+<!-- schema: ControllerStatus -->
 ```json
 {
   "status": "ok",
@@ -123,6 +137,7 @@ Optional query parameters:
 
 Example response (a remote launch awaiting a runner):
 
+<!-- schema: InstancePage -->
 ```json
 {
   "items": [
@@ -156,6 +171,7 @@ Scope comes from each configured service: remote endpoint/principal, Docker daem
 
 `GET /instances` reads all pages from each configured provider. It supports the optional `launch_id` filter; `page_size` and `page_token` are only available on the per-provider endpoint. Each item adds a `provider` field. Results are sorted by provider name and native instance ID, with repeated instance IDs deduplicated within each provider.
 
+<!-- schema: CompleteInstanceList -->
 ```json
 {
   "items": [
@@ -180,6 +196,7 @@ Scope comes from each configured service: remote endpoint/principal, Docker daem
 
 An unavailable provider, timeout, malformed response, or scan limit returns **HTTP `502` with partial data**, for example:
 
+<!-- schema: PartialInstanceList -->
 ```json
 {
   "items": [],
@@ -195,12 +212,13 @@ An unavailable provider, timeout, malformed response, or scan limit returns **HT
 
 Inspect `complete` and `errors`; a failing provider is never silently treated as empty. Successfully read pages remain in `items` even if a later page fails. Duplicate configurations sharing a native scope can list the same instance under different provider names.
 
-Each HTTP listing request has a total deadline of `call_timeout`. Pulse permits eight concurrent listing requests, scans up to eight providers per aggregate request, and caps each provider scan at 1,000 pages or 10,000 unique instances. Large inventories should use the per-provider paginated route. Repeating continuation tokens are errors. Provider-specific scanning limits also apply (Azure bounds native calls while traversing nested jobs/executions).
+Each HTTP listing request has a total deadline of `call_timeout`. Pulse permits eight concurrent listing requests, scans up to eight providers at a time within each aggregate request, and caps each provider scan at 1,000 pages or 10,000 unique instances. Large inventories should use the per-provider paginated route. Repeating continuation tokens are errors. Provider-specific scanning limits also apply (Azure bounds native calls while traversing nested jobs/executions).
 
 ### Cooldowns
 
 `GET /scheduler/cooldowns` returns active per-job cooldown entries:
 
+<!-- schema: CooldownList -->
 ```json
 {
   "items": [
@@ -222,6 +240,7 @@ Expired entries are hidden unless an attempt is still in flight. `eligible_at` i
 
 `GET /scheduler/round-robin` returns each configured service tier, including tiers not yet visited:
 
+<!-- schema: RoundRobinList -->
 ```json
 {
   "items": [

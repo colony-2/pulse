@@ -1,0 +1,586 @@
+openapi: 3.1.1
+info:
+  title: Pulse Controller HTTP API
+  version: 1.0.0
+  description: |
+    Public read-only diagnostics and launch logs served by a running Pulse controller.
+    Requests use GET or HEAD. HEAD uses the same parameters and status codes as GET
+    and returns headers only. Other methods return 405 with Allow set to GET, HEAD.
+    JSON responses use Cache-Control: no-store.
+servers:
+  - url: http://localhost:8080
+    description: Default Pulse HTTP port. Use your controller's configured address.
+security: []
+paths:
+  /:
+    get:
+      operationId: getEndpointIndex
+      summary: List endpoint paths
+      responses:
+        '200':
+          description: Paths, including templates with placeholders.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EndpointIndex'
+    head:
+      operationId: headEndpointIndex
+      responses:
+        '200': { description: Endpoint index headers. }
+  /status:
+    get:
+      operationId: getStatus
+      summary: Get controller and poll status
+      description: The provider count is the number of configured services. The status describes the controller's polling loop.
+      responses:
+        '200':
+          description: Controller status, including startup or a failed last poll.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllerStatus'
+    head:
+      operationId: headStatus
+      responses:
+        '200': { description: Controller status headers. }
+  /config:
+    get:
+      operationId: getConfiguration
+      summary: Get the redacted effective configuration
+      description: Uses Pulse's YAML field names in a JSON object. Provider-specific settings vary by type.
+      responses:
+        '200':
+          description: Effective configuration with sensitive values redacted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicConfig'
+    head:
+      operationId: headConfiguration
+      responses:
+        '200': { description: Configuration headers. }
+  /providers/health:
+    get:
+      operationId: getProviderHealth
+      summary: Get provider health snapshots where available
+      description: |
+        Known limitation. Reverse-provider health reporting is currently unimplemented.
+        The endpoint includes providers that expose a health method, such as local provider
+        plugins. Connected reverse providers are omitted, so an all-reverse deployment
+        can return an empty items array. To check whether a specific reverse provider
+        answers, call its instances endpoint. A 200 there also covers an idle provider.
+      responses:
+        '200':
+          description: Available health snapshots, sorted by provider name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderHealthList'
+              example:
+                items: []
+    head:
+      operationId: headProviderHealth
+      description: Returns headers for the same limited health view as GET.
+      responses:
+        '200': { description: Provider health headers. }
+  /instances:
+    parameters:
+      - $ref: '#/components/parameters/LaunchFilter'
+    get:
+      operationId: listAllInstances
+      summary: List active instances across configured providers
+      description: |
+        Scans each provider's pages and sorts results by provider name and instance ID.
+        Previously read items can accompany a provider failure. Per-provider pagination
+        is available through /providers/{provider}/instances.
+      responses:
+        '200':
+          description: Complete aggregate result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompleteInstanceList'
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: Partial aggregate result after provider errors, deadline expiry, or scan limits.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartialInstanceList'
+    head:
+      operationId: headAllInstances
+      responses:
+        '200': { description: Complete aggregate result headers. }
+        '400': { description: Invalid filter or query parameter. }
+        '429': { description: Concurrent request limit reached. }
+        '502': { description: Partial aggregate result headers. }
+  /providers/{provider}/instances:
+    parameters:
+      - $ref: '#/components/parameters/ProviderName'
+      - $ref: '#/components/parameters/LaunchFilter'
+      - $ref: '#/components/parameters/PageSize'
+      - $ref: '#/components/parameters/InstancePageToken'
+    get:
+      operationId: listProviderInstances
+      summary: List one page of active instances from a provider
+      description: Follow the continuation token whenever present, including after an empty page.
+      responses:
+        '200':
+          description: One provider page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstancePage'
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '404': { $ref: '#/components/responses/UnknownProvider' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '502':
+          description: Provider listing failed or returned an invalid page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderError'
+    head:
+      operationId: headProviderInstances
+      responses:
+        '200': { description: Provider page headers. }
+        '400': { description: Invalid query parameters. }
+        '404': { description: Unknown provider. }
+        '429': { description: Concurrent request limit reached. }
+        '502': { description: Provider listing failed. }
+  /providers/{provider}/launches/{launch_id}/logs:
+    parameters:
+      - $ref: '#/components/parameters/ProviderName'
+      - $ref: '#/components/parameters/LaunchID'
+      - $ref: '#/components/parameters/PageSize'
+      - $ref: '#/components/parameters/LogPageToken'
+    get:
+      operationId: getLaunchLogs
+      summary: Read a page of launch output
+      description: |
+        Start without a checkpoint to read the oldest retained record. Pulse prefers
+        provider-retained output and can fall back to a local capture on the initial read.
+        Each checkpoint continues from the same source. Drain available pages while
+        has_more is true. When caught up on an active capture, poll with the latest
+        checkpoint. Finalization describes the output capture lifecycle.
+      responses:
+        '200':
+          description: One log page with a checkpoint, including for an empty page.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogPage'
+              example:
+                records:
+                  - sequence: 1
+                    timestamp: '2026-10-01T12:00:00Z'
+                    source: stdout
+                    data: aGVsbG8K
+                next_page_token: p.Y2hlY2twb2ludA
+                has_more: false
+                finalized: true
+                incomplete: false
+                estimated_total_size_bytes: 6
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '404':
+          description: Unknown provider or missing or expired launch log.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501':
+          description: Retained log retrieval is unsupported and no local archive is configured, or the checkpoint selects an unsupported provider archive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: Log read failed or returned an invalid response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Provider is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '504':
+          description: Log read timed out.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    head:
+      operationId: headLaunchLogs
+      responses:
+        '200': { description: Log page headers. }
+        '400': { description: Invalid request or checkpoint. }
+        '404': { description: Unknown provider or missing log. }
+        '429': { description: Concurrent request limit reached. }
+        '501': { description: Log retrieval is unsupported. }
+        '502': { description: Log read failed. }
+        '503': { description: Provider is unavailable. }
+        '504': { description: Log read timed out. }
+  /scheduler/cooldowns:
+    get:
+      operationId: listCooldowns
+      summary: List active cooldown and in-flight submission entries
+      responses:
+        '200':
+          description: Scheduler cooldown entries and in-flight submission attempts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CooldownList'
+    head:
+      operationId: headCooldowns
+      responses:
+        '200': { description: Scheduler cooldown headers. }
+  /scheduler/round-robin:
+    get:
+      operationId: listRoundRobinTiers
+      summary: List scheduler priority tiers and rotation state
+      responses:
+        '200':
+          description: Current rotation state for each configured tier, including tiers with zero batches.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoundRobinList'
+    head:
+      operationId: headRoundRobinTiers
+      responses:
+        '200': { description: Scheduler rotation headers. }
+components:
+  parameters:
+    ProviderName:
+      name: provider
+      in: path
+      required: true
+      description: Configured provider service name.
+      schema: { type: string, minLength: 1 }
+    LaunchID:
+      name: launch_id
+      in: path
+      required: true
+      description: Launch attempt ID from Pulse's launch result.
+      schema:
+        $ref: '#/components/schemas/LaunchID'
+    LaunchFilter:
+      name: launch_id
+      in: query
+      description: Exact launch ID filter. Keep it unchanged when paging through a provider.
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9._-]{0,128}$'
+    PageSize:
+      name: page_size
+      in: query
+      description: Maximum number of records or instances to return.
+      schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+    InstancePageToken:
+      name: page_token
+      in: query
+      description: Opaque provider continuation, at most 16384 bytes. URL-encode its value.
+      schema: { type: string, maxLength: 16384 }
+    LogPageToken:
+      name: page_token
+      in: query
+      description: Opaque next_page_token from a prior read of the same provider and launch.
+      schema:
+        $ref: '#/components/schemas/LogCheckpoint'
+  responses:
+    InvalidRequest:
+      description: Invalid parameter, duplicate or unknown query parameter, or invalid log checkpoint.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UnknownProvider:
+      description: The named service is absent from the controller's providers.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooManyRequests:
+      description: Controller or provider concurrency limit reached.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    EndpointIndex:
+      type: object
+      required: [endpoints]
+      properties:
+        endpoints:
+          type: array
+          items: { type: string }
+    ControllerStatus:
+      type: object
+      required: [status, version, started_at, uptime_seconds, providers, poll]
+      properties:
+        status: { type: string, enum: [starting, ok, degraded] }
+        version: { type: string }
+        started_at: { type: string, format: date-time }
+        uptime_seconds: { type: number, minimum: 0 }
+        providers: { type: integer, minimum: 0 }
+        poll:
+          $ref: '#/components/schemas/PollStatus'
+    PollStatus:
+      type: object
+      required: [running, last_started, last_finished, last_succeeded, passes, failed_passes]
+      properties:
+        running: { type: boolean }
+        last_started:
+          type: string
+          format: date-time
+          description: Go's zero timestamp before the first poll.
+        last_finished:
+          type: string
+          format: date-time
+          description: Go's zero timestamp before the first completed poll.
+        last_succeeded: { type: boolean }
+        passes: { type: integer, minimum: 0 }
+        failed_passes: { type: integer, minimum: 0 }
+    PublicConfig:
+      type: object
+      description: Redacted Pulse configuration, expressed with its YAML keys.
+      properties:
+        http:
+          type: object
+          properties:
+            listen: { type: string }
+        poll_interval: { type: string }
+        cooldown: { type: string }
+        lease_duration: { type: string }
+        call_timeout: { type: string }
+        batch_timeout: { type: string }
+        claim_timeout: { type: string }
+        claim_concurrency: { type: integer }
+        batch_size: { type: integer }
+        max_jobs_per_tenant: { type: integer }
+        max_pages_per_tenant: { type: integer }
+        defaults:
+          type: object
+          properties:
+            base: { type: string }
+            capabilities:
+              type: array
+              items: { type: string }
+            cpu: { type: string }
+            memory: { type: string }
+            scratch: { type: string }
+            timeout: { type: string }
+            start_window: { type: string }
+            env:
+              type: object
+              additionalProperties: { const: '[REDACTED]' }
+            routes:
+              type: array
+              items:
+                type: object
+                properties:
+                  job_type: { type: string }
+                  task_type: { type: string }
+        log_directory: { type: string }
+        reverse: { type: object }
+        providers:
+          type: object
+          additionalProperties:
+            type: object
+        targets:
+          type: array
+          items:
+            type: object
+            properties:
+              instance_id: { type: string }
+              jobdb: { type: string }
+              jobdb_token_env: { type: string }
+              launch_services:
+                type: array
+                items:
+                  type: object
+                  required: [name, priority]
+                  properties:
+                    name: { type: string }
+                    priority: { type: integer, minimum: 1 }
+    ProviderHealthList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderHealth'
+    ProviderHealth:
+      type: object
+      required: [name, implementation, version, protocol, state, restart_count, generation]
+      properties:
+        name: { type: string }
+        implementation: { type: string }
+        version: { type: string }
+        protocol: { type: integer }
+        state: { type: string }
+        restart_count: { type: integer, minimum: 0 }
+        generation: { type: integer, minimum: 0 }
+        last_failure: { type: string }
+    LaunchID:
+      type: string
+      pattern: '^[A-Za-z0-9._-]{1,128}$'
+    Job:
+      type: object
+      required: [jobdb, instance_id, tenant_id, job_id]
+      properties:
+        jobdb:
+          type: string
+          format: uri
+          description: Credential-free JobDB endpoint, including the tenant path.
+        instance_id: { type: string, minLength: 1 }
+        tenant_id: { type: string, minLength: 1 }
+        job_id: { type: string, minLength: 1 }
+    Instance:
+      type: object
+      required: [id, launch_id, state, job, refs]
+      properties:
+        id: { type: string, minLength: 1, description: Provider-local instance ID. }
+        launch_id:
+          $ref: '#/components/schemas/LaunchID'
+        state: { type: string, enum: [queued, starting, running, paused, stopping] }
+        job:
+          $ref: '#/components/schemas/Job'
+        refs:
+          type: array
+          items: { type: string, minLength: 1 }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+    NamedInstance:
+      allOf:
+        - $ref: '#/components/schemas/Instance'
+        - type: object
+          required: [provider]
+          properties:
+            provider: { type: string }
+    InstancePage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/Instance'
+        next_page_token: { type: string, minLength: 1, maxLength: 16384 }
+    InstanceList:
+      type: object
+      required: [items, errors, complete]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/NamedInstance'
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProviderError'
+        complete: { type: boolean }
+    CompleteInstanceList:
+      allOf:
+        - $ref: '#/components/schemas/InstanceList'
+        - properties:
+            errors: { maxItems: 0 }
+            complete: { const: true }
+    PartialInstanceList:
+      allOf:
+        - $ref: '#/components/schemas/InstanceList'
+        - properties:
+            errors: { minItems: 1 }
+            complete: { const: false }
+    ProviderError:
+      type: object
+      required: [provider, error]
+      properties:
+        provider: { type: string }
+        error: { type: string }
+    LogCheckpoint:
+      type: string
+      minLength: 3
+      maxLength: 21848
+      description: Opaque checkpoint scoped to the provider, launch, and output source.
+    LogPage:
+      type: object
+      required: [records, next_page_token, has_more, finalized, incomplete]
+      properties:
+        records:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/LogRecord'
+        next_page_token:
+          $ref: '#/components/schemas/LogCheckpoint'
+        has_more: { type: boolean, description: More records are currently available. }
+        finalized: { type: boolean, description: Capture has stopped adding records. }
+        incomplete: { type: boolean, description: Capture or retention gaps are known. }
+        estimated_total_size_bytes:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Estimated retained payload bytes before base64 encoding. Omitted when unknown.
+    LogRecord:
+      type: object
+      required: [sequence, timestamp, source, data]
+      properties:
+        sequence: { type: integer, minimum: 1, description: Sequence number in capture order. }
+        timestamp: { type: string, format: date-time }
+        source: { type: string, enum: [launch, stdout, stderr, combined] }
+        data:
+          type: string
+          contentEncoding: base64
+          maxLength: 5464
+          description: Up to 4096 bytes of raw provider output encoded as base64.
+    CooldownList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Cooldown'
+    Cooldown:
+      type: object
+      required: [instance, tenant, job, attempted_at, eligible_at, in_flight]
+      properties:
+        instance: { type: string }
+        tenant: { type: string }
+        job: { type: string }
+        attempted_at: { type: string, format: date-time }
+        eligible_at: { type: string, format: date-time, description: Cooldown deadline. }
+        in_flight: { type: boolean }
+    RoundRobinList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoundRobinTier'
+    RoundRobinTier:
+      type: object
+      required: [scope, priority, services, batches, next_service]
+      properties:
+        scope: { type: string, description: JSON-encoded launch-service configuration used as the rotation scope. }
+        priority: { type: integer, minimum: 1 }
+        services:
+          type: array
+          items: { type: string }
+        batches: { type: integer, minimum: 0 }
+        next_service: { type: string }
