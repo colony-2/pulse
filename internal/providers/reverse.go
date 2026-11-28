@@ -45,13 +45,7 @@ func StartReverse(ctx context.Context, cfg *config.Config, check bool) (*Reverse
 	if settings.Transport == "http" {
 		options.Transport = sdk.ReverseTransportHTTP
 	} else {
-		path := func(value string) string {
-			if filepath.IsAbs(value) {
-				return value
-			}
-			return filepath.Join(cfg.BaseDir, value)
-		}
-		cert, err := tls.LoadX509KeyPair(path(settings.TLSCert), path(settings.TLSKey))
+		cert, err := tls.LoadX509KeyPair(reversePath(cfg.BaseDir, settings.TLSCert), reversePath(cfg.BaseDir, settings.TLSKey))
 		if err != nil {
 			return nil, fmt.Errorf("load reverse collector TLS certificate: %w", err)
 		}
@@ -77,4 +71,11 @@ func StartReverse(ctx context.Context, cfg *config.Config, check bool) (*Reverse
 	}
 	slog.Info("reverse provider collector listening", "address", listener.Addr().String(), "transport", settings.Transport)
 	return &ReverseServer{Collector: collector, Address: listener.Addr().String(), Providers: instances}, nil
+}
+
+func reversePath(baseDir, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(baseDir, path)
 }

@@ -23,6 +23,13 @@ func (c *Config) configureProviders(overrides Overrides) error {
 		c.VZAutoDiscovery = "disabled: explicit providers configured"
 		return nil
 	}
+	if c.DynamicProvider != nil {
+		if overrides.Docker != (DefaultProviderOverride{}) || overrides.VZ != (DefaultProviderOverride{}) {
+			return fmt.Errorf("default provider flags cannot be used with dynamic_provider")
+		}
+		c.VZAutoDiscovery = "disabled: dynamic providers configured"
+		return nil
+	}
 	providers, services, reason, err := automaticProviders(supportsVZ(), overrides)
 	if err != nil {
 		return err

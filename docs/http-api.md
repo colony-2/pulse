@@ -34,14 +34,15 @@ For local access only, use `127.0.0.1:8080`. Publish the container port with `-p
 | `/scheduler/cooldowns` | Current cooldown entries and in-flight submission attempts. |
 | `/scheduler/round-robin` | Priority tiers, batch counters, and next starting services. |
 
-Provider names are configuration keys, such as `runner_pool_a`, rather than provider types such as `remote`.
+Provider names are configuration keys, such as `runner_pool_a`, or authenticated
+identities for [dynamic reverse providers](implementing-a-provider-plugin.md#dynamic-reverse-providers).
 
 ### Provider health
 
 `GET /providers/health` publishes local plugin health and current reverse
-session health. A configured reverse provider without a current session reports
-`state: unavailable`, with empty implementation and version and zero protocol
-and generation. Last-known reverse session details and disconnect reasons are
+session health. A configured or remembered reverse provider without a current
+session reports `state: unavailable`, with empty implementation and version and
+zero protocol and generation. Last-known reverse session details and disconnect reasons are
 tracked in [pulse-provider-api issue #1](https://github.com/colony-2/pulse-provider-api/issues/1).
 
 ### Provider capabilities
@@ -51,10 +52,10 @@ curl 'http://localhost:8080/providers'
 curl 'http://localhost:8080/providers/mac01/capabilities'
 ```
 
-The inventory lists configured providers by name, including disconnected
-reverse providers. The per-provider route returns one object with the same
-fields. Both report the service name and type, discovery status, advertised base
-catalog, and health where supported.
+The inventory lists configured providers and remembered dynamic reverse providers
+by name, including disconnected reverse providers. The per-provider route returns
+one object with the same fields. Both report the service name and type, discovery
+status, advertised base catalog, and health where supported.
 
 <!-- schema: ProviderDetails -->
 ```json

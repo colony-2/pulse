@@ -42,7 +42,7 @@ func providerHealth(p provider.Provider) *sdk.Health {
 
 func (a *API) providersHealth(w http.ResponseWriter, _ *http.Request) {
 	items := []sdk.Health{}
-	for _, p := range a.Controller.Providers {
+	for _, p := range a.Controller.ProviderSnapshot() {
 		if h := providerHealth(p); h != nil {
 			items = append(items, *h)
 		}
@@ -54,7 +54,7 @@ func (a *API) providersHealth(w http.ResponseWriter, _ *http.Request) {
 func (a *API) describeProvider(ctx context.Context, name string, p provider.Provider) providerDetails {
 	cfg := a.Controller.Config
 	out := providerDetails{
-		Name: name, Type: cfg.Providers[name].Type, Discovery: "unknown",
+		Name: name, Type: a.Controller.ProviderType(name), Discovery: "unknown",
 		Bases: []provider.BaseCapabilities{}, Health: providerHealth(p),
 	}
 	if err := ctx.Err(); err != nil {
@@ -92,7 +92,7 @@ func discoveryFailure(err error) string {
 
 func (a *API) providerCapabilities(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("provider")
-	p, ok := a.Controller.Providers[name]
+	p, ok := a.Controller.ProviderSnapshot()[name]
 	if !ok {
 		write(w, http.StatusNotFound, map[string]string{"error": "unknown provider"})
 		return
@@ -112,7 +112,7 @@ func (a *API) providers(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), a.Controller.Config.Call)
 	defer cancel()
 
-	backends := a.Controller.Providers
+	backends := a.Controller.ProviderSnapshot()
 	names := slices.Sorted(maps.Keys(backends))
 	items := make([]providerDetails, len(names))
 	jobs := make(chan int, len(names))

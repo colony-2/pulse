@@ -62,7 +62,7 @@ func logQuery(r *http.Request) (provider.LaunchLogRequest, string, error) {
 
 func (a *API) launchLog(w http.ResponseWriter, r *http.Request) {
 	service := r.PathValue("provider")
-	p, ok := a.Controller.Providers[service]
+	p, ok := a.Controller.ProviderSnapshot()[service]
 	if !ok {
 		write(w, http.StatusNotFound, map[string]string{"error": "unknown provider"})
 		return

@@ -8,7 +8,7 @@ import (
 	"github.com/colony-2/pulse/internal/placement"
 )
 
-// Reverse looks up the current session for one configured provider identity.
+// Reverse looks up the current session for one provider identity.
 type Reverse struct {
 	collector sdk.ProviderCollector
 	name      string

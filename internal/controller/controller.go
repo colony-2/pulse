@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	provider "github.com/colony-2/pulse-provider-api"
@@ -13,7 +12,6 @@ import (
 	"github.com/colony-2/pulse/internal/scheduler"
 	"github.com/colony-2/pulse/pkg/compute"
 	"log/slog"
-	"sort"
 	"sync"
 	"time"
 )
@@ -25,15 +23,16 @@ type Claimer interface {
 	Claim(context.Context, string, c2j.Job, string, time.Duration, []c2j.Route) (*c2j.Claimed, error)
 }
 type Controller struct {
-	Config    *config.Config
-	Lister    Lister
-	Claimer   Claimer
-	Scheduler *scheduler.Scheduler
-	Providers map[string]provider.Provider
-	Log       *slog.Logger
-	pass      int
-	statusMu  sync.RWMutex
-	status    PollStatus
+	Config           *config.Config
+	Lister           Lister
+	Claimer          Claimer
+	Scheduler        *scheduler.Scheduler
+	Providers        map[string]provider.Provider
+	DynamicProviders func() map[string]provider.Provider
+	Log              *slog.Logger
+	pass             int
+	statusMu         sync.RWMutex
+	status           PollStatus
 }
 
 func (c *Controller) Once(ctx context.Context) (passErr error) {
@@ -62,7 +61,8 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 	var errs []error
 	preparation := map[string]placement.ProviderPreparation{}
 	catalogs := map[string]providerutil.BaseCatalog{}
-	for name, provider := range c.Providers {
+	backends := c.ProviderSnapshot()
+	for name, provider := range backends {
 		preparation[name] = placement.UnknownProviderPreparation()
 		if maintenance, ok := provider.(interface{ Maintain(context.Context) error }); ok {
 			call, cancel := context.WithTimeout(ctx, c.Config.Call)
@@ -78,13 +78,18 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		serviceCfg := append([]config.Service{}, t.Services...)
-		sort.Slice(serviceCfg, func(i, j int) bool { return serviceCfg[i].Name < serviceCfg[j].Name })
-		scopeKey, _ := json.Marshal(serviceCfg)
-		services := []scheduler.Service{}
-		for _, s := range serviceCfg {
-			provider := dockerJobDBEndpoint(c.Config.Providers[s.Name].Type, c.Providers[s.Name], t.JobDB, c.Log)
-			services = append(services, scheduler.Service{Name: s.Name, Priority: s.Priority, Provider: provider})
+		scopeKey, services := c.LaunchServices(t, backends)
+		if t.DynamicProviderPriority > 0 {
+			if err := c.Scheduler.Configure(scopeKey, services); err != nil {
+				return err
+			}
+			if len(services) == 0 {
+				continue
+			}
+		}
+		for index := range services {
+			service := &services[index]
+			service.Provider = dockerJobDBEndpoint(c.ProviderType(service.Name), service.Provider, t.JobDB, c.Log)
 		}
 		jobs := []scheduler.Job{}
 		token := ""
@@ -185,7 +190,7 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 		for start := 0; start < len(jobs); start += c.Config.BatchSize {
 			end := min(start+c.Config.BatchSize, len(jobs))
 			attempt, cancel := context.WithTimeout(ctx, c.Config.Batch)
-			results, e := c.Scheduler.Run(attempt, string(scopeKey), services, jobs[start:end], c.Config.ExcludeBases...)
+			results, e := c.Scheduler.Run(attempt, scopeKey, services, jobs[start:end], c.Config.ExcludeBases...)
 			cancel()
 			if e != nil {
 				errs = append(errs, e)
@@ -193,7 +198,7 @@ func (c *Controller) Once(ctx context.Context) (passErr error) {
 			for _, r := range results {
 				for i := range r.Attempts {
 					r.Attempts[i].ProviderPreparation = preparation[r.Attempts[i].Service]
-					if kind := c.Config.Providers[r.Attempts[i].Service].Type; kind != "" {
+					if kind := c.ProviderType(r.Attempts[i].Service); kind != "" {
 						r.Attempts[i].ProviderType = kind
 					}
 				}

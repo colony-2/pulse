@@ -29,11 +29,12 @@ type Service struct {
 	Priority int    `yaml:"priority"`
 }
 type Target struct {
-	JobDBTokenEnv string    `yaml:"jobdb_token_env"`
-	Instance      string    `yaml:"instance_id"`
-	JobDB         string    `yaml:"jobdb"`
-	Services      []Service `yaml:"launch_services"`
-	Tenant        string    `yaml:"-"`
+	JobDBTokenEnv           string    `yaml:"jobdb_token_env"`
+	Instance                string    `yaml:"instance_id"`
+	JobDB                   string    `yaml:"jobdb"`
+	Services                []Service `yaml:"launch_services"`
+	DynamicProviderPriority int       `yaml:"dynamic_provider_priority,omitempty"`
+	Tenant                  string    `yaml:"-"`
 }
 type Provider struct {
 	Options            map[string]any    `yaml:"config,omitempty"`
@@ -85,18 +86,19 @@ type Config struct {
 	HTTP            struct {
 		Listen string `yaml:"listen"`
 	} `yaml:"http"`
-	LogDirectory     string         `yaml:"log_directory,omitempty"`
-	Reverse          *ReverseConfig `yaml:"reverse,omitempty"`
-	PollInterval     string         `yaml:"poll_interval"`
-	Cooldown         string         `yaml:"cooldown"`
-	LeaseDuration    string         `yaml:"lease_duration"`
-	CallTimeout      string         `yaml:"call_timeout"`
-	BatchTimeout     string         `yaml:"batch_timeout"`
-	ClaimTimeout     string         `yaml:"claim_timeout"`
-	ClaimConcurrency int            `yaml:"claim_concurrency"`
-	BatchSize        int            `yaml:"batch_size"`
-	PerTenant        int            `yaml:"max_jobs_per_tenant"`
-	MaxPages         int            `yaml:"max_pages_per_tenant"`
+	LogDirectory     string                 `yaml:"log_directory,omitempty"`
+	Reverse          *ReverseConfig         `yaml:"reverse,omitempty"`
+	DynamicProvider  *DynamicProviderConfig `yaml:"dynamic_provider,omitempty"`
+	PollInterval     string                 `yaml:"poll_interval"`
+	Cooldown         string                 `yaml:"cooldown"`
+	LeaseDuration    string                 `yaml:"lease_duration"`
+	CallTimeout      string                 `yaml:"call_timeout"`
+	BatchTimeout     string                 `yaml:"batch_timeout"`
+	ClaimTimeout     string                 `yaml:"claim_timeout"`
+	ClaimConcurrency int                    `yaml:"claim_concurrency"`
+	BatchSize        int                    `yaml:"batch_size"`
+	PerTenant        int                    `yaml:"max_jobs_per_tenant"`
+	MaxPages         int                    `yaml:"max_pages_per_tenant"`
 	Defaults         struct {
 		Base         string            `yaml:"base"`
 		Capabilities []string          `yaml:"capabilities"`
@@ -380,7 +382,10 @@ func parse(ctx context.Context, b []byte, overrides Overrides) (*Config, error) 
 			return nil, fmt.Errorf("jobdb URL must select one tenant")
 		}
 		c.Targets[i].Tenant = path
-		if len(t.Services) == 0 {
+		if t.DynamicProviderPriority < 0 || (t.DynamicProviderPriority > 0 && c.DynamicProvider == nil) {
+			return nil, fmt.Errorf("dynamic_provider_priority requires an enabled dynamic_provider and a positive priority")
+		}
+		if len(t.Services) == 0 && t.DynamicProviderPriority == 0 {
 			return nil, fmt.Errorf("target needs launch_services when providers are configured")
 		}
 		endpoint := u.Scheme + "://" + strings.ToLower(u.Host)

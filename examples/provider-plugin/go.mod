@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/colony-2/pulse-provider-api v0.0.0-20261121205737-bd1a5c559150
-	github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261121205737-bd1a5c559150
+	github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261128055456-17e5006a6b1d
 )
 
 require (

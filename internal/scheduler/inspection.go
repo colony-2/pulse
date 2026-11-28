@@ -71,12 +71,21 @@ func (s *Scheduler) RoundRobin() []RoundRobinEntry {
 
 // Configure makes unvisited tiers visible without advancing their cursors.
 func (s *Scheduler) Configure(scope string, services []Service) error {
-	ordered, err := s.order(scope, services)
-	if err != nil {
-		return err
+	var ordered []Service
+	if len(services) > 0 {
+		var err error
+		ordered, err = s.order(scope, services)
+		if err != nil {
+			return err
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for key, tier := range s.tiers {
+		if tier.Scope == scope {
+			delete(s.tiers, key)
+		}
+	}
 	for i := 0; i < len(ordered); {
 		priority := ordered[i].Priority
 		names := []string{}

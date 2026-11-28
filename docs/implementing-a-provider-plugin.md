@@ -128,6 +128,49 @@ See the [pulse-macvz command guide](https://github.com/colony-2/pulse-macvz/blob
 for the TLS variant and the [SDK guide](https://github.com/colony-2/pulse-provider-api/tree/2919f1ed5e42893f759af0fdd930c1a66824887b/plugin#outbound-providers-and-the-central-collector)
 for using `plugin.Run` in another provider.
 
+### Dynamic reverse providers
+
+To admit reverse providers without listing each one in `providers`, add a
+`dynamic_provider` listener. It uses mutual TLS on a separate address from the
+static `reverse` listener. Both listeners can run in the same Pulse process.
+
+```yaml
+dynamic_provider:
+  listen: "0.0.0.0:8444"
+  tls_cert: /etc/pulse/collector.pem
+  tls_key: /etc/pulse/collector.key
+  auth:
+    client_ca: /etc/pulse/worker-ca.pem
+  state_file: /var/lib/pulse/dynamic-providers.json
+targets:
+  - jobdb: https://jobdb.example.com/tenant
+    dynamic_provider_priority: 1
+```
+
+Issue a client-auth certificate to each worker from a dedicated trusted CA.
+The certificate's common name is the provider identity and must match the
+name passed to `plugin.Run`. Names are case-sensitive, start with an ASCII
+letter or digit, and may contain up to 128 letters, digits, dots, underscores,
+or hyphens. A dynamic worker cannot claim a configured provider name. Set the
+worker's SDK reverse authentication to `ReverseAuthMTLS`, with its client
+certificate and key, the collector's trusted roots and server name, and
+`ReverseALPN`. Static workers keep their existing keys and listener.
+
+Set `dynamic_provider_priority` only on JobDB targets that should dispatch to
+these workers. It is a priority tier alongside any static `launch_services`.
+All authenticated workers can receive work for any target that opts in, so use
+this setting only for targets that trust the entire worker CA. If no static
+providers are listed, Pulse does not auto-configure Docker or VZ in this mode.
+
+Pulse remembers a worker after it authenticates and initializes successfully.
+It remains visible as unavailable while disconnected and is forgotten 72 hours
+after its last observed connection. Reconnection refreshes the deadline; an
+active connection does not expire. Pulse saves connection and disconnect
+times, and checkpoints connected workers every minute so a process crash does
+not discard their recent activity. Use a persistent, writable parent directory
+and a separate `state_file` for each Pulse process. Relative certificate and
+state paths resolve against the configuration directory.
+
 ## HTTP endpoint
 
 Configure the service URL and the environment variable holding its bearer token.

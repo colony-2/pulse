@@ -86,7 +86,7 @@ func defaultProviderOverride(cmd *cobra.Command, name string, enabled *bool, yam
 	return override
 }
 
-func runPulse(parent context.Context, cfg *config.Config, once, check bool, out io.Writer, version string) error {
+func runPulse(parent context.Context, cfg *config.Config, once, check bool, out io.Writer, version string) (runErr error) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	connections := make([]c2j.Connection, 0, len(cfg.Targets))
@@ -116,6 +116,20 @@ func runPulse(parent context.Context, cfg *config.Config, once, check bool, out 
 		reverseDone = make(chan error, 1)
 		go func() { reverseDone <- reverse.Wait() }()
 	}
+	dynamic, e := providers.StartDynamicReverse(ctx, cfg, check)
+	if e != nil {
+		return e
+	}
+	var dynamicDone chan error
+	if dynamic != nil {
+		defer func() {
+			if closeErr := dynamic.Close(); closeErr != nil && !errors.Is(runErr, closeErr) {
+				runErr = errors.Join(runErr, closeErr)
+			}
+		}()
+		dynamicDone = make(chan error, 1)
+		go func() { dynamicDone <- dynamic.Wait() }()
+	}
 	if check {
 		fmt.Fprintln(out, "configuration, listing backend, and providers are valid")
 		return nil
@@ -130,6 +144,9 @@ func runPulse(parent context.Context, cfg *config.Config, once, check bool, out 
 		defer sched.Logs.Close()
 	}
 	c := &controller.Controller{Config: cfg, Lister: lister, Claimer: lister, Scheduler: sched, Providers: instances, Log: slog.New(slog.NewJSONHandler(os.Stderr, nil))}
+	if dynamic != nil {
+		c.DynamicProviders = dynamic.Providers
+	}
 	if once {
 		return c.Once(ctx)
 	}
@@ -152,6 +169,9 @@ func runPulse(parent context.Context, cfg *config.Config, once, check bool, out 
 		cancel()
 		<-controllerDone
 	case e = <-reverseDone:
+		cancel()
+		<-controllerDone
+	case e = <-dynamicDone:
 		cancel()
 		<-controllerDone
 	case e = <-controllerDone:

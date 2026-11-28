@@ -45,6 +45,7 @@ sequence:
   op: command_execution
   const: true
   execution_needs:
+    base: ubuntu-24.04-arm64
     packages:
     - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
     - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
@@ -77,6 +78,7 @@ sequence:
   op: command_execution
   const: true
   execution_needs:
+    base: ubuntu-24.04-arm64
     packages:
     - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
     - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
@@ -110,6 +112,7 @@ sequence:
   op: command_execution
   const: true
   execution_needs:
+    base: ubuntu-24.04-arm64
     packages:
     - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
     - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
@@ -141,6 +144,7 @@ sequence:
   op: command_execution
   const: true
   execution_needs:
+    base: ubuntu-24.04-arm64
     packages:
     - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
     - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
@@ -175,6 +179,7 @@ sequence:
   op: command_execution
   const: true
   execution_needs:
+    base: ubuntu-24.04-arm64
     packages:
     - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
     - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
@@ -201,6 +206,7 @@ sequence:
   op: command_execution
   const: true
   execution_needs:
+    base: ubuntu-24.04-arm64
     packages:
     - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
     - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils
@@ -228,6 +234,7 @@ sequence:
   op: command_execution
   const: true
   execution_needs:
+    base: ubuntu-24.04-arm64
     packages:
     - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#bash
     - nix:github:NixOS/nixpkgs/39ad350a0602fa0a58a544344e3e9187526ea45c#coreutils

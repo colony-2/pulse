@@ -62,14 +62,15 @@ paths:
   /providers:
     get:
       operationId: listProviders
-      summary: List configured providers and their supported execution bases
+      summary: List providers and their supported execution bases
       description: |
-        Lists providers by name, including disconnected reverse providers.
+        Lists configured providers and remembered dynamic reverse providers by name,
+        including disconnected reverse providers.
         Each item reports its capability discovery result and health when available.
         A discovery failure affects that item and the list still returns 200.
       responses:
         '200':
-          description: Configured provider inventory.
+          description: Provider inventory.
           content:
             application/json:
               schema:
@@ -85,7 +86,7 @@ paths:
       operationId: getProviderHealth
       summary: Get provider health snapshots where available
       description: |
-        Reports health for local plugins and configured reverse providers. A reverse
+        Reports health for local plugins and reverse providers. A reverse
         provider with a live session reports its current SDK health, including its
         generation. An absent session reports unavailable with empty implementation
         and version, and zero protocol and generation. Historical reverse session
@@ -141,7 +142,7 @@ paths:
       - $ref: '#/components/parameters/LaunchFilter'
     get:
       operationId: listAllInstances
-      summary: List active instances across configured providers
+      summary: List active instances across providers
       description: |
         Scans each provider's pages and sorts results by provider name and instance ID.
         Previously read items can accompany a provider failure. Per-provider pagination

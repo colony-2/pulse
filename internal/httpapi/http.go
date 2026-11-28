@@ -15,7 +15,6 @@ import (
 	provider "github.com/colony-2/pulse-provider-api"
 	"github.com/colony-2/pulse/internal/controller"
 	"github.com/colony-2/pulse/internal/providerutil"
-	"github.com/colony-2/pulse/internal/scheduler"
 )
 
 type API struct {
@@ -32,15 +31,10 @@ func New(c *controller.Controller, version string) (*API, error) {
 	if err != nil {
 		return nil, err
 	}
+	backends := c.ProviderSnapshot()
 	for _, target := range c.Config.Targets {
-		services := []scheduler.Service{}
-		cfg := append(target.Services[:0:0], target.Services...)
-		sort.Slice(cfg, func(i, j int) bool { return cfg[i].Name < cfg[j].Name })
-		scope, _ := json.Marshal(cfg)
-		for _, service := range cfg {
-			services = append(services, scheduler.Service{Name: service.Name, Priority: service.Priority, Provider: c.Providers[service.Name]})
-		}
-		if err = c.Scheduler.Configure(string(scope), services); err != nil {
+		scope, services := c.LaunchServices(target, backends)
+		if err = c.Scheduler.Configure(scope, services); err != nil {
 			return nil, err
 		}
 	}
@@ -68,7 +62,7 @@ func (a *API) Handler() http.Handler {
 				state = "degraded"
 			}
 		}
-		write(w, 200, map[string]any{"status": state, "version": a.Version, "started_at": a.StartedAt, "uptime_seconds": time.Since(a.StartedAt).Seconds(), "providers": len(a.Controller.Providers), "poll": status})
+		write(w, 200, map[string]any{"status": state, "version": a.Version, "started_at": a.StartedAt, "uptime_seconds": time.Since(a.StartedAt).Seconds(), "providers": len(a.Controller.ProviderSnapshot()), "poll": status})
 	})
 	mux.HandleFunc("GET /providers", a.providers)
 	mux.HandleFunc("GET /providers/health", a.providersHealth)
@@ -163,7 +157,7 @@ func (a *API) list(ctx context.Context, p provider.Provider, q provider.ListRequ
 }
 func (a *API) provider(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("provider")
-	p, ok := a.Controller.Providers[name]
+	p, ok := a.Controller.ProviderSnapshot()[name]
 	if !ok {
 		write(w, 404, map[string]string{"error": "unknown provider"})
 		return
@@ -213,9 +207,10 @@ func (a *API) instances(w http.ResponseWriter, r *http.Request) {
 	items := []instance{}
 	failures := []providerError{}
 	// A small worker pool bounds fan-out even with many configured providers.
+	backends := a.Controller.ProviderSnapshot()
 	names := make(chan string)
 	var workers sync.WaitGroup
-	for range min(8, len(a.Controller.Providers)) {
+	for range min(8, len(backends)) {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
@@ -230,7 +225,7 @@ func (a *API) instances(w http.ResponseWriter, r *http.Request) {
 						listErr = fmt.Errorf("listing scan limit reached")
 						break
 					}
-					page, e := a.list(ctx, a.Controller.Providers[name], query)
+					page, e := a.list(ctx, backends[name], query)
 					if e != nil {
 						listErr = e
 						break
@@ -263,7 +258,7 @@ func (a *API) instances(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 	}
-	for name := range a.Controller.Providers {
+	for name := range backends {
 		select {
 		case names <- name:
 		case <-ctx.Done():

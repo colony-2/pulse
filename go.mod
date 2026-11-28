@@ -14,7 +14,7 @@ require (
 	github.com/colony-2/pulse-docker v0.0.0-20261122071840-cdb3fd229c5c
 	github.com/colony-2/pulse-macvz v0.0.0-20261122042502-fcfcf56a4783
 	github.com/colony-2/pulse-provider-api v0.0.0-20261121205737-bd1a5c559150
-	github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261121205737-bd1a5c559150
+	github.com/colony-2/pulse-provider-api/plugin v0.0.0-20261128055456-17e5006a6b1d
 	github.com/distribution/reference v0.6.0
 	github.com/hashicorp/go-hclog v1.6.3
 	github.com/hashicorp/go-plugin v1.8.0

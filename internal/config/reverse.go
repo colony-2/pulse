@@ -16,7 +16,31 @@ type ReverseConfig struct {
 	TLSKey    string `yaml:"tls_key,omitempty"`
 }
 
+type DynamicProviderConfig struct {
+	Listen    string `yaml:"listen"`
+	TLSCert   string `yaml:"tls_cert"`
+	TLSKey    string `yaml:"tls_key"`
+	StateFile string `yaml:"state_file"`
+	Auth      struct {
+		ClientCA string `yaml:"client_ca"`
+	} `yaml:"auth"`
+}
+
 func (c *Config) validateReverse() error {
+	if dynamic := c.DynamicProvider; dynamic != nil {
+		if !validReverseListen(dynamic.Listen) {
+			return fmt.Errorf("dynamic_provider.listen must be a host:port address")
+		}
+		if dynamic.TLSCert == "" || dynamic.TLSKey == "" || dynamic.Auth.ClientCA == "" {
+			return fmt.Errorf("dynamic_provider requires tls_cert, tls_key and auth.client_ca")
+		}
+		if dynamic.StateFile == "" {
+			return fmt.Errorf("dynamic_provider requires state_file")
+		}
+		if len(c.Defaults.Env) != 0 {
+			return fmt.Errorf("reverse providers require executor environment to be configured at the provider")
+		}
+	}
 	hasProviders := false
 	for name, p := range c.Providers {
 		if p.Type != "reverse" {
@@ -42,9 +66,7 @@ func (c *Config) validateReverse() error {
 	if len(c.Defaults.Env) != 0 {
 		return fmt.Errorf("reverse providers require executor environment to be configured at the provider")
 	}
-	_, port, err := net.SplitHostPort(c.Reverse.Listen)
-	n, portErr := strconv.Atoi(port)
-	if err != nil || portErr != nil || n < 0 || n > 65535 {
+	if !validReverseListen(c.Reverse.Listen) {
 		return fmt.Errorf("reverse.listen must be a host:port address")
 	}
 	if c.Reverse.Transport == "" {
@@ -63,4 +85,10 @@ func (c *Config) validateReverse() error {
 		return fmt.Errorf("reverse.transport must be tls or http")
 	}
 	return nil
+}
+
+func validReverseListen(address string) bool {
+	_, port, err := net.SplitHostPort(address)
+	number, portErr := strconv.Atoi(port)
+	return err == nil && portErr == nil && number >= 0 && number <= 65535
 }
